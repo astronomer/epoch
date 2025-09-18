@@ -60,24 +60,40 @@ func NewDateVersion(dateStr string) (*Version, error) {
 }
 
 // NewSemverVersion creates a new semantic version
+// Supports both major.minor.patch and major.minor formats
 func NewSemverVersion(semverStr string) (*Version, error) {
 	// Remove 'v' prefix if present
 	semverStr = strings.TrimPrefix(semverStr, "v")
 
 	var major, minor, patch int
+
+	// Try major.minor.patch format first
 	n, err := fmt.Sscanf(semverStr, "%d.%d.%d", &major, &minor, &patch)
-	if err != nil || n != 3 {
-		return nil, fmt.Errorf("invalid semver format '%s'", semverStr)
+	if err == nil && n == 3 {
+		return &Version{
+			Raw:    semverStr,
+			Major:  major,
+			Minor:  minor,
+			Patch:  patch,
+			Type:   VersionTypeSemver,
+			IsHead: false,
+		}, nil
 	}
 
-	return &Version{
-		Raw:    semverStr,
-		Major:  major,
-		Minor:  minor,
-		Patch:  patch,
-		Type:   VersionTypeSemver,
-		IsHead: false,
-	}, nil
+	// Try major.minor format (patch defaults to 0)
+	n, err = fmt.Sscanf(semverStr, "%d.%d", &major, &minor)
+	if err == nil && n == 2 {
+		return &Version{
+			Raw:    semverStr,
+			Major:  major,
+			Minor:  minor,
+			Patch:  0, // Default patch to 0 for major.minor format
+			Type:   VersionTypeSemver,
+			IsHead: false,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("invalid semver format '%s': expected major.minor.patch or major.minor", semverStr)
 }
 
 // NewHeadVersion creates a head (latest) version

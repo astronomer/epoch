@@ -1,176 +1,158 @@
-# Complete API Example
+# Cadwyn-Go Examples
 
-This example demonstrates a comprehensive API versioning scenario using Cadwyn-Go with three API versions and automatic request/response migration.
+Learn API versioning with Cadwyn-Go through a **clear progression** from basic concepts to advanced production patterns.
 
-## API Versions
+## 🎯 Learning Path
 
-### Version 1.0 (2023-01-01)
-- Basic user management
-- Fields: `id`, `name`
+### 1. 🚀 [Basic](basic/) - **Start Here!**
+Learn the fundamentals of API versioning.
 
-### Version 2.0 (2023-06-01)  
-- Added email field
-- Fields: `id`, `name`, `email`
+**Perfect for:** First-time users, learning core concepts
 
-### Version 3.0 (2024-01-01)
-- Added status and timestamps
-- Fields: `id`, `name`, `email`, `status`, `created_at`, `updated_at`
-
-## Features Demonstrated
-
-- ✅ **Multiple API Versions**: Three versions with progressive field additions
-- ✅ **Automatic Migration**: Requests and responses are automatically converted between versions
-- ✅ **Version Detection**: Uses `x-api-version` header
-- ✅ **Fluent Builder API**: Easy application setup
-- ✅ **Full CRUD Operations**: Create, read, update, delete users
-- ✅ **Query Parameters**: Filter users by status (v3.0 feature)
-- ✅ **Schema Analysis**: Optional struct introspection
-- ✅ **Debug Logging**: Route and version information
-
-## Running the Example
+**What you'll learn:**
+- Version detection from headers
+- Field addition/removal between versions
+- Multi-version migration chains
+- Request vs response transformations
+- Array handling and default values
+- Error handling and edge cases
 
 ```bash
-cd examples/complete_api
-go run main.go
+cd examples/basic && go run main.go
 ```
 
-The server will start on `http://localhost:8080`.
+### 2. 🏗️ [Intermediate](intermediate/) - **Production API**
+Build a real API server with versioning.
 
-## Testing Different Versions
+**Perfect for:** Building production applications
 
-### Get API Information
+**What you'll learn:**
+- Complete REST API with CRUD operations
+- Multiple API versions (v1.0, v2.0, v3.0)
+- HTTP server setup and routing
+- Real-world field evolution patterns
+- Query parameters and filtering
+- Production deployment patterns
+
 ```bash
-curl http://localhost:8080/api/info
+cd examples/intermediate && go run main.go
+# Starts a real server on http://localhost:8080
 ```
 
-### Get Users (Different Versions)
+### 3. ⚡ [Advanced](advanced/) - **Complex Scenarios**
+Master advanced patterns and performance.
 
-**Version 1.0** (only id and name):
+**Perfect for:** High-traffic applications, complex requirements
+
+**What you'll learn:**
+- Complex field transformations and renaming
+- Nested structures and type changes
+- Performance with large datasets (1000+ records)
+- Concurrent request handling
+- Custom version change implementations
+- Mixed version types (date + semver)
+- Version-specific routes and content types
+- Error recovery and production patterns
+
 ```bash
-curl -H 'x-api-version: 2023-01-01' http://localhost:8080/users
+cd examples/advanced && go run main.go
 ```
 
-**Version 2.0** (adds email):
+### 4. 🔧 [Features](features/) - **Specific Capabilities**
+Explore specific Cadwyn-Go features.
+
+**Perfect for:** Learning particular features, implementing specific patterns
+
+**Available features:**
+- **[Major.Minor Versioning](features/major_minor_versioning/)** - Semantic versioning without patch numbers
+
 ```bash
-curl -H 'x-api-version: 2023-06-01' http://localhost:8080/users
+cd examples/features/major_minor_versioning && go run main.go
 ```
 
-**Version 3.0** (adds status and timestamps):
+## 🚀 Quick Start
+
+**New to Cadwyn-Go?** Follow the learning path:
+
 ```bash
-curl -H 'x-api-version: 2024-01-01' http://localhost:8080/users
+# 1. Start with basics
+cd examples/basic && go run main.go
+
+# 2. Build a production API  
+cd examples/intermediate && go run main.go
+
+# 3. Master advanced patterns
+cd examples/advanced && go run main.go
+
+# 4. Explore specific features
+cd examples/features/major_minor_versioning && go run main.go
 ```
 
-### Create User (Version-Aware)
+**Want to validate everything works?** Run the full test suite:
 
-**Create user in v1.0** (only name required):
 ```bash
-curl -X POST -H 'Content-Type: application/json' -H 'x-api-version: 2023-01-01' \
-     -d '{"name":"John Doe"}' \
-     http://localhost:8080/users
+# From the project root
+go run validate_all.go
 ```
 
-**Create user in v2.0** (name and email):
+## 🎯 Choose Your Path
+
+| **I want to...** | **Go to** | **Time needed** |
+|-------------------|-----------|-----------------|
+| **Learn the basics** | [`basic/`](basic/) | 10 minutes |
+| **Build a real API** | [`intermediate/`](intermediate/) | 20 minutes |
+| **Master advanced patterns** | [`advanced/`](advanced/) | 30 minutes |
+| **Explore specific features** | [`features/`](features/) | 5-15 minutes each |
+
+## 💡 Core Concepts
+
+All examples demonstrate the **key Cadwyn principle**:
+
+> **Write once for the latest version, support all previous versions automatically**
+
+### Version Detection
 ```bash
-curl -X POST -H 'Content-Type: application/json' -H 'x-api-version: 2023-06-01' \
-     -d '{"name":"Jane Smith","email":"jane@example.com"}' \
-     http://localhost:8080/users
+# Multiple ways to specify API version
+curl -H 'x-api-version: 1.0' http://localhost:8080/users        # Header
+curl 'http://localhost:8080/users?api_version=1.1'              # Query param
+curl http://localhost:8080/v2.0/users                           # URL path
 ```
 
-**Create user in v3.0** (all fields):
-```bash
-curl -X POST -H 'Content-Type: application/json' -H 'x-api-version: 2024-01-01' \
-     -d '{"name":"Bob Johnson","email":"bob@example.com","status":"active"}' \
-     http://localhost:8080/users
-```
-
-### Get Specific User
-```bash
-curl -H 'x-api-version: 2023-06-01' http://localhost:8080/users/1
-```
-
-### Update User
-```bash
-curl -X PUT -H 'Content-Type: application/json' -H 'x-api-version: 2024-01-01' \
-     -d '{"name":"Alice Updated","status":"inactive"}' \
-     http://localhost:8080/users/1
-```
-
-### Delete User
-```bash
-curl -X DELETE -H 'x-api-version: 2024-01-01' http://localhost:8080/users/1
-```
-
-### Filter Users (v3.0 Feature)
-```bash
-# Get only active users
-curl -H 'x-api-version: 2024-01-01' 'http://localhost:8080/users?status=active'
-
-# Get only inactive users  
-curl -H 'x-api-version: 2024-01-01' 'http://localhost:8080/users?status=inactive'
-```
-
-## How It Works
-
-### 1. Version Changes
-The example defines two version changes:
-- `V1ToV2Change`: Adds email field
-- `V2ToV3Change`: Adds status and timestamp fields
-
-### 2. Automatic Migration
-When a client requests data in an older version:
-1. **Request Migration**: Client data is migrated to the latest version for processing
-2. **Response Migration**: Server response is migrated back to the requested version
-
-### 3. Field Handling
-- **Added Fields**: Default values provided during migration
-- **Removed Fields**: Fields are stripped during backward migration
-- **Preserved Fields**: Common fields remain unchanged
-
-### 4. Example Migration Flow
-
-**Client requests v1.0 data:**
-```
-Client (v1.0) → [Request Migration] → Server (v3.0) → [Response Migration] → Client (v1.0)
-```
-
-**Migration steps:**
-1. Client sends `{"name": "John"}` with `x-api-version: 2023-01-01`
-2. Request migrated to v3.0: `{"name": "John", "email": "", "status": "active", ...}`
-3. Server processes with full v3.0 model
-4. Response migrated back to v1.0: `{"id": 1, "name": "John"}`
-5. Client receives v1.0 format
-
-## Key Code Sections
-
-### Version Change Implementation
+### Automatic Migration
 ```go
-func (c *V1ToV2Change) MigrateResponse(ctx context.Context, data interface{}) (interface{}, error) {
-    // Convert UserV2 to UserV1 by removing email field
-    if userMap, ok := data.(map[string]interface{}); ok {
-        delete(userMap, "email")
-        return userMap, nil
-    }
-    return data, nil
+// Define once, works for all versions
+type UserV3 struct {
+    ID        int       `json:"id"`
+    Name      string    `json:"name"`
+    Email     string    `json:"email"`     // Added in v2
+    Status    string    `json:"status"`    // Added in v3
+    CreatedAt time.Time `json:"created_at"` // Added in v3
 }
+
+// Clients get exactly what they expect:
+// v1.0 client → {id, name}
+// v2.0 client → {id, name, email}  
+// v3.0 client → {id, name, email, status, created_at}
 ```
 
-### Application Setup
-```go
-app, err := cadwyn.NewBuilder().
-    WithDateVersions("2023-01-01", "2023-06-01", "2024-01-01").
-    WithVersionChanges(NewV1ToV2Change(), NewV2ToV3Change()).
-    WithSchemaAnalysis().
-    WithDebugLogging().
-    Build()
-```
+## 🏆 What You'll Master
 
-### Route Registration
-```go
-router := app.Router()
-router.GET("/users", handleGetUsers)
-router.POST("/users", handleCreateUser)
-// Server implements http.Handler directly
-server := &http.Server{Addr: ":8080", Handler: app}
-```
+By completing all examples, you'll know how to:
 
-This example showcases the power of Cadwyn-Go: **write once for the latest version, support all previous versions automatically**.
+- ✅ **Version APIs** with dates, semantic versions, or mixed approaches
+- ✅ **Migrate data** automatically between any API versions
+- ✅ **Handle complexity** like field renaming, nested structures, arrays
+- ✅ **Optimize performance** for large datasets and high concurrency
+- ✅ **Deploy to production** with proper error handling and monitoring
+- ✅ **Test thoroughly** with comprehensive validation patterns
+
+## 🎓 Learning Outcomes
+
+**After Basic:** You understand how API versioning works with Cadwyn-Go
+**After Intermediate:** You can build production APIs with multiple versions
+**After Advanced:** You can handle complex scenarios and optimize for scale
+**After Features:** You know all the specialized capabilities available
+
+## 🚀 Ready to Start?
+
+Begin your journey: **[`cd examples/basic && go run main.go`](basic/)**

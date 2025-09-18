@@ -86,9 +86,20 @@ func TestNewSemverVersion(t *testing.T) {
 			expectedPatch: 0,
 		},
 		{
-			name:        "invalid semver",
-			semverStr:   "1.2",
-			expectError: true,
+			name:          "valid major.minor format",
+			semverStr:     "1.2",
+			expectError:   false,
+			expectedMajor: 1,
+			expectedMinor: 2,
+			expectedPatch: 0,
+		},
+		{
+			name:          "valid major.minor with v prefix",
+			semverStr:     "v3.4",
+			expectError:   false,
+			expectedMajor: 3,
+			expectedMinor: 4,
+			expectedPatch: 0,
 		},
 		{
 			name:        "invalid semver format",

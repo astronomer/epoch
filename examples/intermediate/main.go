@@ -36,7 +36,6 @@ type UserV3 struct {
 	Email     string    `json:"email"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Version changes to handle migrations between versions
@@ -109,9 +108,6 @@ func (c *V2ToV3Change) MigrateRequest(ctx context.Context, data interface{}) (in
 		if _, hasCreatedAt := userMap["created_at"]; !hasCreatedAt {
 			userMap["created_at"] = time.Now().Format(time.RFC3339)
 		}
-		if _, hasUpdatedAt := userMap["updated_at"]; !hasUpdatedAt {
-			userMap["updated_at"] = time.Now().Format(time.RFC3339)
-		}
 	}
 	return data, nil
 }
@@ -121,7 +117,6 @@ func (c *V2ToV3Change) MigrateResponse(ctx context.Context, data interface{}) (i
 	if userMap, ok := data.(map[string]interface{}); ok {
 		delete(userMap, "status")
 		delete(userMap, "created_at")
-		delete(userMap, "updated_at")
 		return userMap, nil
 	}
 
@@ -131,7 +126,6 @@ func (c *V2ToV3Change) MigrateResponse(ctx context.Context, data interface{}) (i
 			if userMap, ok := user.(map[string]interface{}); ok {
 				delete(userMap, "status")
 				delete(userMap, "created_at")
-				delete(userMap, "updated_at")
 			}
 		}
 	}
@@ -147,7 +141,6 @@ var users = []UserV3{
 		Email:     "alice@example.com",
 		Status:    "active",
 		CreatedAt: time.Date(2023, 1, 15, 10, 30, 0, 0, time.UTC),
-		UpdatedAt: time.Date(2023, 12, 1, 14, 45, 0, 0, time.UTC),
 	},
 	{
 		ID:        2,
@@ -155,7 +148,6 @@ var users = []UserV3{
 		Email:     "bob@example.com",
 		Status:    "inactive",
 		CreatedAt: time.Date(2023, 3, 22, 9, 15, 0, 0, time.UTC),
-		UpdatedAt: time.Date(2023, 11, 15, 16, 20, 0, 0, time.UTC),
 	},
 	{
 		ID:        3,
@@ -163,7 +155,6 @@ var users = []UserV3{
 		Email:     "carol@example.com",
 		Status:    "active",
 		CreatedAt: time.Date(2023, 5, 8, 11, 0, 0, 0, time.UTC),
-		UpdatedAt: time.Date(2023, 12, 10, 13, 30, 0, 0, time.UTC),
 	},
 }
 
@@ -230,9 +221,6 @@ func handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if newUser.CreatedAt.IsZero() {
 		newUser.CreatedAt = now
 	}
-	if newUser.UpdatedAt.IsZero() {
-		newUser.UpdatedAt = now
-	}
 
 	users = append(users, newUser)
 
@@ -269,8 +257,6 @@ func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			if updateData.Status != "" {
 				users[i].Status = updateData.Status
 			}
-
-			users[i].UpdatedAt = time.Now()
 
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(users[i])
@@ -333,7 +319,8 @@ func handleAPIInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	fmt.Println("🚀 Starting Cadwyn-Go Complete API Example")
+	fmt.Println("🏗️  Cadwyn-Go Intermediate Example")
+	fmt.Println("Production-ready API server with versioning")
 
 	// Create Cadwyn application with fluent builder API
 	app, err := cadwyn.NewBuilder().

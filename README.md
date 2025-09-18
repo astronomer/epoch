@@ -289,19 +289,41 @@ for _, route := range app.GetRouteInfo() {
 
 ## 📁 Examples
 
-### Complete API Example
+Learn API versioning through a **clear progression** from basic to advanced:
 
-See [`examples/complete_api/`](./examples/complete_api/) for a comprehensive example featuring:
-
-- ✅ **3 API versions** with progressive field additions
-- ✅ **Full CRUD operations** with automatic version migration
-- ✅ **Multiple version changes** demonstrating real-world scenarios  
-- ✅ **Query parameters** and filtering
-- ✅ **Comprehensive testing** with curl commands
+#### 🚀 [Basic](examples/basic/) - **Start Here!**
+Learn the fundamentals: version detection, field migration, and core concepts.
 
 ```bash
-cd examples/complete_api
-go run main.go
+cd examples/basic && go run main.go
+```
+
+#### 🏗️ [Intermediate](examples/intermediate/) - **Production API**
+Build a real API server with multiple versions, CRUD operations, and HTTP routing.
+
+```bash
+cd examples/intermediate && go run main.go
+```
+
+#### ⚡ [Advanced](examples/advanced/) - **Complex Scenarios**  
+Master performance, concurrency, complex transformations, and production patterns.
+
+```bash
+cd examples/advanced && go run main.go
+```
+
+#### 🔧 [Features](examples/features/) - **Specific Capabilities**
+Explore focused demonstrations of particular Cadwyn-Go features.
+
+- **[Major.Minor Versioning](examples/features/major_minor_versioning/)** - Semantic versioning without patch numbers
+
+```bash
+cd examples/features/major_minor_versioning && go run main.go
+```
+
+**Validate everything works:**
+```bash
+go run validate_all.go
 ```
 
 ## 🧪 Testing
@@ -331,9 +353,11 @@ cd cadwyn-go
 # Run tests
 go test ./...
 
-# Run the example
-cd examples/complete_api
-go run main.go
+# Start with the basics
+cd examples/basic && go run main.go
+
+# Or validate everything works
+go run validate_all.go
 ```
 
 ## 📄 License
