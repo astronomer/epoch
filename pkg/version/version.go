@@ -2,7 +2,6 @@ package version
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
@@ -19,6 +18,18 @@ type Version struct {
 	Type VersionType
 	// IsHead indicates if this is the latest version
 	IsHead bool
+	// Changes associated with this version (like Python Cadwyn)
+	Changes []VersionChangeInterface
+}
+
+// VersionChangeInterface defines the interface for version changes
+// This will be implemented by our migration.VersionChange struct
+type VersionChangeInterface interface {
+	Description() string
+	FromVersion() *Version
+	ToVersion() *Version
+	GetSchemaInstructions() interface{} // Returns schema instructions
+	GetEnumInstructions() interface{}   // Returns enum instructions
 }
 
 // VersionType represents the format of a version
@@ -42,6 +53,28 @@ func (vt VersionType) String() string {
 	default:
 		return "unknown"
 	}
+}
+
+// NewVersion creates a new version with associated changes (like Python Cadwyn)
+func NewVersion(value string, changes ...VersionChangeInterface) (*Version, error) {
+	// Try to parse as date first
+	if date, err := time.Parse("2006-01-02", value); err == nil {
+		return &Version{
+			Raw:     value,
+			Date:    &date,
+			Type:    VersionTypeDate,
+			IsHead:  false,
+			Changes: changes,
+		}, nil
+	}
+
+	// Try to parse as semver
+	if version, err := NewSemverVersion(value); err == nil {
+		version.Changes = changes
+		return version, nil
+	}
+
+	return nil, fmt.Errorf("invalid version format: %s", value)
 }
 
 // NewDateVersion creates a new date-based version
@@ -97,11 +130,12 @@ func NewSemverVersion(semverStr string) (*Version, error) {
 }
 
 // NewHeadVersion creates a head (latest) version
-func NewHeadVersion() *Version {
+func NewHeadVersion(changes ...VersionChangeInterface) *Version {
 	return &Version{
-		Raw:    "head",
-		Type:   VersionTypeHead,
-		IsHead: true,
+		Raw:     "head",
+		Type:    VersionTypeHead,
+		IsHead:  true,
+		Changes: changes,
 	}
 }
 
@@ -209,123 +243,4 @@ func (v *Version) IsNewerThan(other *Version) bool {
 // Equal returns true if this version equals the other
 func (v *Version) Equal(other *Version) bool {
 	return v.Compare(other) == 0
-}
-
-// VersionBundle manages a collection of versions
-type VersionBundle struct {
-	versions    []*Version
-	headVersion *Version
-}
-
-// NewVersionBundle creates a new version bundle
-func NewVersionBundle(versions []*Version) *VersionBundle {
-	// Sort versions in ascending order (oldest to newest)
-	sortedVersions := make([]*Version, len(versions))
-	copy(sortedVersions, versions)
-
-	sort.Slice(sortedVersions, func(i, j int) bool {
-		return sortedVersions[i].Compare(sortedVersions[j]) < 0
-	})
-
-	// Find or create head version
-	var headVersion *Version
-	for _, v := range sortedVersions {
-		if v.IsHead {
-			headVersion = v
-			break
-		}
-	}
-
-	// If no explicit head version, create one
-	if headVersion == nil {
-		headVersion = NewHeadVersion()
-	}
-
-	return &VersionBundle{
-		versions:    sortedVersions,
-		headVersion: headVersion,
-	}
-}
-
-// GetVersions returns all versions in ascending order
-func (vb *VersionBundle) GetVersions() []*Version {
-	return vb.versions
-}
-
-// GetHeadVersion returns the head (latest) version
-func (vb *VersionBundle) GetHeadVersion() *Version {
-	return vb.headVersion
-}
-
-// GetLatestNonHeadVersion returns the latest non-head version
-func (vb *VersionBundle) GetLatestNonHeadVersion() *Version {
-	for i := len(vb.versions) - 1; i >= 0; i-- {
-		if !vb.versions[i].IsHead {
-			return vb.versions[i]
-		}
-	}
-	return nil
-}
-
-// FindVersion finds a version by its string representation
-func (vb *VersionBundle) FindVersion(versionStr string) *Version {
-	if versionStr == "head" || versionStr == "" {
-		return vb.headVersion
-	}
-
-	for _, v := range vb.versions {
-		if v.Raw == versionStr {
-			return v
-		}
-	}
-
-	return nil
-}
-
-// ParseVersion attempts to parse a version string into a Version object
-func (vb *VersionBundle) ParseVersion(versionStr string) (*Version, error) {
-	if versionStr == "head" || versionStr == "" {
-		return vb.headVersion, nil
-	}
-
-	// Try existing version first
-	if existing := vb.FindVersion(versionStr); existing != nil {
-		return existing, nil
-	}
-
-	// Try parsing as date
-	if dateVersion, err := NewDateVersion(versionStr); err == nil {
-		return dateVersion, nil
-	}
-
-	// Try parsing as semver
-	if semverVersion, err := NewSemverVersion(versionStr); err == nil {
-		return semverVersion, nil
-	}
-
-	return nil, fmt.Errorf("unable to parse version: %s", versionStr)
-}
-
-// AddVersion adds a new version to the bundle
-func (vb *VersionBundle) AddVersion(version *Version) {
-	vb.versions = append(vb.versions, version)
-
-	// Re-sort versions
-	sort.Slice(vb.versions, func(i, j int) bool {
-		return vb.versions[i].Compare(vb.versions[j]) < 0
-	})
-}
-
-// GetVersionsBetween returns all versions between from and to (inclusive)
-func (vb *VersionBundle) GetVersionsBetween(from, to *Version) []*Version {
-	var result []*Version
-
-	for _, v := range vb.versions {
-		if (v.Equal(from) || v.IsNewerThan(from)) &&
-			(v.Equal(to) || v.IsOlderThan(to)) {
-			result = append(result, v)
-		}
-	}
-
-	return result
 }
