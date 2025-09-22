@@ -1,11 +1,9 @@
-package migration
+package cadwyn
 
 import (
 	"context"
 	"fmt"
 	"reflect"
-
-	"github.com/isaacchung/cadwyn-go/pkg/version"
 )
 
 // VersionChange defines a set of instructions for migrating between two API versions
@@ -25,8 +23,8 @@ type VersionChange struct {
 	alterResponseByPathInstructions   map[string][]*AlterResponseInstruction
 
 	// Version information
-	fromVersion *version.Version
-	toVersion   *version.Version
+	fromVersion *Version
+	toVersion   *Version
 
 	// Route mappings (like Python's _route_to_*_mapping)
 	routeToRequestMigrationMapping  map[int][]*AlterRequestInstruction
@@ -34,7 +32,7 @@ type VersionChange struct {
 }
 
 // NewVersionChange creates a new version change with the given description and instructions
-func NewVersionChange(description string, fromVersion, toVersion *version.Version, instructions ...interface{}) *VersionChange {
+func NewVersionChange(description string, fromVersion, toVersion *Version, instructions ...interface{}) *VersionChange {
 	vc := &VersionChange{
 		description:                            description,
 		fromVersion:                            fromVersion,
@@ -147,12 +145,12 @@ func (vc *VersionChange) MigrateResponse(ctx context.Context, responseInfo *Resp
 }
 
 // FromVersion returns the version this change migrates from
-func (vc *VersionChange) FromVersion() *version.Version {
+func (vc *VersionChange) FromVersion() *Version {
 	return vc.fromVersion
 }
 
 // ToVersion returns the version this change migrates to
-func (vc *VersionChange) ToVersion() *version.Version {
+func (vc *VersionChange) ToVersion() *Version {
 	return vc.toVersion
 }
 
@@ -227,7 +225,7 @@ func NewMigrationChain(changes []*VersionChange) *MigrationChain {
 }
 
 // MigrateRequest applies all changes in the chain for request migration
-func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *RequestInfo, from, to *version.Version, bodyType reflect.Type, routeID int) error {
+func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *RequestInfo, from, to *Version, bodyType reflect.Type, routeID int) error {
 	// Find the starting point in the version chain
 	start := -1
 	for i, change := range mc.changes {
@@ -262,7 +260,7 @@ func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *Reque
 }
 
 // MigrateResponse applies all changes in reverse for response migration
-func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *ResponseInfo, from, to *version.Version, responseType reflect.Type, routeID int) error {
+func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *ResponseInfo, from, to *Version, responseType reflect.Type, routeID int) error {
 	// Find the ending point in the version chain
 	end := -1
 	for i, change := range mc.changes {

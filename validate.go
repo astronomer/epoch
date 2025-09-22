@@ -18,7 +18,7 @@ type validationTest struct {
 var tests = []validationTest{
 	{
 		name:        "Core Package Tests",
-		command:     "go test ./pkg/...",
+		command:     "go test ./cadwyn/...",
 		description: "Run all unit tests for core packages",
 	},
 	{
@@ -35,6 +35,11 @@ var tests = []validationTest{
 		name:        "Advanced Example",
 		command:     "go run examples/advanced/main.go",
 		description: "Complex version changes and migrations",
+	},
+	{
+		name:        "Gin Server Compilation",
+		command:     "go build examples/gin_server/main.go",
+		description: "Verify Gin server example compiles",
 	},
 }
 

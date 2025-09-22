@@ -4,8 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/isaacchung/cadwyn-go/pkg/cadwyn"
-	"github.com/isaacchung/cadwyn-go/pkg/migration"
+	"github.com/isaacchung/cadwyn-go/cadwyn"
 )
 
 // UserV1 - Original user model
@@ -76,9 +75,9 @@ func main() {
 
 func demonstrateMigrations() {
 	// Create a simple migration instruction
-	requestInstruction := &migration.AlterRequestInstruction{
+	requestInstruction := &cadwyn.AlterRequestInstruction{
 		Schemas: []interface{}{UserV1{}},
-		Transformer: func(requestInfo *migration.RequestInfo) error {
+		Transformer: func(requestInfo *cadwyn.RequestInfo) error {
 			if userMap, ok := requestInfo.Body.(map[string]interface{}); ok {
 				// Add email field for v1 -> v2 migration
 				if _, hasEmail := userMap["email"]; !hasEmail {
@@ -91,9 +90,9 @@ func demonstrateMigrations() {
 		},
 	}
 
-	responseInstruction := &migration.AlterResponseInstruction{
+	responseInstruction := &cadwyn.AlterResponseInstruction{
 		Schemas: []interface{}{UserV2{}},
-		Transformer: func(responseInfo *migration.ResponseInfo) error {
+		Transformer: func(responseInfo *cadwyn.ResponseInfo) error {
 			if userMap, ok := responseInfo.Body.(map[string]interface{}); ok {
 				// Remove email field for v2 -> v1 migration
 				delete(userMap, "email")
@@ -106,7 +105,7 @@ func demonstrateMigrations() {
 
 	// Test request migration
 	fmt.Println("   Testing Request Migration (v1 -> v2):")
-	requestInfo := &migration.RequestInfo{
+	requestInfo := &cadwyn.RequestInfo{
 		Body: map[string]interface{}{
 			"id":   1,
 			"name": "John Doe",
@@ -117,7 +116,7 @@ func demonstrateMigrations() {
 
 	// Test response migration
 	fmt.Println("   Testing Response Migration (v2 -> v1):")
-	responseInfo := &migration.ResponseInfo{
+	responseInfo := &cadwyn.ResponseInfo{
 		Body: map[string]interface{}{
 			"id":    1,
 			"name":  "John Doe",

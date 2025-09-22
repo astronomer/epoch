@@ -1,35 +1,37 @@
-package migration
+package cadwyn
 
 import (
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
-// RequestInfo contains information about an HTTP request for migration
+// RequestInfo contains information about a Gin request for migration
 type RequestInfo struct {
 	Body        interface{}
 	Headers     http.Header
 	Cookies     map[string]string
 	QueryParams map[string]string
-	Request     *http.Request
+	GinContext  *gin.Context
 }
 
-// NewRequestInfo creates a new RequestInfo from an HTTP request
-func NewRequestInfo(r *http.Request, body interface{}) *RequestInfo {
+// NewRequestInfo creates a new RequestInfo from a Gin context
+func NewRequestInfo(c *gin.Context, body interface{}) *RequestInfo {
 	// Copy headers
 	headers := make(http.Header)
-	for k, v := range r.Header {
+	for k, v := range c.Request.Header {
 		headers[k] = v
 	}
 
 	// Copy cookies
 	cookies := make(map[string]string)
-	for _, cookie := range r.Cookies() {
+	for _, cookie := range c.Request.Cookies() {
 		cookies[cookie.Name] = cookie.Value
 	}
 
 	// Copy query params
 	queryParams := make(map[string]string)
-	for k, v := range r.URL.Query() {
+	for k, v := range c.Request.URL.Query() {
 		if len(v) > 0 {
 			queryParams[k] = v[0]
 		}
@@ -40,38 +42,38 @@ func NewRequestInfo(r *http.Request, body interface{}) *RequestInfo {
 		Headers:     headers,
 		Cookies:     cookies,
 		QueryParams: queryParams,
-		Request:     r,
+		GinContext:  c,
 	}
 }
 
-// ResponseInfo contains information about an HTTP response for migration
+// ResponseInfo contains information about a Gin response for migration
 type ResponseInfo struct {
 	Body       interface{}
 	StatusCode int
 	Headers    http.Header
-	response   http.ResponseWriter
+	GinContext *gin.Context
 }
 
-// NewResponseInfo creates a new ResponseInfo from an HTTP response
-func NewResponseInfo(w http.ResponseWriter, body interface{}) *ResponseInfo {
+// NewResponseInfo creates a new ResponseInfo from a Gin context
+func NewResponseInfo(c *gin.Context, body interface{}) *ResponseInfo {
 	// Copy headers
 	headers := make(http.Header)
-	for k, v := range w.Header() {
+	for k, v := range c.Writer.Header() {
 		headers[k] = v
 	}
 
 	return &ResponseInfo{
 		Body:       body,
-		StatusCode: 200, // Default status code
+		StatusCode: c.Writer.Status(),
 		Headers:    headers,
-		response:   w,
+		GinContext: c,
 	}
 }
 
 // SetCookie sets a cookie on the response
 func (r *ResponseInfo) SetCookie(cookie *http.Cookie) {
-	if r.response != nil {
-		http.SetCookie(r.response, cookie)
+	if r.GinContext != nil {
+		r.GinContext.SetCookie(cookie.Name, cookie.Value, cookie.MaxAge, cookie.Path, cookie.Domain, cookie.Secure, cookie.HttpOnly)
 	}
 }
 

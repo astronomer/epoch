@@ -15,6 +15,11 @@ Cadwyn-Go is a Go implementation inspired by [Python Cadwyn](https://github.com/
 - **🏗️ Builder Pattern** - Fluent API for easy configuration
 - **🧪 Type-Safe** - Full Go type safety with compile-time checks
 - **📦 Lightweight** - Minimal dependencies, focused on core functionality
+- **🌐 Gin Integration** - Built-in Gin server with version-aware routing and middleware
+- **🔧 Schema Generation** - Generate version-specific Go structs
+- **⚡ Version Detection Middleware** - Automatic version detection from headers/query/path
+- **📚 Auto-Documentation** - Built-in API docs and changelog generation
+- **🎛️ Waterfall Versioning** - Smart routing to closest available version
 
 ## 🚀 Quick Start
 
@@ -123,17 +128,59 @@ Transform data between versions:
 
 ## 📚 Examples
 
-### Basic Example
+### Basic Example - Getting Started
 ```bash
 cd examples/basic && go run main.go
 ```
 
-### Advanced Example  
+### Advanced Example - Complex Migrations
 ```bash
 cd examples/advanced && go run main.go
 ```
 
+### Gin Server Example - Full Integration
+```bash
+cd examples/gin_server && go run main.go
+# Then visit http://localhost:8080/docs
+```
+
+Try different version headers:
+```bash
+# v1.0 (no phone field)
+curl -H "X-API-Version: 1.0" http://localhost:8080/users
+
+# v2.0 (with phone field)  
+curl -H "X-API-Version: 2.0" http://localhost:8080/users
+
+# Latest version (default)
+curl http://localhost:8080/users
+```
+
 ## 🔧 API Reference
+
+### Gin Server Integration
+
+```go
+app, err := cadwyn.NewBuilder().
+    WithSemverVersions("1.0", "2.0").
+    WithHeadVersion().
+    WithHTTPServer(true).
+    WithVersionLocation(middleware.VersionLocationHeader).
+    WithVersionParameter("X-API-Version").
+    WithTitle("My API").
+    WithSchemaGeneration(true).
+    WithChangelog(true).
+    Build()
+
+// Get the HTTP application
+httpApp := app.GetHTTPApp()
+
+// Register routes
+httpApp.HandleFunc("/users", userHandler)
+
+// Start server
+httpApp.ListenAndServe(":8080")
+```
 
 ### Builder Pattern
 
@@ -142,6 +189,7 @@ app, err := cadwyn.NewBuilder().
     WithSemverVersions("1.0", "2.0", "3.0").
     WithHeadVersion().
     WithVersionChanges(change1, change2).
+    WithDebugLogging(true).
     Build()
 ```
 
@@ -191,6 +239,31 @@ Run examples:
 ```bash
 go run examples/basic/main.go
 go run examples/advanced/main.go
+go run examples/gin_server/main.go  # Starts Gin server on :8080
+```
+
+### Schema Generation
+
+```go
+// Generate version-specific struct code
+generator := app.GetSchemaGenerator()
+structCode, err := generator.GenerateStruct(reflect.TypeOf(User{}), "1.0")
+fmt.Println(structCode)
+```
+
+### Version Detection
+
+```go
+// Automatic version detection from:
+// - Headers: X-API-Version: 1.0
+// - Query: ?version=1.0  
+// - Path: /v1.0/users
+
+// In your handler:
+func userHandler(w http.ResponseWriter, r *http.Request) {
+    version := middleware.GetVersionFromContext(r.Context())
+    // Handle version-specific logic
+}
 ```
 
 ## 🤝 Contributing

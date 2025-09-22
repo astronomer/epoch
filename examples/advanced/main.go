@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/isaacchung/cadwyn-go/pkg/migration"
-	"github.com/isaacchung/cadwyn-go/pkg/version"
+	"github.com/gin-gonic/gin"
+	"github.com/isaacchung/cadwyn-go/cadwyn"
 )
 
 // UserV1 - Original user model
@@ -23,23 +23,25 @@ type UserV2 struct {
 
 // Advanced example showing complex version changes and migrations
 func main() {
+	gin.SetMode(gin.ReleaseMode) // Quiet Gin for cleaner output
+
 	fmt.Println("🚀 Cadwyn-Go - Advanced Example")
 	fmt.Println("Complex Version Changes & Migration Instructions")
 	fmt.Println(strings.Repeat("=", 60))
 
 	// Create versions (like Python Cadwyn)
-	v1, _ := version.NewVersion("1.0")
-	v2, _ := version.NewVersion("2.0")
-	head := version.NewHeadVersion()
+	v1, _ := cadwyn.NewVersion("1.0")
+	v2, _ := cadwyn.NewVersion("2.0")
+	head := cadwyn.NewHeadVersion()
 
 	// Create version changes with instructions (like Python Cadwyn)
 	v1ToV2Change := createV1ToV2Change(v1, v2)
 
 	// Add changes to versions
-	v2.Changes = []version.VersionChangeInterface{v1ToV2Change}
+	v2.Changes = []cadwyn.VersionChangeInterface{v1ToV2Change}
 
 	// Create version bundle
-	bundle := version.NewVersionBundle([]*version.Version{v1, v2, head})
+	bundle := cadwyn.NewVersionBundle([]*cadwyn.Version{v1, v2, head})
 
 	fmt.Printf("✅ Created version bundle with %d versions\n", len(bundle.GetVersions()))
 	fmt.Printf("✅ Head version: %s\n", bundle.GetHeadVersion().String())
@@ -57,11 +59,11 @@ func main() {
 }
 
 // createV1ToV2Change creates a version change using the new instruction-based approach
-func createV1ToV2Change(from, to *version.Version) *SimpleVersionChange {
+func createV1ToV2Change(from, to *cadwyn.Version) *SimpleVersionChange {
 	// Create request migration instruction
-	requestInstruction := &migration.AlterRequestInstruction{
+	requestInstruction := &cadwyn.AlterRequestInstruction{
 		Schemas: []interface{}{UserV1{}},
-		Transformer: func(requestInfo *migration.RequestInfo) error {
+		Transformer: func(requestInfo *cadwyn.RequestInfo) error {
 			if userMap, ok := requestInfo.Body.(map[string]interface{}); ok {
 				// Add email field if it doesn't exist
 				if _, hasEmail := userMap["email"]; !hasEmail {
@@ -74,9 +76,9 @@ func createV1ToV2Change(from, to *version.Version) *SimpleVersionChange {
 	}
 
 	// Create response migration instruction
-	responseInstruction := &migration.AlterResponseInstruction{
+	responseInstruction := &cadwyn.AlterResponseInstruction{
 		Schemas: []interface{}{UserV2{}},
-		Transformer: func(responseInfo *migration.ResponseInfo) error {
+		Transformer: func(responseInfo *cadwyn.ResponseInfo) error {
 			// For v1 clients, remove the email field from responses
 			if userMap, ok := responseInfo.Body.(map[string]interface{}); ok {
 				delete(userMap, "email")
@@ -98,21 +100,21 @@ func createV1ToV2Change(from, to *version.Version) *SimpleVersionChange {
 // SimpleVersionChange implements the new architecture
 type SimpleVersionChange struct {
 	description         string
-	fromVersion         *version.Version
-	toVersion           *version.Version
-	requestInstruction  *migration.AlterRequestInstruction
-	responseInstruction *migration.AlterResponseInstruction
+	fromVersion         *cadwyn.Version
+	toVersion           *cadwyn.Version
+	requestInstruction  *cadwyn.AlterRequestInstruction
+	responseInstruction *cadwyn.AlterResponseInstruction
 }
 
 func (svc *SimpleVersionChange) Description() string {
 	return svc.description
 }
 
-func (svc *SimpleVersionChange) FromVersion() *version.Version {
+func (svc *SimpleVersionChange) FromVersion() *cadwyn.Version {
 	return svc.fromVersion
 }
 
-func (svc *SimpleVersionChange) ToVersion() *version.Version {
+func (svc *SimpleVersionChange) ToVersion() *cadwyn.Version {
 	return svc.toVersion
 }
 
@@ -124,7 +126,7 @@ func (svc *SimpleVersionChange) GetEnumInstructions() interface{} {
 	return []interface{}{} // Placeholder
 }
 
-func demonstrateNewArchitecture(bundle *version.VersionBundle) {
+func demonstrateNewArchitecture(bundle *cadwyn.VersionBundle) {
 	fmt.Println("\n🧪 Testing Advanced Features:")
 
 	// Test version parsing
@@ -149,7 +151,7 @@ func demonstrateNewArchitecture(bundle *version.VersionBundle) {
 	testMigrations(bundle)
 }
 
-func testMigrations(bundle *version.VersionBundle) {
+func testMigrations(bundle *cadwyn.VersionBundle) {
 	// Simulate a request migration
 	fmt.Println("   📥 Request Migration (v1.0 -> v2.0):")
 
@@ -167,7 +169,7 @@ func testMigrations(bundle *version.VersionBundle) {
 		change := v2.Changes[0].(*SimpleVersionChange)
 
 		// Create request info
-		requestInfo := &migration.RequestInfo{
+		requestInfo := &cadwyn.RequestInfo{
 			Body: originalRequest,
 		}
 
@@ -197,7 +199,7 @@ func testMigrations(bundle *version.VersionBundle) {
 		change := v2.Changes[0].(*SimpleVersionChange)
 
 		// Create response info
-		responseInfo := &migration.ResponseInfo{
+		responseInfo := &cadwyn.ResponseInfo{
 			Body: originalResponse,
 		}
 
