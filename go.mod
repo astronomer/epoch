@@ -2,7 +2,11 @@ module github.com/isaacchung/cadwyn-go
 
 go 1.24.4
 
-require github.com/gin-gonic/gin v1.10.0
+require (
+	github.com/gin-gonic/gin v1.10.0
+	github.com/onsi/ginkgo/v2 v2.13.2
+	github.com/onsi/gomega v1.30.0
+)
 
 require (
 	github.com/bytedance/sonic v1.11.6 // indirect
