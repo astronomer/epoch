@@ -38,6 +38,7 @@ type VersionType int
 const (
 	VersionTypeDate VersionType = iota
 	VersionTypeSemver
+	VersionTypeString
 	VersionTypeHead
 )
 
@@ -48,6 +49,8 @@ func (vt VersionType) String() string {
 		return "date"
 	case VersionTypeSemver:
 		return "semver"
+	case VersionTypeString:
+		return "string"
 	case VersionTypeHead:
 		return "head"
 	default:
@@ -74,7 +77,9 @@ func NewVersion(value string, changes ...VersionChangeInterface) (*Version, erro
 		return version, nil
 	}
 
-	return nil, fmt.Errorf("invalid version format: %s", value)
+	// Fallback to string version
+	version := NewStringVersion(value, changes...)
+	return version, nil
 }
 
 // NewDateVersion creates a new date-based version
@@ -127,6 +132,16 @@ func NewSemverVersion(semverStr string) (*Version, error) {
 	}
 
 	return nil, fmt.Errorf("invalid semver format '%s': expected major.minor.patch or major.minor", semverStr)
+}
+
+// NewStringVersion creates a new string-based version
+func NewStringVersion(versionStr string, changes ...VersionChangeInterface) *Version {
+	return &Version{
+		Raw:     versionStr,
+		Type:    VersionTypeString,
+		IsHead:  false,
+		Changes: changes,
+	}
 }
 
 // NewHeadVersion creates a head (latest) version

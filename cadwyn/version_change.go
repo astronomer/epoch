@@ -303,3 +303,25 @@ func (mc *MigrationChain) AddChange(change *VersionChange) {
 func (mc *MigrationChain) GetChanges() []*VersionChange {
 	return mc.changes
 }
+
+// GetMigrationPath returns the changes needed to migrate from one version to another
+func (mc *MigrationChain) GetMigrationPath(from, to *Version) []*VersionChange {
+	var path []*VersionChange
+
+	// Find changes that apply between the two versions
+	for _, change := range mc.changes {
+		// If migrating forward (from older to newer)
+		if from.IsOlderThan(to) {
+			if change.FromVersion().Equal(from) || (change.FromVersion().IsOlderThan(to) && change.FromVersion().IsNewerThan(from)) {
+				path = append(path, change)
+			}
+		} else {
+			// If migrating backward (from newer to older)
+			if change.ToVersion().Equal(to) || (change.ToVersion().IsNewerThan(to) && change.ToVersion().IsOlderThan(from)) {
+				path = append(path, change)
+			}
+		}
+	}
+
+	return path
+}

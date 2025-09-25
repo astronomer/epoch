@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/isaacchung/cadwyn-go/cadwyn"
 )
 
@@ -21,194 +20,261 @@ type UserV2 struct {
 	Email string `json:"email"`
 }
 
+// UserV3 - Added phone and status fields
+type UserV3 struct {
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Email  string `json:"email"`
+	Phone  string `json:"phone"`
+	Status string `json:"status"`
+}
+
 // Advanced example showing complex version changes and migrations
 func main() {
-	gin.SetMode(gin.ReleaseMode) // Quiet Gin for cleaner output
-
 	fmt.Println("🚀 Cadwyn-Go - Advanced Example")
 	fmt.Println("Complex Version Changes & Migration Instructions")
 	fmt.Println(strings.Repeat("=", 60))
 
-	// Create versions (like Python Cadwyn)
-	v1, _ := cadwyn.NewVersion("1.0")
-	v2, _ := cadwyn.NewVersion("2.0")
+	// Create versions using date-based versioning
+	v1, _ := cadwyn.NewDateVersion("2023-01-01")
+	v2, _ := cadwyn.NewDateVersion("2023-06-01")
+	v3, _ := cadwyn.NewDateVersion("2024-01-01")
 	head := cadwyn.NewHeadVersion()
 
-	// Create version changes with instructions (like Python Cadwyn)
+	// Create version changes with instructions
 	v1ToV2Change := createV1ToV2Change(v1, v2)
+	v2ToV3Change := createV2ToV3Change(v2, v3)
 
-	// Add changes to versions
-	v2.Changes = []cadwyn.VersionChangeInterface{v1ToV2Change}
+	// Create Cadwyn instance with all versions and changes
+	cadwynInstance, err := cadwyn.NewCadwyn().
+		WithVersions(v1, v2, v3, head).
+		WithChanges(v1ToV2Change, v2ToV3Change).
+		WithTypes(UserV1{}, UserV2{}, UserV3{}).
+		WithVersionLocation(cadwyn.VersionLocationHeader).
+		WithVersionParameter("X-API-Version").
+		WithVersionFormat(cadwyn.VersionFormatDate).
+		Build()
 
-	// Create version bundle
-	bundle := cadwyn.NewVersionBundle([]*cadwyn.Version{v1, v2, head})
+	if err != nil {
+		fmt.Printf("❌ Error creating Cadwyn instance: %v\n", err)
+		return
+	}
 
-	fmt.Printf("✅ Created version bundle with %d versions\n", len(bundle.GetVersions()))
-	fmt.Printf("✅ Head version: %s\n", bundle.GetHeadVersion().String())
+	fmt.Printf("✅ Created Cadwyn instance with %d versions\n", len(cadwynInstance.GetVersions()))
+	fmt.Printf("✅ Head version: %s\n", cadwynInstance.GetHeadVersion().String())
 
-	// Demonstrate the new architecture
-	demonstrateNewArchitecture(bundle)
+	// Demonstrate advanced features
+	demonstrateVersionBundle(cadwynInstance)
+	demonstrateMigrationChain(cadwynInstance)
+	demonstrateSchemaGeneration(cadwynInstance)
 
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println("🎉 Advanced Example Complete!")
-	fmt.Println("📚 Advanced Features Demonstrated:")
-	fmt.Println("   • Complex version change instructions")
-	fmt.Println("   • Schema-based request/response migrations")
-	fmt.Println("   • Version bundle management")
-	fmt.Println("   • Instruction-based transformation pipeline")
+	fmt.Println("📚 Key Features Demonstrated:")
+	fmt.Println("   • Multi-version API with complex changes")
+	fmt.Println("   • Migration chains for request/response transformation")
+	fmt.Println("   • Schema generation for different versions")
+	fmt.Println("   • Date-based versioning")
 }
 
-// createV1ToV2Change creates a version change using the new instruction-based approach
-func createV1ToV2Change(from, to *cadwyn.Version) *SimpleVersionChange {
-	// Create request migration instruction
-	requestInstruction := &cadwyn.AlterRequestInstruction{
-		Schemas: []interface{}{UserV1{}},
-		Transformer: func(requestInfo *cadwyn.RequestInfo) error {
-			if userMap, ok := requestInfo.Body.(map[string]interface{}); ok {
-				// Add email field if it doesn't exist
-				if _, hasEmail := userMap["email"]; !hasEmail {
-					userMap["email"] = "default@example.com"
-				}
-				requestInfo.Body = userMap
-			}
-			return nil
-		},
+func demonstrateVersionBundle(cadwynInstance *cadwyn.Cadwyn) {
+	fmt.Println("\n📦 Version Bundle Operations:")
+
+	// Show all versions
+	versions := cadwynInstance.GetVersions()
+	fmt.Printf("   Available versions: ")
+	for i, v := range versions {
+		if i > 0 {
+			fmt.Print(", ")
+		}
+		fmt.Print(v.String())
 	}
-
-	// Create response migration instruction
-	responseInstruction := &cadwyn.AlterResponseInstruction{
-		Schemas: []interface{}{UserV2{}},
-		Transformer: func(responseInfo *cadwyn.ResponseInfo) error {
-			// For v1 clients, remove the email field from responses
-			if userMap, ok := responseInfo.Body.(map[string]interface{}); ok {
-				delete(userMap, "email")
-				responseInfo.Body = userMap
-			}
-			return nil
-		},
-	}
-
-	return &SimpleVersionChange{
-		description:         "v1→v2: Add email field",
-		fromVersion:         from,
-		toVersion:           to,
-		requestInstruction:  requestInstruction,
-		responseInstruction: responseInstruction,
-	}
-}
-
-// SimpleVersionChange implements the new architecture
-type SimpleVersionChange struct {
-	description         string
-	fromVersion         *cadwyn.Version
-	toVersion           *cadwyn.Version
-	requestInstruction  *cadwyn.AlterRequestInstruction
-	responseInstruction *cadwyn.AlterResponseInstruction
-}
-
-func (svc *SimpleVersionChange) Description() string {
-	return svc.description
-}
-
-func (svc *SimpleVersionChange) FromVersion() *cadwyn.Version {
-	return svc.fromVersion
-}
-
-func (svc *SimpleVersionChange) ToVersion() *cadwyn.Version {
-	return svc.toVersion
-}
-
-func (svc *SimpleVersionChange) GetSchemaInstructions() interface{} {
-	return []interface{}{} // Placeholder
-}
-
-func (svc *SimpleVersionChange) GetEnumInstructions() interface{} {
-	return []interface{}{} // Placeholder
-}
-
-func demonstrateNewArchitecture(bundle *cadwyn.VersionBundle) {
-	fmt.Println("\n🧪 Testing Advanced Features:")
+	fmt.Println()
 
 	// Test version parsing
-	fmt.Println("\n1. 📋 Version Parsing:")
-	testVersions := []string{"1.0", "2.0", "head", "invalid"}
+	testVersions := []string{"2023-01-01", "2023-06-01", "2024-01-01", "head", "invalid"}
+	fmt.Println("   Version parsing results:")
 	for _, vStr := range testVersions {
-		if v, err := bundle.ParseVersion(vStr); err == nil {
-			fmt.Printf("   ✅ %s -> %s (Type: %s)\n", vStr, v.String(), v.Type.String())
+		if v, err := cadwynInstance.ParseVersion(vStr); err == nil {
+			fmt.Printf("      ✅ '%s' -> %s (Type: %s)\n", vStr, v.String(), v.Type.String())
 		} else {
-			fmt.Printf("   ❌ %s -> Error: %s\n", vStr, err.Error())
+			fmt.Printf("      ❌ '%s' -> Error: %s\n", vStr, err.Error())
 		}
 	}
 
-	// Test version bundle functionality
-	fmt.Println("\n2. 📦 Version Bundle:")
-	fmt.Printf("   • Total versions: %d\n", len(bundle.GetVersions()))
-	fmt.Printf("   • Head version: %s\n", bundle.GetHeadVersion().String())
-	fmt.Printf("   • Version values: %v\n", bundle.GetVersionValues())
-
-	// Test instruction-based migrations
-	fmt.Println("\n3. 🔄 Instruction-Based Migrations:")
-	testMigrations(bundle)
+	// Show version relationships
+	fmt.Println("   Version relationships:")
+	for i, v := range versions {
+		if i == 0 {
+			continue
+		}
+		prev := versions[i-1]
+		if v.IsNewerThan(prev) {
+			fmt.Printf("      %s > %s ✅\n", v.String(), prev.String())
+		}
+	}
 }
 
-func testMigrations(bundle *cadwyn.VersionBundle) {
-	// Simulate a request migration
-	fmt.Println("   📥 Request Migration (v1.0 -> v2.0):")
+func demonstrateMigrationChain(cadwynInstance *cadwyn.Cadwyn) {
+	fmt.Println("\n🔄 Migration Chain Operations:")
 
-	// Original v1 request (missing email)
-	originalRequest := map[string]interface{}{
-		"id":   1,
-		"name": "John Doe",
+	migrationChain := cadwynInstance.GetMigrationChain()
+	changes := migrationChain.GetChanges()
+
+	fmt.Printf("   Migration chain has %d changes:\n", len(changes))
+	for i, change := range changes {
+		fmt.Printf("      %d. %s (%s -> %s)\n",
+			i+1,
+			change.Description(),
+			change.FromVersion().String(),
+			change.ToVersion().String())
 	}
 
-	fmt.Printf("      Before: %+v\n", originalRequest)
+	// Demonstrate migration path calculation
+	versions := cadwynInstance.GetVersions()
+	if len(versions) >= 3 {
+		from := versions[0] // 2023-01-01
+		to := versions[2]   // 2024-01-01
 
-	// Find the version change
-	v2 := bundle.GetVersions()[1] // v2.0
-	if len(v2.Changes) > 0 {
-		change := v2.Changes[0].(*SimpleVersionChange)
-
-		// Create request info
-		requestInfo := &cadwyn.RequestInfo{
-			Body: originalRequest,
+		fmt.Printf("   Migration path from %s to %s:\n", from.String(), to.String())
+		path := migrationChain.GetMigrationPath(from, to)
+		for i, change := range path {
+			fmt.Printf("      %d. %s\n", i+1, change.Description())
 		}
+	}
+}
 
-		// Apply migration
-		if err := change.requestInstruction.Transformer(requestInfo); err == nil {
-			fmt.Printf("      After:  %+v\n", requestInfo.Body)
-			fmt.Printf("      ✅ Email field added successfully\n")
+func demonstrateSchemaGeneration(cadwynInstance *cadwyn.Cadwyn) {
+	fmt.Println("\n🏗️  Schema Generation:")
+
+	schemaGenerator := cadwynInstance.GetSchemaGenerator()
+	if schemaGenerator == nil {
+		fmt.Println("   ❌ Schema generation not available")
+		return
+	}
+
+	// Generate structs for different versions
+	testVersions := []string{"2023-01-01", "2023-06-01", "2024-01-01", "head"}
+
+	for _, version := range testVersions {
+		fmt.Printf("   Generating UserV3 for version %s:\n", version)
+		if generatedCode, err := cadwynInstance.GenerateStructForVersion(UserV3{}, version); err == nil {
+			// Show just the struct definition part
+			lines := strings.Split(generatedCode, "\n")
+			inStruct := false
+			structLines := 0
+
+			for _, line := range lines {
+				if strings.Contains(line, "type UserV3 struct") {
+					inStruct = true
+				}
+				if inStruct {
+					fmt.Printf("      %s\n", line)
+					structLines++
+					if strings.Contains(line, "}") && structLines > 1 {
+						break
+					}
+				}
+			}
 		} else {
-			fmt.Printf("      ❌ Migration failed: %s\n", err.Error())
+			fmt.Printf("      ❌ Error: %s\n", err.Error())
 		}
+		fmt.Println()
 	}
+}
 
-	// Simulate a response migration
-	fmt.Println("   📤 Response Migration (v2.0 -> v1.0):")
+func createV1ToV2Change(from, to *cadwyn.Version) *cadwyn.VersionChange {
+	return cadwyn.NewVersionChange(
+		"Add email field to User model",
+		from,
+		to,
+		&cadwyn.AlterRequestInstruction{
+			Schemas: []interface{}{UserV1{}},
+			Transformer: func(requestInfo *cadwyn.RequestInfo) error {
+				if userMap, ok := requestInfo.Body.(map[string]interface{}); ok {
+					// Add default email for v1 -> v2 migration
+					if _, hasEmail := userMap["email"]; !hasEmail {
+						userMap["email"] = "user@example.com"
+					}
+					requestInfo.Body = userMap
+				}
+				return nil
+			},
+		},
+		&cadwyn.AlterResponseInstruction{
+			Schemas: []interface{}{UserV2{}},
+			Transformer: func(responseInfo *cadwyn.ResponseInfo) error {
+				if userMap, ok := responseInfo.Body.(map[string]interface{}); ok {
+					// Remove email for v2 -> v1 migration
+					delete(userMap, "email")
+					responseInfo.Body = userMap
+				}
+				return nil
+			},
+		},
+		&cadwyn.SchemaInstruction{
+			Schema: UserV2{},
+			Name:   "email",
+			Type:   "field_added",
+			Attributes: map[string]interface{}{
+				"type":     "string",
+				"required": true,
+			},
+		},
+	)
+}
 
-	// Original v2 response (with email)
-	originalResponse := map[string]interface{}{
-		"id":    1,
-		"name":  "John Doe",
-		"email": "john@example.com",
-	}
-
-	fmt.Printf("      Before: %+v\n", originalResponse)
-
-	// Apply reverse migration
-	if len(v2.Changes) > 0 {
-		change := v2.Changes[0].(*SimpleVersionChange)
-
-		// Create response info
-		responseInfo := &cadwyn.ResponseInfo{
-			Body: originalResponse,
-		}
-
-		// Apply migration
-		if err := change.responseInstruction.Transformer(responseInfo); err == nil {
-			fmt.Printf("      After:  %+v\n", responseInfo.Body)
-			fmt.Printf("      ✅ Email field removed for v1 client\n")
-		} else {
-			fmt.Printf("      ❌ Migration failed: %s\n", err.Error())
-		}
-	}
+func createV2ToV3Change(from, to *cadwyn.Version) *cadwyn.VersionChange {
+	return cadwyn.NewVersionChange(
+		"Add phone and status fields to User model",
+		from,
+		to,
+		&cadwyn.AlterRequestInstruction{
+			Schemas: []interface{}{UserV2{}},
+			Transformer: func(requestInfo *cadwyn.RequestInfo) error {
+				if userMap, ok := requestInfo.Body.(map[string]interface{}); ok {
+					// Add default phone and status for v2 -> v3 migration
+					if _, hasPhone := userMap["phone"]; !hasPhone {
+						userMap["phone"] = ""
+					}
+					if _, hasStatus := userMap["status"]; !hasStatus {
+						userMap["status"] = "active"
+					}
+					requestInfo.Body = userMap
+				}
+				return nil
+			},
+		},
+		&cadwyn.AlterResponseInstruction{
+			Schemas: []interface{}{UserV3{}},
+			Transformer: func(responseInfo *cadwyn.ResponseInfo) error {
+				if userMap, ok := responseInfo.Body.(map[string]interface{}); ok {
+					// Remove phone and status for v3 -> v2 migration
+					delete(userMap, "phone")
+					delete(userMap, "status")
+					responseInfo.Body = userMap
+				}
+				return nil
+			},
+		},
+		&cadwyn.SchemaInstruction{
+			Schema: UserV3{},
+			Name:   "phone",
+			Type:   "field_added",
+			Attributes: map[string]interface{}{
+				"type":     "string",
+				"required": false,
+			},
+		},
+		&cadwyn.SchemaInstruction{
+			Schema: UserV3{},
+			Name:   "status",
+			Type:   "field_added",
+			Attributes: map[string]interface{}{
+				"type":     "string",
+				"required": true,
+				"default":  "active",
+			},
+		},
+	)
 }

@@ -2,128 +2,58 @@ package cadwyn
 
 import (
 	"fmt"
+	"reflect"
+
+	"github.com/gin-gonic/gin"
 )
 
-// Cadwyn is the main application that manages API versioning
+// Cadwyn provides API versioning capabilities for existing Gin applications
 type Cadwyn struct {
 	versionBundle   *VersionBundle
 	migrationChain  *MigrationChain
 	schemaGenerator *SchemaGenerator
-	ginApp          *Application
-	router          *VersionedRouter
+	versionConfig   VersionConfig
 }
 
-// Config holds configuration for the Cadwyn application
-type Config struct {
-	Versions []*Version
-	Changes  []*VersionChange
-
-	// Gin configuration
-	EnableGinServer      bool
+// VersionConfig holds configuration for version detection and handling
+type VersionConfig struct {
 	VersionLocation      VersionLocation
 	VersionParameterName string
 	VersionFormat        VersionFormat
 	DefaultVersion       *Version
-	GinMode              string // "debug", "release", "test"
-
-	// Features
-	EnableSchemaGeneration bool
-	EnableChangelog        bool
-	EnableDebugLogging     bool
-
-	// Server configuration
-	Title       string
-	Description string
-	Version     string
 }
 
-// New creates a new Cadwyn application with the given configuration
-func New(config Config) (*Cadwyn, error) {
-	if len(config.Versions) == 0 {
-		return nil, fmt.Errorf("at least one version must be specified")
+// NewCadwyn creates a new Cadwyn instance for API versioning
+func NewCadwyn() *CadwynBuilder {
+	return &CadwynBuilder{
+		versions: []*Version{},
+		changes:  []*VersionChange{},
+		types:    []reflect.Type{},
+		versionConfig: VersionConfig{
+			VersionLocation:      VersionLocationHeader,
+			VersionParameterName: "X-API-Version",
+			VersionFormat:        VersionFormatSemver,
+		},
 	}
+}
 
-	// Apply defaults
-	applyDefaults(&config)
-
-	// Create version bundle
-	versionBundle := NewVersionBundle(config.Versions)
-
-	// Create migration chain
-	migrationChain := NewMigrationChain(config.Changes)
-
-	// Create schema generator
-	var schemaGenerator *SchemaGenerator
-	if config.EnableSchemaGeneration {
-		schemaGenerator = NewSchemaGenerator(versionBundle, migrationChain)
-	}
-
-	// Create router
-	router := NewVersionedRouter(RouterConfig{
-		VersionBundle:  versionBundle,
-		MigrationChain: migrationChain,
+// Middleware returns a Gin middleware that detects API versions from requests
+func (c *Cadwyn) Middleware() gin.HandlerFunc {
+	middleware := NewVersionMiddleware(MiddlewareConfig{
+		VersionBundle:  c.versionBundle,
+		MigrationChain: c.migrationChain,
+		Location:       c.versionConfig.VersionLocation,
+		ParameterName:  c.versionConfig.VersionParameterName,
+		Format:         c.versionConfig.VersionFormat,
+		DefaultVersion: c.versionConfig.DefaultVersion,
 	})
-
-	// Create Gin application if enabled
-	var ginApp *Application
-	if config.EnableGinServer {
-		ginConfig := &ApplicationConfig{
-			VersionBundle:          versionBundle,
-			MigrationChain:         migrationChain,
-			VersionLocation:        config.VersionLocation,
-			VersionParameterName:   config.VersionParameterName,
-			VersionFormat:          config.VersionFormat,
-			DefaultVersion:         config.DefaultVersion,
-			Title:                  config.Title,
-			Description:            config.Description,
-			Version:                config.Version,
-			EnableSchemaGeneration: config.EnableSchemaGeneration,
-			EnableChangelog:        config.EnableChangelog,
-			EnableDebugLogging:     config.EnableDebugLogging,
-			GinMode:                config.GinMode,
-		}
-
-		var err error
-		ginApp, err = NewApplication(ginConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Gin application: %w", err)
-		}
-	}
-
-	return &Cadwyn{
-		versionBundle:   versionBundle,
-		migrationChain:  migrationChain,
-		schemaGenerator: schemaGenerator,
-		ginApp:          ginApp,
-		router:          router,
-	}, nil
+	return middleware.Middleware()
 }
 
-// applyDefaults applies default configuration values
-func applyDefaults(config *Config) {
-	if config.VersionLocation == "" {
-		config.VersionLocation = VersionLocationHeader
-	}
-
-	if config.VersionParameterName == "" {
-		config.VersionParameterName = "X-API-Version"
-	}
-
-	if config.VersionFormat == "" {
-		config.VersionFormat = VersionFormatSemver
-	}
-
-	if config.Title == "" {
-		config.Title = "Cadwyn API"
-	}
-
-	if config.Version == "" {
-		config.Version = "1.0.0"
-	}
-
-	if config.Description == "" {
-		config.Description = "API with automatic versioning"
-	}
+// WrapHandler wraps a Gin handler to provide automatic request/response migration
+func (c *Cadwyn) WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
+	versionAwareHandler := NewVersionAwareHandler(handler, c.versionBundle, c.migrationChain)
+	return versionAwareHandler.HandlerFunc()
 }
 
 // GetVersionBundle returns the version bundle
@@ -141,16 +71,6 @@ func (c *Cadwyn) GetSchemaGenerator() *SchemaGenerator {
 	return c.schemaGenerator
 }
 
-// GetGinApp returns the Gin application
-func (c *Cadwyn) GetGinApp() *Application {
-	return c.ginApp
-}
-
-// GetRouter returns the versioned router
-func (c *Cadwyn) GetRouter() *VersionedRouter {
-	return c.router
-}
-
 // GetVersions returns all configured versions
 func (c *Cadwyn) GetVersions() []*Version {
 	return c.versionBundle.GetVersions()
@@ -166,152 +86,162 @@ func (c *Cadwyn) ParseVersion(versionStr string) (*Version, error) {
 	return c.versionBundle.ParseVersion(versionStr)
 }
 
-// Builder provides a fluent API for building Cadwyn applications
-type Builder struct {
-	config Config
+// GenerateStructForVersion generates Go code for a struct at a specific version
+func (c *Cadwyn) GenerateStructForVersion(structType interface{}, targetVersion string) (string, error) {
+	if c.schemaGenerator == nil {
+		return "", fmt.Errorf("schema generation is not enabled")
+	}
+	reflectType := reflect.TypeOf(structType)
+	if reflectType.Kind() == reflect.Ptr {
+		reflectType = reflectType.Elem()
+	}
+	return c.schemaGenerator.GenerateStruct(reflectType, targetVersion)
 }
 
-// NewBuilder creates a new Cadwyn builder
-func NewBuilder() *Builder {
-	return &Builder{
-		config: Config{
-			Versions:               []*Version{},
-			Changes:                []*VersionChange{},
-			EnableGinServer:        true,
-			EnableSchemaGeneration: true,
-			EnableChangelog:        true,
-			EnableDebugLogging:     false,
-			GinMode:                "release",
-		},
-	}
+// CadwynBuilder provides a fluent API for building Cadwyn instances
+type CadwynBuilder struct {
+	versions      []*Version
+	changes       []*VersionChange
+	types         []reflect.Type
+	versionConfig VersionConfig
 }
 
 // WithVersions sets the versions for the application
-func (b *Builder) WithVersions(versions ...*Version) *Builder {
-	b.config.Versions = versions
-	return b
+func (cb *CadwynBuilder) WithVersions(versions ...*Version) *CadwynBuilder {
+	cb.versions = append(cb.versions, versions...)
+	return cb
 }
 
 // WithDateVersions creates and adds date-based versions
-func (b *Builder) WithDateVersions(dates ...string) *Builder {
+func (cb *CadwynBuilder) WithDateVersions(dates ...string) *CadwynBuilder {
 	for _, dateStr := range dates {
 		if v, err := NewDateVersion(dateStr); err == nil {
-			b.config.Versions = append(b.config.Versions, v)
+			cb.versions = append(cb.versions, v)
 		}
 	}
-	return b
+	return cb
 }
 
-// WithSemverVersions creates and adds semantic versions
-func (b *Builder) WithSemverVersions(semvers ...string) *Builder {
+// WithSemverVersions creates and adds semantic versions (supports both major.minor.patch and major.minor)
+func (cb *CadwynBuilder) WithSemverVersions(semvers ...string) *CadwynBuilder {
 	for _, semverStr := range semvers {
 		if v, err := NewSemverVersion(semverStr); err == nil {
-			b.config.Versions = append(b.config.Versions, v)
+			cb.versions = append(cb.versions, v)
 		}
 	}
-	return b
+	return cb
+}
+
+// WithStringVersions creates and adds string-based versions
+func (cb *CadwynBuilder) WithStringVersions(versions ...string) *CadwynBuilder {
+	for _, versionStr := range versions {
+		v := NewStringVersion(versionStr)
+		cb.versions = append(cb.versions, v)
+	}
+	return cb
 }
 
 // WithHeadVersion adds a head version
-func (b *Builder) WithHeadVersion() *Builder {
-	b.config.Versions = append(b.config.Versions, NewHeadVersion())
-	return b
+func (cb *CadwynBuilder) WithHeadVersion() *CadwynBuilder {
+	cb.versions = append(cb.versions, NewHeadVersion())
+	return cb
 }
 
-// WithVersionChanges sets the version changes for the application
-func (b *Builder) WithVersionChanges(changes ...*VersionChange) *Builder {
-	b.config.Changes = changes
-	return b
-}
-
-// WithGinServer enables/disables Gin server functionality
-func (b *Builder) WithGinServer(enabled bool) *Builder {
-	b.config.EnableGinServer = enabled
-	return b
-}
-
-// WithGinMode sets the Gin mode (debug, release, test)
-func (b *Builder) WithGinMode(mode string) *Builder {
-	b.config.GinMode = mode
-	return b
+// WithChanges sets the version changes for the application
+func (cb *CadwynBuilder) WithChanges(changes ...*VersionChange) *CadwynBuilder {
+	cb.changes = append(cb.changes, changes...)
+	return cb
 }
 
 // WithVersionLocation sets where to look for version information
-func (b *Builder) WithVersionLocation(location VersionLocation) *Builder {
-	b.config.VersionLocation = location
-	return b
+func (cb *CadwynBuilder) WithVersionLocation(location VersionLocation) *CadwynBuilder {
+	cb.versionConfig.VersionLocation = location
+	return cb
 }
 
 // WithVersionParameter sets the parameter name for version detection
-func (b *Builder) WithVersionParameter(name string) *Builder {
-	b.config.VersionParameterName = name
-	return b
+func (cb *CadwynBuilder) WithVersionParameter(name string) *CadwynBuilder {
+	cb.versionConfig.VersionParameterName = name
+	return cb
 }
 
 // WithVersionFormat sets the version format
-func (b *Builder) WithVersionFormat(format VersionFormat) *Builder {
-	b.config.VersionFormat = format
-	return b
+func (cb *CadwynBuilder) WithVersionFormat(format VersionFormat) *CadwynBuilder {
+	cb.versionConfig.VersionFormat = format
+	return cb
 }
 
 // WithDefaultVersion sets the default version
-func (b *Builder) WithDefaultVersion(v *Version) *Builder {
-	b.config.DefaultVersion = v
-	return b
+func (cb *CadwynBuilder) WithDefaultVersion(v *Version) *CadwynBuilder {
+	cb.versionConfig.DefaultVersion = v
+	return cb
 }
 
-// WithSchemaGeneration enables/disables schema generation
-func (b *Builder) WithSchemaGeneration(enabled bool) *Builder {
-	b.config.EnableSchemaGeneration = enabled
-	return b
+// WithTypes registers multiple types for schema generation
+func (cb *CadwynBuilder) WithTypes(types ...interface{}) *CadwynBuilder {
+	for _, t := range types {
+		reflectType := reflect.TypeOf(t)
+		if reflectType.Kind() == reflect.Ptr {
+			reflectType = reflectType.Elem()
+		}
+		cb.types = append(cb.types, reflectType)
+	}
+	return cb
 }
 
-// WithChangelog enables/disables changelog generation
-func (b *Builder) WithChangelog(enabled bool) *Builder {
-	b.config.EnableChangelog = enabled
-	return b
+// Build creates the Cadwyn instance
+func (cb *CadwynBuilder) Build() (*Cadwyn, error) {
+	if len(cb.versions) == 0 {
+		return nil, fmt.Errorf("at least one version must be specified")
+	}
+
+	// Create version bundle
+	versionBundle := NewVersionBundle(cb.versions)
+
+	// Create migration chain
+	migrationChain := NewMigrationChain(cb.changes)
+
+	// Create schema generator
+	schemaGenerator := NewSchemaGenerator(versionBundle, migrationChain)
+
+	// Register types with schema generator
+	for _, t := range cb.types {
+		if err := schemaGenerator.RegisterType(t); err != nil {
+			return nil, fmt.Errorf("failed to register type %s: %w", t.Name(), err)
+		}
+	}
+
+	return &Cadwyn{
+		versionBundle:   versionBundle,
+		migrationChain:  migrationChain,
+		schemaGenerator: schemaGenerator,
+		versionConfig:   cb.versionConfig,
+	}, nil
 }
 
-// WithDebugLogging enables/disables debug logging
-func (b *Builder) WithDebugLogging(enabled bool) *Builder {
-	b.config.EnableDebugLogging = enabled
-	return b
-}
+// Convenience functions for common setups
 
-// WithTitle sets the API title
-func (b *Builder) WithTitle(title string) *Builder {
-	b.config.Title = title
-	return b
-}
-
-// WithDescription sets the API description
-func (b *Builder) WithDescription(description string) *Builder {
-	b.config.Description = description
-	return b
-}
-
-// Build creates the Cadwyn application
-func (b *Builder) Build() (*Cadwyn, error) {
-	return New(b.config)
-}
-
-// Quick setup functions for common use cases
-
-// NewWithDateVersions creates a Cadwyn app with date-based versions
-func NewWithDateVersions(dates ...string) (*Cadwyn, error) {
-	builder := NewBuilder().WithDateVersions(dates...)
+// QuickStart creates a Cadwyn instance with date versions and head version
+func QuickStart(dates ...string) (*Cadwyn, error) {
+	builder := NewCadwyn().WithDateVersions(dates...).WithHeadVersion()
 	return builder.Build()
 }
 
-// NewWithSemverVersions creates a Cadwyn app with semantic versions
-func NewWithSemverVersions(semvers ...string) (*Cadwyn, error) {
-	builder := NewBuilder().WithSemverVersions(semvers...)
+// WithSemver creates a Cadwyn instance with semantic versions and head version
+func WithSemver(semvers ...string) (*Cadwyn, error) {
+	builder := NewCadwyn().WithSemverVersions(semvers...).WithHeadVersion()
 	return builder.Build()
 }
 
-// NewSimple creates a simple Cadwyn app with just a head version
-func NewSimple() (*Cadwyn, error) {
-	builder := NewBuilder().WithHeadVersion()
+// WithStringVersions creates a Cadwyn instance with string versions and head version
+func WithStrings(versions ...string) (*Cadwyn, error) {
+	builder := NewCadwyn().WithStringVersions(versions...).WithHeadVersion()
+	return builder.Build()
+}
+
+// Simple creates a Cadwyn instance with just a head version
+func Simple() (*Cadwyn, error) {
+	builder := NewCadwyn().WithHeadVersion()
 	return builder.Build()
 }
 
@@ -333,6 +263,11 @@ func SemverVersion(semver string) *Version {
 		panic(fmt.Sprintf("invalid semver version '%s': %v", semver, err))
 	}
 	return v
+}
+
+// StringVersion creates a string version
+func StringVersion(version string) *Version {
+	return NewStringVersion(version)
 }
 
 // HeadVersion creates a head version

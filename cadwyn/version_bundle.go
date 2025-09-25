@@ -3,7 +3,6 @@ package cadwyn
 import (
 	"context"
 	"fmt"
-	"reflect"
 )
 
 // VersionBundle manages a collection of versions and their changes
@@ -28,8 +27,8 @@ type VersionBundle struct {
 	versionValuesSet map[string]bool
 
 	// Versioned schemas and enums tracking
-	versionedSchemas map[string]reflect.Type
-	versionedEnums   map[string]reflect.Type
+	versionedSchemas map[string]interface{}
+	versionedEnums   map[string]interface{}
 }
 
 // NewVersionBundle creates a new version bundle
@@ -100,8 +99,8 @@ func NewVersionBundle(versions []*Version) *VersionBundle {
 		allVersions:                    allVersions,
 		versionChangesToVersionMapping: versionChangesToVersionMapping,
 		versionValuesSet:               versionValuesSet,
-		versionedSchemas:               make(map[string]reflect.Type),
-		versionedEnums:                 make(map[string]reflect.Type),
+		versionedSchemas:               make(map[string]interface{}),
+		versionedEnums:                 make(map[string]interface{}),
 	}
 }
 
@@ -148,7 +147,7 @@ func (vb *VersionBundle) GetClosestLesserVersion(targetVersion string) (string, 
 }
 
 // GetVersionedSchemas returns a map of versioned schemas
-func (vb *VersionBundle) GetVersionedSchemas() map[string]reflect.Type {
+func (vb *VersionBundle) GetVersionedSchemas() map[string]interface{} {
 	if len(vb.versionedSchemas) == 0 {
 		vb.buildVersionedSchemas()
 	}
@@ -156,7 +155,7 @@ func (vb *VersionBundle) GetVersionedSchemas() map[string]reflect.Type {
 }
 
 // GetVersionedEnums returns a map of versioned enums
-func (vb *VersionBundle) GetVersionedEnums() map[string]reflect.Type {
+func (vb *VersionBundle) GetVersionedEnums() map[string]interface{} {
 	if len(vb.versionedEnums) == 0 {
 		vb.buildVersionedEnums()
 	}
@@ -165,24 +164,70 @@ func (vb *VersionBundle) GetVersionedEnums() map[string]reflect.Type {
 
 // buildVersionedSchemas builds the map of versioned schemas from all version changes
 func (vb *VersionBundle) buildVersionedSchemas() {
+	vb.versionedSchemas = make(map[string]interface{})
+
 	for _, v := range vb.allVersions {
+		versionKey := v.String()
+		schemaMap := make(map[string]interface{})
+
 		for _, change := range v.Changes {
 			// Extract schemas from schema instructions
-			// TODO: Implement proper schema instruction extraction
-			// This is a placeholder for the new architecture
-			_ = change.GetSchemaInstructions()
+			schemaInstructions := change.GetSchemaInstructions()
+			if schemaInstructions == nil {
+				continue
+			}
+
+			// Type assert to slice of SchemaInstruction
+			if instructions, ok := schemaInstructions.([]*SchemaInstruction); ok {
+				for _, instruction := range instructions {
+					// Store schema information for this version
+					schemaMap[instruction.Name] = map[string]interface{}{
+						"type":       instruction.Type,
+						"attributes": instruction.Attributes,
+						"version":    versionKey,
+					}
+				}
+			}
+		}
+
+		if len(schemaMap) > 0 {
+			vb.versionedSchemas[versionKey] = schemaMap
 		}
 	}
 }
 
 // buildVersionedEnums builds the map of versioned enums from all version changes
 func (vb *VersionBundle) buildVersionedEnums() {
+	vb.versionedEnums = make(map[string]interface{})
+
 	for _, v := range vb.allVersions {
+		versionKey := v.String()
+		enumMap := make(map[string]interface{})
+
 		for _, change := range v.Changes {
 			// Extract enums from enum instructions
-			// TODO: Implement proper enum instruction extraction
-			// This is a placeholder for the new architecture
-			_ = change.GetEnumInstructions()
+			enumInstructions := change.GetEnumInstructions()
+			if enumInstructions == nil {
+				continue
+			}
+
+			// Type assert to slice of EnumInstruction
+			if instructions, ok := enumInstructions.([]*EnumInstruction); ok {
+				for _, instruction := range instructions {
+					// Store enum information for this version
+					enumKey := fmt.Sprintf("%v", instruction.Enum)
+					enumMap[enumKey] = map[string]interface{}{
+						"type":      instruction.Type,
+						"members":   instruction.Members,
+						"is_hidden": instruction.IsHidden,
+						"version":   versionKey,
+					}
+				}
+			}
+		}
+
+		if len(enumMap) > 0 {
+			vb.versionedEnums[versionKey] = enumMap
 		}
 	}
 }

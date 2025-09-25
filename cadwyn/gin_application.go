@@ -3,6 +3,7 @@ package cadwyn
 import (
 	"fmt"
 	"net/http"
+	"reflect"
 
 	"github.com/gin-gonic/gin"
 )
@@ -460,7 +461,17 @@ func (app *Application) GenerateStructForVersion(structType interface{}, targetV
 		return "", fmt.Errorf("schema generation is not enabled")
 	}
 
-	// Use reflection to get the type
-	// This is a simplified version - would need more sophisticated type handling
-	return app.schemaGenerator.GenerateStruct(nil, targetVersion)
+	// Use reflection to get the type from the registered types
+	if len(app.schemaGenerator.typeRegistry.types) == 0 {
+		return "", fmt.Errorf("no types registered for schema generation")
+	}
+
+	// Get the reflect type from the interface
+	reflectType := reflect.TypeOf(structType)
+	if reflectType.Kind() == reflect.Ptr {
+		reflectType = reflectType.Elem()
+	}
+
+	// Generate the struct using the schema generator
+	return app.schemaGenerator.GenerateStruct(reflectType, targetVersion)
 }

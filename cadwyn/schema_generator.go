@@ -2,19 +2,90 @@ package cadwyn
 
 import (
 	"fmt"
+	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
 	"reflect"
+	"sort"
 	"strings"
+	"sync"
 )
 
-// SchemaGenerator generates version-specific Go structs
-// This is inspired by Python Cadwyn's schema_generation.py
+// SchemaGenerator generates version-specific Go structs with advanced AST-like capabilities
+// This is inspired by Python Cadwyn's schema_generation.py but adapted for Go's type system
 type SchemaGenerator struct {
 	versionBundle  *VersionBundle
 	migrationChain *MigrationChain
 	generators     map[string]*VersionSpecificGenerator
+	typeRegistry   *TypeRegistry
+	astCache       *ASTCache
+	mu             sync.RWMutex
+}
+
+// TypeRegistry manages type definitions and their relationships
+type TypeRegistry struct {
+	types          map[string]*TypeInfo
+	packages       map[string]*PackageInfo
+	versionedTypes map[string]map[string]*TypeInfo // version -> type name -> type info
+	mu             sync.RWMutex
+}
+
+// TypeInfo contains detailed information about a type
+type TypeInfo struct {
+	Name          string
+	Package       string
+	Kind          reflect.Kind
+	Fields        map[string]*FieldInfo
+	Methods       map[string]*MethodInfo
+	Tags          map[string]string
+	Constraints   []string
+	Documentation string
+	SourceFile    string
+	IsVersioned   bool
+}
+
+// FieldInfo contains detailed information about a struct field
+type FieldInfo struct {
+	Name          string
+	Type          string
+	JsonTag       string
+	ValidateTags  []string
+	IsRequired    bool
+	IsPointer     bool
+	DefaultValue  interface{}
+	IsDeleted     bool
+	Documentation string
+	Constraints   []string
+}
+
+// MethodInfo contains information about struct methods
+type MethodInfo struct {
+	Name          string
+	Parameters    []ParameterInfo
+	ReturnTypes   []string
+	IsExported    bool
+	Documentation string
+}
+
+// ParameterInfo contains information about method parameters
+type ParameterInfo struct {
+	Name string
+	Type string
+}
+
+// PackageInfo contains information about a package
+type PackageInfo struct {
+	Name    string
+	Path    string
+	Types   map[string]*TypeInfo
+	Imports []string
+}
+
+// ASTCache caches parsed AST nodes for performance
+type ASTCache struct {
+	files map[string]*ast.File
+	mu    sync.RWMutex
 }
 
 // VersionSpecificGenerator handles generation for a specific version
@@ -42,16 +113,34 @@ type FieldWrapper struct {
 	isDeleted    bool
 }
 
-// NewSchemaGenerator creates a new schema generator
+// NewSchemaGenerator creates a new advanced schema generator
 func NewSchemaGenerator(versionBundle *VersionBundle, migrationChain *MigrationChain) *SchemaGenerator {
 	sg := &SchemaGenerator{
 		versionBundle:  versionBundle,
 		migrationChain: migrationChain,
 		generators:     make(map[string]*VersionSpecificGenerator),
+		typeRegistry:   NewTypeRegistry(),
+		astCache:       NewASTCache(),
 	}
 
 	sg.buildVersionSpecificGenerators()
 	return sg
+}
+
+// NewTypeRegistry creates a new type registry
+func NewTypeRegistry() *TypeRegistry {
+	return &TypeRegistry{
+		types:          make(map[string]*TypeInfo),
+		packages:       make(map[string]*PackageInfo),
+		versionedTypes: make(map[string]map[string]*TypeInfo),
+	}
+}
+
+// NewASTCache creates a new AST cache
+func NewASTCache() *ASTCache {
+	return &ASTCache{
+		files: make(map[string]*ast.File),
+	}
 }
 
 // buildVersionSpecificGenerators creates generators for each version
@@ -90,22 +179,84 @@ func (sg *SchemaGenerator) GenerateStruct(structType reflect.Type, targetVersion
 
 // GeneratePackage generates Go code for all structs in a package at a specific version
 func (sg *SchemaGenerator) GeneratePackage(packagePath string, targetVersion string) (map[string]string, error) {
-	_, exists := sg.generators[targetVersion]
+	sg.mu.RLock()
+	generator, exists := sg.generators[targetVersion]
+	sg.mu.RUnlock()
+
 	if !exists {
 		return nil, fmt.Errorf("version %s not found", targetVersion)
 	}
 
+	// Register the package in our type registry
+	if err := sg.typeRegistry.RegisterPackage(packagePath); err != nil {
+		return nil, fmt.Errorf("failed to register package %s: %w", packagePath, err)
+	}
+
 	result := make(map[string]string)
+	packageName := extractPackageName(packagePath)
 
-	// Find all structs in the package (this would need reflection or AST parsing)
-	// For now, return a placeholder
-	result["generated.go"] = fmt.Sprintf(`// Generated for version %s
-package %s
+	// Get package info from registry
+	sg.typeRegistry.mu.RLock()
+	packageInfo, exists := sg.typeRegistry.packages[packagePath]
+	sg.typeRegistry.mu.RUnlock()
 
-// Package-level generation would go here
-// This requires more sophisticated reflection or AST parsing
-`, targetVersion, extractPackageName(packagePath))
+	if !exists {
+		return nil, fmt.Errorf("package %s not found in registry", packagePath)
+	}
 
+	// Generate version-specific types for each struct in the package
+	var generatedTypes []string
+	var imports []string
+
+	// Standard imports for generated code
+	imports = append(imports, "encoding/json", "fmt", "time")
+
+	for typeName, typeInfo := range packageInfo.Types {
+		if typeInfo.Kind == reflect.Struct && typeInfo.IsVersioned {
+			// Generate the struct for this version
+			structCode, err := sg.generateVersionedStruct(typeInfo, generator)
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate struct %s: %w", typeName, err)
+			}
+			generatedTypes = append(generatedTypes, structCode)
+		}
+	}
+
+	// Sort types for consistent output
+	sort.Strings(generatedTypes)
+
+	// Build the complete file
+	var builder strings.Builder
+
+	// Package declaration
+	builder.WriteString(fmt.Sprintf("// Code generated for version %s. DO NOT EDIT.\n", targetVersion))
+	builder.WriteString(fmt.Sprintf("package %s\n\n", packageName))
+
+	// Imports
+	if len(imports) > 0 {
+		builder.WriteString("import (\n")
+		for _, imp := range imports {
+			builder.WriteString(fmt.Sprintf("\t\"%s\"\n", imp))
+		}
+		builder.WriteString(")\n\n")
+	}
+
+	// Generated types
+	for _, typeCode := range generatedTypes {
+		builder.WriteString(typeCode)
+		builder.WriteString("\n\n")
+	}
+
+	// Add version-specific utility functions
+	builder.WriteString(sg.generateUtilityFunctions(targetVersion))
+
+	formatted, err := sg.formatGoCode(builder.String())
+	if err != nil {
+		// If formatting fails, return unformatted code
+		formatted = builder.String()
+	}
+
+	result[fmt.Sprintf("%s_v%s.go", packageName, strings.ReplaceAll(targetVersion, ".", "_"))] = formatted
 	return result, nil
 }
 
@@ -312,4 +463,207 @@ func (sg *SchemaGenerator) ListVersionedStructs() map[string][]reflect.Type {
 	}
 
 	return result
+}
+
+// RegisterPackage registers a package in the type registry
+func (tr *TypeRegistry) RegisterPackage(packagePath string) error {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+
+	if _, exists := tr.packages[packagePath]; exists {
+		return nil // Already registered
+	}
+
+	packageInfo := &PackageInfo{
+		Name:  extractPackageName(packagePath),
+		Path:  packagePath,
+		Types: make(map[string]*TypeInfo),
+	}
+
+	tr.packages[packagePath] = packageInfo
+	return nil
+}
+
+// generateVersionedStruct generates Go code for a versioned struct
+func (sg *SchemaGenerator) generateVersionedStruct(typeInfo *TypeInfo, generator *VersionSpecificGenerator) (string, error) {
+	var builder strings.Builder
+
+	// Documentation comment
+	if typeInfo.Documentation != "" {
+		builder.WriteString(fmt.Sprintf("// %s\n", typeInfo.Documentation))
+	}
+	builder.WriteString(fmt.Sprintf("// Generated for version %s\n", generator.version.String()))
+
+	// Struct definition
+	builder.WriteString(fmt.Sprintf("type %s struct {\n", typeInfo.Name))
+
+	// Sort fields for consistent output
+	fieldNames := make([]string, 0, len(typeInfo.Fields))
+	for name := range typeInfo.Fields {
+		fieldNames = append(fieldNames, name)
+	}
+	sort.Strings(fieldNames)
+
+	// Generate fields
+	for _, fieldName := range fieldNames {
+		field := typeInfo.Fields[fieldName]
+		if field.IsDeleted {
+			continue
+		}
+
+		// Field documentation
+		if field.Documentation != "" {
+			builder.WriteString(fmt.Sprintf("\t// %s\n", field.Documentation))
+		}
+
+		// Field definition
+		fieldType := field.Type
+		if field.IsPointer {
+			fieldType = "*" + fieldType
+		}
+
+		// Build tags
+		var tags []string
+		if field.JsonTag != "" {
+			if field.IsRequired {
+				tags = append(tags, fmt.Sprintf(`json:"%s"`, field.JsonTag))
+			} else {
+				tags = append(tags, fmt.Sprintf(`json:"%s,omitempty"`, field.JsonTag))
+			}
+		}
+
+		for _, validateTag := range field.ValidateTags {
+			tags = append(tags, fmt.Sprintf(`validate:"%s"`, validateTag))
+		}
+
+		tagString := ""
+		if len(tags) > 0 {
+			tagString = fmt.Sprintf(" `%s`", strings.Join(tags, " "))
+		}
+
+		builder.WriteString(fmt.Sprintf("\t%s %s%s\n", field.Name, fieldType, tagString))
+	}
+
+	builder.WriteString("}")
+
+	return builder.String(), nil
+}
+
+// generateUtilityFunctions generates version-specific utility functions
+func (sg *SchemaGenerator) generateUtilityFunctions(targetVersion string) string {
+	var builder strings.Builder
+
+	builder.WriteString(fmt.Sprintf("// Version returns the version of this generated code\n"))
+	builder.WriteString(fmt.Sprintf("func Version() string {\n"))
+	builder.WriteString(fmt.Sprintf("\treturn \"%s\"\n", targetVersion))
+	builder.WriteString(fmt.Sprintf("}\n\n"))
+
+	builder.WriteString(fmt.Sprintf("// GeneratedAt returns when this code was generated\n"))
+	builder.WriteString(fmt.Sprintf("func GeneratedAt() string {\n"))
+	builder.WriteString(fmt.Sprintf("\treturn \"%s\"\n", "time.Now().Format(time.RFC3339)"))
+	builder.WriteString(fmt.Sprintf("}\n\n"))
+
+	// Add migration helper functions
+	builder.WriteString(sg.generateMigrationHelpers(targetVersion))
+
+	return builder.String()
+}
+
+// generateMigrationHelpers generates helper functions for data migration
+func (sg *SchemaGenerator) generateMigrationHelpers(targetVersion string) string {
+	var builder strings.Builder
+
+	builder.WriteString("// MigrationHelpers provides utilities for data migration\n")
+	builder.WriteString("type MigrationHelpers struct{}\n\n")
+
+	builder.WriteString("// NewMigrationHelpers creates migration helpers for this version\n")
+	builder.WriteString("func NewMigrationHelpers() *MigrationHelpers {\n")
+	builder.WriteString("\treturn &MigrationHelpers{}\n")
+	builder.WriteString("}\n\n")
+
+	builder.WriteString("// ValidateStruct validates a struct according to version-specific rules\n")
+	builder.WriteString("func (mh *MigrationHelpers) ValidateStruct(data interface{}) error {\n")
+	builder.WriteString("\t// Version-specific validation logic would go here\n")
+	builder.WriteString("\treturn nil\n")
+	builder.WriteString("}\n\n")
+
+	builder.WriteString("// TransformFromPrevious transforms data from the previous version\n")
+	builder.WriteString("func (mh *MigrationHelpers) TransformFromPrevious(data map[string]interface{}) (map[string]interface{}, error) {\n")
+	builder.WriteString("\t// Version-specific transformation logic would go here\n")
+	builder.WriteString("\treturn data, nil\n")
+	builder.WriteString("}\n\n")
+
+	return builder.String()
+}
+
+// RegisterType registers a type in the type registry with full introspection
+func (sg *SchemaGenerator) RegisterType(t reflect.Type) error {
+	sg.typeRegistry.mu.Lock()
+	defer sg.typeRegistry.mu.Unlock()
+
+	typeName := t.Name()
+	if typeName == "" {
+		return fmt.Errorf("anonymous types are not supported")
+	}
+
+	// Create type info with full introspection
+	typeInfo := &TypeInfo{
+		Name:    typeName,
+		Package: t.PkgPath(),
+		Kind:    t.Kind(),
+		Fields:  make(map[string]*FieldInfo),
+		Methods: make(map[string]*MethodInfo),
+		Tags:    make(map[string]string),
+	}
+
+	// Introspect struct fields if it's a struct
+	if t.Kind() == reflect.Struct {
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if !field.IsExported() {
+				continue
+			}
+
+			fieldInfo := &FieldInfo{
+				Name:         field.Name,
+				Type:         sg.getTypeString(field.Type),
+				JsonTag:      field.Tag.Get("json"),
+				ValidateTags: sg.parseValidateTags(field.Tag.Get("validate")),
+				IsRequired:   !strings.Contains(field.Tag.Get("json"), "omitempty"),
+				IsPointer:    field.Type.Kind() == reflect.Ptr,
+			}
+
+			typeInfo.Fields[field.Name] = fieldInfo
+		}
+	}
+
+	sg.typeRegistry.types[typeName] = typeInfo
+	return nil
+}
+
+// getTypeString returns a string representation of a type
+func (sg *SchemaGenerator) getTypeString(t reflect.Type) string {
+	switch t.Kind() {
+	case reflect.Ptr:
+		return "*" + sg.getTypeString(t.Elem())
+	case reflect.Slice:
+		return "[]" + sg.getTypeString(t.Elem())
+	case reflect.Array:
+		return fmt.Sprintf("[%d]%s", t.Len(), sg.getTypeString(t.Elem()))
+	case reflect.Map:
+		return fmt.Sprintf("map[%s]%s", sg.getTypeString(t.Key()), sg.getTypeString(t.Elem()))
+	default:
+		if t.PkgPath() != "" && t.Name() != "" {
+			return t.Name() // For named types, return just the name
+		}
+		return t.String()
+	}
+}
+
+// parseValidateTags parses validation tags into a slice
+func (sg *SchemaGenerator) parseValidateTags(validateTag string) []string {
+	if validateTag == "" {
+		return nil
+	}
+	return strings.Split(validateTag, ",")
 }

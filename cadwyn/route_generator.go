@@ -227,9 +227,8 @@ func (rt *RouteTransformer) TransformRoute(handler gin.HandlerFunc, route *Route
 			return
 		}
 
-		// TODO: Implement response migration for Gin
-		// For now, just call the handler
-		handler(c)
+		// Apply response migration for Gin
+		rt.handleWithMigration(c, handler, route)
 	}
 }
 
@@ -238,6 +237,75 @@ func (rt *RouteTransformer) migrateRequest(r *http.Request, requestedVersion *Ve
 	// This would implement actual request migration
 	// For now, return the original request
 	return r, nil
+}
+
+// handleWithMigration handles request/response with migration support
+func (rt *RouteTransformer) handleWithMigration(c *gin.Context, handler gin.HandlerFunc, route *Route) {
+	// Get the requested version from context
+	requestedVersion := GetVersionFromContext(c)
+	if requestedVersion == nil || requestedVersion.IsHead {
+		// No migration needed for head version
+		handler(c)
+		return
+	}
+
+	// Create a response writer that captures the response
+	responseCapture := &ResponseCapture{
+		ResponseWriter: c.Writer,
+		body:           make([]byte, 0),
+		statusCode:     200,
+	}
+	c.Writer = responseCapture
+
+	// Call the handler (which expects head version data)
+	handler(c)
+
+	// Migrate the captured response back to the requested version
+	if err := rt.migrateResponse(c, requestedVersion, responseCapture); err != nil {
+		c.JSON(500, gin.H{"error": "Response migration failed", "details": err.Error()})
+		return
+	}
+}
+
+// migrateResponse migrates response data from head version to requested version
+func (rt *RouteTransformer) migrateResponse(c *gin.Context, toVersion *Version, responseCapture *ResponseCapture) error {
+	// Parse captured response body
+	var responseData interface{}
+	if len(responseCapture.body) > 0 {
+		if err := c.ShouldBindJSON(&responseData); err != nil {
+			// If JSON parsing fails, write original response
+			c.Writer = responseCapture.ResponseWriter
+			c.Writer.WriteHeader(responseCapture.statusCode)
+			c.Writer.Write(responseCapture.body)
+			return nil
+		}
+	}
+
+	// Create ResponseInfo for migration
+	responseInfo := NewResponseInfo(c, responseData)
+	responseInfo.StatusCode = responseCapture.statusCode
+
+	// Find migration chain from head version back to requested version
+	headVersion := rt.versionBundle.GetHeadVersion()
+	migrationChain := rt.migrationChain.GetMigrationPath(headVersion, toVersion)
+
+	// Apply migrations in reverse direction
+	for i := len(migrationChain) - 1; i >= 0; i-- {
+		change := migrationChain[i]
+		if err := change.MigrateResponse(c.Request.Context(), responseInfo, reflect.TypeOf(responseInfo.Body), 0); err != nil {
+			return fmt.Errorf("failed to migrate response with change %s: %w", change.Description(), err)
+		}
+	}
+
+	// Write the migrated response
+	c.Writer = responseCapture.ResponseWriter
+	c.Writer.WriteHeader(responseInfo.StatusCode)
+
+	if responseInfo.Body != nil {
+		c.JSON(responseInfo.StatusCode, responseInfo.Body)
+	}
+
+	return nil
 }
 
 // ResponseInterceptor intercepts responses to apply version-specific transformations
@@ -253,22 +321,12 @@ func (ri *ResponseInterceptor) Write(data []byte) (int, error) {
 	// Store the response body for migration
 	ri.body = append(ri.body, data...)
 
-	// Apply response migration
-	migratedData, err := ri.transformer.migrateResponse(ri.body, ri.requestedVersion)
-	if err != nil {
-		return 0, fmt.Errorf("response migration failed: %w", err)
-	}
-
-	// Write the migrated response
-	return ri.ResponseWriter.Write(migratedData)
+	// For now, just write the original data
+	// Migration will be handled by the RouteTransformer
+	return ri.ResponseWriter.Write(data)
 }
 
 // migrateResponse migrates a response from head version to the requested version
-func (rt *RouteTransformer) migrateResponse(responseBody []byte, requestedVersion *Version) ([]byte, error) {
-	// This would implement actual response migration
-	// For now, return the original response
-	return responseBody, nil
-}
 
 // getVersionFromRequest extracts version from request (helper function)
 func getVersionFromGinContext(c *gin.Context) *Version {

@@ -25,24 +25,25 @@ func main() {
 	fmt.Println("Getting Started with API Versioning")
 	fmt.Println(strings.Repeat("=", 50))
 
-	// Create versions using the builder pattern
-	app, err := cadwyn.NewBuilder().
+	// Create versions using the simple builder
+	cadwynInstance, err := cadwyn.NewCadwyn().
 		WithSemverVersions("1.0", "2.0").
 		WithHeadVersion().
+		WithTypes(UserV1{}, UserV2{}).
 		Build()
 
 	if err != nil {
-		fmt.Printf("❌ Error creating Cadwyn app: %v\n", err)
+		fmt.Printf("❌ Error creating Cadwyn instance: %v\n", err)
 		return
 	}
 
-	fmt.Printf("✅ Created Cadwyn app with %d versions\n", len(app.GetVersions()))
+	fmt.Printf("✅ Created Cadwyn instance with %d versions\n", len(cadwynInstance.GetVersions()))
 
 	// Demonstrate version parsing
 	fmt.Println("\n📋 Version Parsing:")
 	testVersions := []string{"1.0", "2.0", "head", "invalid"}
 	for _, vStr := range testVersions {
-		if v, err := app.ParseVersion(vStr); err == nil {
+		if v, err := cadwynInstance.ParseVersion(vStr); err == nil {
 			fmt.Printf("   ✅ %s -> %s (Type: %s)\n", vStr, v.String(), v.Type.String())
 		} else {
 			fmt.Printf("   ❌ %s -> Error: %s\n", vStr, err.Error())
@@ -51,9 +52,9 @@ func main() {
 
 	// Show version information
 	fmt.Println("\n📦 Version Information:")
-	fmt.Printf("   • Head version: %s\n", app.GetHeadVersion().String())
+	fmt.Printf("   • Head version: %s\n", cadwynInstance.GetHeadVersion().String())
 	fmt.Printf("   • All versions: ")
-	for i, v := range app.GetVersions() {
+	for i, v := range cadwynInstance.GetVersions() {
 		if i > 0 {
 			fmt.Print(", ")
 		}
@@ -65,11 +66,15 @@ func main() {
 	fmt.Println("\n🔄 Migration Instructions:")
 	demonstrateMigrations()
 
+	// Show schema generation
+	fmt.Println("\n🏗️  Schema Generation:")
+	demonstrateSchemaGeneration(cadwynInstance)
+
 	fmt.Println("\n" + strings.Repeat("=", 50))
 	fmt.Println("🎉 Basic Example Complete!")
 	fmt.Println("📚 Next Steps:")
+	fmt.Println("   • Check out examples/gin_server/ for a full web server")
 	fmt.Println("   • Check out examples/advanced/ for complex migrations")
-	fmt.Println("   • Read the documentation for more features")
 	fmt.Println("   • Start building your versioned API!")
 }
 
@@ -125,4 +130,30 @@ func demonstrateMigrations() {
 	}
 	fmt.Printf("      Before: %+v\n", responseInfo.Body)
 	responseInstruction.Transformer(responseInfo)
+}
+
+func demonstrateSchemaGeneration(cadwynInstance *cadwyn.Cadwyn) {
+	// Generate struct for different versions
+	versions := []string{"1.0", "2.0", "head"}
+
+	for _, version := range versions {
+		fmt.Printf("   Generating UserV2 for version %s:\n", version)
+		if generatedCode, err := cadwynInstance.GenerateStructForVersion(UserV2{}, version); err == nil {
+			// Show just the first few lines to keep output manageable
+			lines := strings.Split(generatedCode, "\n")
+			maxLines := 5
+			if len(lines) > maxLines {
+				lines = lines[:maxLines]
+				lines = append(lines, "      ... (truncated)")
+			}
+			for _, line := range lines {
+				if strings.TrimSpace(line) != "" {
+					fmt.Printf("      %s\n", line)
+				}
+			}
+		} else {
+			fmt.Printf("      ❌ Error: %s\n", err.Error())
+		}
+		fmt.Println()
+	}
 }

@@ -3,6 +3,7 @@ package cadwyn
 import (
 	"fmt"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -273,15 +274,8 @@ func (vah *VersionAwareHandler) HandlerFunc() gin.HandlerFunc {
 			return
 		}
 
-		// TODO: Implement request migration
-		// This would involve:
-		// 1. Reading the request body
-		// 2. Migrating it from requested version to head version
-		// 3. Calling the handler with migrated request
-		// 4. Migrating the response from head version back to requested version
-
-		// For now, just call the handler
-		vah.handler(c)
+		// Implement request/response migration
+		vah.handleWithMigration(c, requestedVersion)
 	}
 }
 
@@ -289,4 +283,137 @@ func (vah *VersionAwareHandler) HandlerFunc() gin.HandlerFunc {
 func (vm *VersionMiddleware) WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
 	versionAwareHandler := NewVersionAwareHandler(handler, vm.versionBundle, vm.migrationChain)
 	return versionAwareHandler.HandlerFunc()
+}
+
+// handleWithMigration handles request/response migration for version-aware handlers
+func (vah *VersionAwareHandler) handleWithMigration(c *gin.Context, requestedVersion *Version) {
+	// Skip migration if requesting head version
+	if requestedVersion.IsHead {
+		vah.handler(c)
+		return
+	}
+
+	// 1. Migrate request from requested version to head version
+	if err := vah.migrateRequest(c, requestedVersion); err != nil {
+		c.JSON(500, gin.H{"error": "Request migration failed", "details": err.Error()})
+		return
+	}
+
+	// 2. Create a response writer that captures the response
+	responseCapture := &ResponseCapture{
+		ResponseWriter: c.Writer,
+		body:           make([]byte, 0),
+		statusCode:     200,
+	}
+	c.Writer = responseCapture
+
+	// 3. Call the handler (which expects head version data)
+	vah.handler(c)
+
+	// 4. Migrate response from head version back to requested version
+	if err := vah.migrateResponse(c, requestedVersion, responseCapture); err != nil {
+		c.JSON(500, gin.H{"error": "Response migration failed", "details": err.Error()})
+		return
+	}
+}
+
+// ResponseCapture captures response data for migration
+type ResponseCapture struct {
+	gin.ResponseWriter
+	body       []byte
+	statusCode int
+}
+
+func (rc *ResponseCapture) Write(data []byte) (int, error) {
+	rc.body = append(rc.body, data...)
+	return len(data), nil
+}
+
+func (rc *ResponseCapture) WriteHeader(statusCode int) {
+	rc.statusCode = statusCode
+}
+
+// migrateRequest migrates request data from requested version to head version
+func (vah *VersionAwareHandler) migrateRequest(c *gin.Context, fromVersion *Version) error {
+	// Get request body if present
+	if c.Request.Body == nil {
+		return nil // No body to migrate
+	}
+
+	// Read the request body
+	bodyBytes, err := c.GetRawData()
+	if err != nil {
+		return fmt.Errorf("failed to read request body: %w", err)
+	}
+
+	if len(bodyBytes) == 0 {
+		return nil // No body to migrate
+	}
+
+	// Parse JSON body
+	var bodyData interface{}
+	if err := c.ShouldBindJSON(&bodyData); err != nil {
+		// If JSON parsing fails, leave body as-is
+		return nil
+	}
+
+	// Create RequestInfo for migration
+	requestInfo := NewRequestInfo(c, bodyData)
+
+	// Find migration chain from requested version to head
+	headVersion := vah.versionBundle.GetHeadVersion()
+	migrationChain := vah.migrationChain.GetMigrationPath(fromVersion, headVersion)
+
+	// Apply migrations in forward direction
+	for _, change := range migrationChain {
+		if err := change.MigrateRequest(c.Request.Context(), requestInfo, reflect.TypeOf(requestInfo.Body), 0); err != nil {
+			return fmt.Errorf("failed to migrate request with change %s: %w", change.Description(), err)
+		}
+	}
+
+	// Update the request context with migrated data
+	c.Set("migratedRequestBody", requestInfo.Body)
+
+	return nil
+}
+
+// migrateResponse migrates response data from head version back to requested version
+func (vah *VersionAwareHandler) migrateResponse(c *gin.Context, toVersion *Version, responseCapture *ResponseCapture) error {
+	// Parse captured response body
+	var responseData interface{}
+	if len(responseCapture.body) > 0 {
+		if err := c.ShouldBindJSON(&responseData); err != nil {
+			// If JSON parsing fails, write original response
+			c.Writer = responseCapture.ResponseWriter
+			c.Writer.WriteHeader(responseCapture.statusCode)
+			c.Writer.Write(responseCapture.body)
+			return nil
+		}
+	}
+
+	// Create ResponseInfo for migration
+	responseInfo := NewResponseInfo(c, responseData)
+	responseInfo.StatusCode = responseCapture.statusCode
+
+	// Find migration chain from head version back to requested version
+	headVersion := vah.versionBundle.GetHeadVersion()
+	migrationChain := vah.migrationChain.GetMigrationPath(headVersion, toVersion)
+
+	// Apply migrations in reverse direction
+	for i := len(migrationChain) - 1; i >= 0; i-- {
+		change := migrationChain[i]
+		if err := change.MigrateResponse(c.Request.Context(), responseInfo, reflect.TypeOf(responseInfo.Body), 0); err != nil {
+			return fmt.Errorf("failed to migrate response with change %s: %w", change.Description(), err)
+		}
+	}
+
+	// Write the migrated response
+	c.Writer = responseCapture.ResponseWriter
+	c.Writer.WriteHeader(responseInfo.StatusCode)
+
+	if responseInfo.Body != nil {
+		c.JSON(responseInfo.StatusCode, responseInfo.Body)
+	}
+
+	return nil
 }
