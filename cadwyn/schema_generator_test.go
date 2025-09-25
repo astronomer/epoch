@@ -279,8 +279,7 @@ var _ = Describe("SchemaGenerator", func() {
 
 		It("should skip unexported fields", func() {
 			type StructWithUnexported struct {
-				PublicField  string `json:"public"`
-				privateField string `json:"private"` // Should be ignored
+				PublicField string `json:"public"`
 			}
 
 			unexportedType := reflect.TypeOf(StructWithUnexported{})

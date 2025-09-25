@@ -307,8 +307,11 @@ var _ = Describe("Helper functions", func() {
 var _ = Describe("ResponseCapture integration", func() {
 	It("should capture response data", func() {
 		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
 		capture := &ResponseCapture{
-			ResponseWriter: recorder,
+			ResponseWriter: c.Writer,
+			body:           make([]byte, 0),
+			statusCode:     200,
 		}
 
 		data := []byte(`{"message":"test"}`)

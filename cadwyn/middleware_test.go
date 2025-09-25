@@ -304,8 +304,11 @@ var _ = Describe("Middleware", func() {
 
 		BeforeEach(func() {
 			recorder = httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
 			capture = &ResponseCapture{
-				ResponseWriter: recorder,
+				ResponseWriter: c.Writer,
+				body:           make([]byte, 0),
+				statusCode:     200,
 			}
 		})
 

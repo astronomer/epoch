@@ -424,9 +424,7 @@ var _ = Describe("RouteGroup", func() {
 
 	Describe("middleware application", func() {
 		It("should apply group middleware to handlers", func() {
-			middlewareCalled := false
 			middleware := func(c *gin.Context) {
-				middlewareCalled = true
 				c.Next()
 			}
 

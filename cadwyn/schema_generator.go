@@ -83,6 +83,7 @@ type PackageInfo struct {
 }
 
 // ASTCache caches parsed AST nodes for performance
+// The mu field will be used for concurrent access protection in future implementation
 type ASTCache struct {
 	files map[string]*ast.File
 	mu    sync.RWMutex
@@ -109,7 +110,7 @@ type FieldWrapper struct {
 	goType       string
 	jsonTag      string
 	isRequired   bool
-	defaultValue interface{}
+	defaultValue interface{} // TODO: Use for default field values
 	isDeleted    bool
 }
 
@@ -124,6 +125,9 @@ func NewSchemaGenerator(versionBundle *VersionBundle, migrationChain *MigrationC
 	}
 
 	sg.buildVersionSpecificGenerators()
+
+	// Note: astCache.mu will be used for concurrent access protection in future implementation
+
 	return sg
 }
 
@@ -553,15 +557,15 @@ func (sg *SchemaGenerator) generateVersionedStruct(typeInfo *TypeInfo, generator
 func (sg *SchemaGenerator) generateUtilityFunctions(targetVersion string) string {
 	var builder strings.Builder
 
-	builder.WriteString(fmt.Sprintf("// Version returns the version of this generated code\n"))
-	builder.WriteString(fmt.Sprintf("func Version() string {\n"))
+	builder.WriteString("// Version returns the version of this generated code\n")
+	builder.WriteString("func Version() string {\n")
 	builder.WriteString(fmt.Sprintf("\treturn \"%s\"\n", targetVersion))
-	builder.WriteString(fmt.Sprintf("}\n\n"))
+	builder.WriteString("}\n\n")
 
-	builder.WriteString(fmt.Sprintf("// GeneratedAt returns when this code was generated\n"))
-	builder.WriteString(fmt.Sprintf("func GeneratedAt() string {\n"))
-	builder.WriteString(fmt.Sprintf("\treturn \"%s\"\n", "time.Now().Format(time.RFC3339)"))
-	builder.WriteString(fmt.Sprintf("}\n\n"))
+	builder.WriteString("// GeneratedAt returns when this code was generated\n")
+	builder.WriteString("func GeneratedAt() string {\n")
+	builder.WriteString("\treturn \"time.Now().Format(time.RFC3339)\"\n")
+	builder.WriteString("}\n\n")
 
 	// Add migration helper functions
 	builder.WriteString(sg.generateMigrationHelpers(targetVersion))
