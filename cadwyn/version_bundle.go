@@ -142,16 +142,6 @@ func (vb *VersionBundle) ParseVersion(versionStr string) (*Version, error) {
 	return nil, fmt.Errorf("unknown version: %s", versionStr)
 }
 
-// GetClosestLesserVersion finds the closest version that is less than or equal to the given version
-func (vb *VersionBundle) GetClosestLesserVersion(targetVersion string) (string, error) {
-	for _, definedVersion := range vb.versionValues {
-		if definedVersion <= targetVersion {
-			return definedVersion, nil
-		}
-	}
-	return "", fmt.Errorf("no version found that is earlier than or equal to %s", targetVersion)
-}
-
 // GetVersionedSchemas returns a map of versioned schemas
 func (vb *VersionBundle) GetVersionedSchemas() map[string]interface{} {
 	if len(vb.versionedSchemas) == 0 {
@@ -249,4 +239,30 @@ func (vb *VersionBundle) IsVersionDefined(versionStr string) bool {
 // Iterator returns an iterator over all versions
 func (vb *VersionBundle) Iterator() []*Version {
 	return vb.versions
+}
+
+// GetClosestLesserVersion finds the closest version that is less than the given version string
+func (vb *VersionBundle) GetClosestLesserVersion(versionStr string) (string, error) {
+	// Parse the target version for comparison
+	targetVersion, err := NewVersion(versionStr, nil)
+	if err != nil {
+		return "", fmt.Errorf("invalid version string: %s", versionStr)
+	}
+
+	var closestVersion *Version
+
+	// Check all versions (excluding head)
+	for _, v := range vb.versions {
+		if v.IsOlderThan(targetVersion) {
+			if closestVersion == nil || v.IsNewerThan(closestVersion) {
+				closestVersion = v
+			}
+		}
+	}
+
+	if closestVersion == nil {
+		return "", fmt.Errorf("no version found that is less than %s", versionStr)
+	}
+
+	return closestVersion.String(), nil
 }

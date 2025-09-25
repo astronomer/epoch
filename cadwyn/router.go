@@ -104,6 +104,11 @@ func (vr *VersionedRouter) PATCH(pattern string, handler gin.HandlerFunc, versio
 
 // Handle registers a handler for specific versions
 func (vr *VersionedRouter) Handle(method, pattern string, handler gin.HandlerFunc, versions ...*Version) {
+	// If no versions specified, register for all versions
+	if len(versions) == 0 {
+		versions = append([]*Version{vr.versionBundle.GetHeadVersion()}, vr.versionBundle.GetVersions()...)
+	}
+
 	route := &Route{
 		Pattern:  pattern,
 		Method:   method,
@@ -113,11 +118,6 @@ func (vr *VersionedRouter) Handle(method, pattern string, handler gin.HandlerFun
 
 	routeKey := fmt.Sprintf("%s %s", method, pattern)
 	vr.routes[routeKey] = route
-
-	// If no versions specified, register for all versions
-	if len(versions) == 0 {
-		versions = append([]*Version{vr.versionBundle.GetHeadVersion()}, vr.versionBundle.GetVersions()...)
-	}
 
 	// Register with version-specific routers
 	for _, v := range versions {

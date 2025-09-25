@@ -419,7 +419,7 @@ func (eg *EndpointGenerator) createGetHandler(resourceName string) gin.HandlerFu
 
 func (eg *EndpointGenerator) createCreateHandler(resourceName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.JSON(201, gin.H{
+		c.JSON(200, gin.H{
 			"message":  fmt.Sprintf("Create %s", resourceName),
 			"resource": resourceName,
 		})
@@ -437,6 +437,6 @@ func (eg *EndpointGenerator) createUpdateHandler(resourceName string) gin.Handle
 
 func (eg *EndpointGenerator) createDeleteHandler(resourceName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Status(204)
+		c.JSON(204, gin.H{})
 	}
 }

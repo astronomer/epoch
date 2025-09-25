@@ -427,15 +427,6 @@ func (sg *SchemaGenerator) formatGoCode(code string) (string, error) {
 	return buf.String(), nil
 }
 
-// Helper function to extract package name from path
-func extractPackageName(packagePath string) string {
-	parts := strings.Split(packagePath, "/")
-	if len(parts) == 0 {
-		return "main"
-	}
-	return parts[len(parts)-1]
-}
-
 // GetVersionSpecificType returns the version-specific type for a given struct
 func (sg *SchemaGenerator) GetVersionSpecificType(structType reflect.Type, targetVersion string) (reflect.Type, error) {
 	generator, exists := sg.generators[targetVersion]
@@ -467,6 +458,17 @@ func (sg *SchemaGenerator) ListVersionedStructs() map[string][]reflect.Type {
 	}
 
 	return result
+}
+
+// extractPackageName extracts the package name from a package path
+func extractPackageName(packagePath string) string {
+	if packagePath == "" {
+		return "main"
+	}
+
+	// Extract the last part of the path as the package name
+	parts := strings.Split(packagePath, "/")
+	return parts[len(parts)-1]
 }
 
 // RegisterPackage registers a package in the type registry
@@ -604,6 +606,11 @@ func (sg *SchemaGenerator) generateMigrationHelpers(targetVersion string) string
 func (sg *SchemaGenerator) RegisterType(t reflect.Type) error {
 	sg.typeRegistry.mu.Lock()
 	defer sg.typeRegistry.mu.Unlock()
+
+	// Handle pointer types by getting the element type
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
 
 	typeName := t.Name()
 	if typeName == "" {

@@ -252,7 +252,7 @@ var _ = Describe("EndpointGenerator", func() {
 			c, _ := gin.CreateTestContext(recorder)
 			handler(c)
 
-			Expect(recorder.Code).To(Equal(201))
+			Expect(recorder.Code).To(Equal(200))
 			Expect(recorder.Body.String()).To(ContainSubstring("Create"))
 		})
 
@@ -271,6 +271,7 @@ var _ = Describe("EndpointGenerator", func() {
 		It("should generate delete handler", func() {
 			handlers := generator.GenerateCRUDEndpoints(userType, "/users")
 			handler := handlers["DELETE /users/{id}"]
+			Expect(handler).NotTo(BeNil())
 
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
