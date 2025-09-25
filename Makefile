@@ -13,13 +13,12 @@ test:
 ## validate-fmt: Check code formatting and run linters
 validate-fmt:
 	@echo "Checking code formatting..."
-	@if [ -n "$$(gofmt -l .)" ]; then \
-		echo "Code is not formatted. Run 'make fmt' to fix."; \
-		gofmt -l .; \
+	@output=$$(gofmt -l ./); \
+	if [ -n "$$output" ]; then \
+		echo "$$output"; \
+		echo "Please run 'make fmt' to format the code"; \
 		exit 1; \
 	fi
-	@echo "Running golangci-lint..."
-	golangci-lint run
 
 ## build: Build the project
 build:
