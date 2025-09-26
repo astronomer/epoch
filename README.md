@@ -4,7 +4,8 @@
 
 Cadwyn-Go is a Go implementation inspired by [Python Cadwyn](https://github.com/zmievsa/cadwyn), providing automatic API versioning with a clean, instruction-based architecture. **Now with a simplified approach that works with your existing Gin applications!**
 
-[![Go Version](https://img.shields.io/badge/go-%3E%3D1.19-blue.svg)](https://golang.org/)
+[![Build Status](https://github.com/isaacchung/cadwyn-go/actions/workflows/ci.yml/badge.svg)](https://github.com/isaacchung/cadwyn-go/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue.svg)](https://golang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## ✨ Features
@@ -299,16 +300,54 @@ cadwyn := cadwyn.NewCadwyn().
 
 ## 🧪 Testing
 
-```bash
-# Run all tests
-go test ./...
+### Running Tests
 
-# Run with coverage
-go test -cover ./...
+The project includes comprehensive unit tests using [Ginkgo](https://onsi.github.io/ginkgo/) BDD framework:
+
+```bash
+# Run all tests with make
+make test
+
+# Run tests with Ginkgo (if installed)
+make test-ginkgo
+
+# Run only unit tests
+make test-unit
 
 # Validate examples compile
-go run validate.go
+make test-examples
+
+# Generate coverage report
+make coverage
+
+# Use the test script for full validation
+./scripts/test.sh
+
+# Run with coverage report
+./scripts/test.sh --coverage
 ```
+
+### Installing Ginkgo (Optional)
+
+For better test output and reporting:
+
+```bash
+go install github.com/onsi/ginkgo/v2/ginkgo@latest
+```
+
+### Test Structure
+
+- **Unit Tests**: Comprehensive tests for all core functionality
+- **Integration Tests**: Tests for component interactions  
+- **HTTP Tests**: Tests for middleware and handlers
+- **Example Validation**: Ensures all examples compile and run
+
+### Continuous Integration
+
+The project uses GitHub Actions for:
+- ✅ **Multi-platform testing** (Linux, Windows, macOS)
+- ✅ **Code quality checks** and linting
+- ✅ **Example validation** to ensure documentation accuracy
 
 ## 📝 License
 

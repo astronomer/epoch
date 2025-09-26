@@ -19,21 +19,27 @@ type RequestInfo struct {
 func NewRequestInfo(c *gin.Context, body interface{}) *RequestInfo {
 	// Copy headers
 	headers := make(http.Header)
-	for k, v := range c.Request.Header {
-		headers[k] = v
+	if c.Request != nil && c.Request.Header != nil {
+		for k, v := range c.Request.Header {
+			headers[k] = v
+		}
 	}
 
 	// Copy cookies
 	cookies := make(map[string]string)
-	for _, cookie := range c.Request.Cookies() {
-		cookies[cookie.Name] = cookie.Value
+	if c.Request != nil {
+		for _, cookie := range c.Request.Cookies() {
+			cookies[cookie.Name] = cookie.Value
+		}
 	}
 
 	// Copy query params
 	queryParams := make(map[string]string)
-	for k, v := range c.Request.URL.Query() {
-		if len(v) > 0 {
-			queryParams[k] = v[0]
+	if c.Request != nil && c.Request.URL != nil {
+		for k, v := range c.Request.URL.Query() {
+			if len(v) > 0 {
+				queryParams[k] = v[0]
+			}
 		}
 	}
 

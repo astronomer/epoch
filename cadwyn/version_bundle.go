@@ -15,6 +15,7 @@ type VersionBundle struct {
 	reversedVersionValues []string
 
 	// Context variable for API version (like Python's api_version_var)
+	// TODO: Implement context-based version management
 	apiVersionVar context.Context
 
 	// All versions including head
@@ -90,7 +91,7 @@ func NewVersionBundle(versions []*Version) *VersionBundle {
 		}
 	}
 
-	return &VersionBundle{
+	vb := &VersionBundle{
 		headVersion:                    headVersion,
 		versions:                       regularVersions,
 		reversedVersions:               reversedVersions,
@@ -101,7 +102,12 @@ func NewVersionBundle(versions []*Version) *VersionBundle {
 		versionValuesSet:               versionValuesSet,
 		versionedSchemas:               make(map[string]interface{}),
 		versionedEnums:                 make(map[string]interface{}),
+		apiVersionVar:                  context.Background(), // TODO: Implement context-based version management
 	}
+
+	// Note: apiVersionVar will be used for context-based version management in future implementation
+
+	return vb
 }
 
 // GetHeadVersion returns the head version
@@ -134,16 +140,6 @@ func (vb *VersionBundle) ParseVersion(versionStr string) (*Version, error) {
 	}
 
 	return nil, fmt.Errorf("unknown version: %s", versionStr)
-}
-
-// GetClosestLesserVersion finds the closest version that is less than or equal to the given version
-func (vb *VersionBundle) GetClosestLesserVersion(targetVersion string) (string, error) {
-	for _, definedVersion := range vb.versionValues {
-		if definedVersion <= targetVersion {
-			return definedVersion, nil
-		}
-	}
-	return "", fmt.Errorf("no version found that is earlier than or equal to %s", targetVersion)
 }
 
 // GetVersionedSchemas returns a map of versioned schemas
@@ -243,4 +239,30 @@ func (vb *VersionBundle) IsVersionDefined(versionStr string) bool {
 // Iterator returns an iterator over all versions
 func (vb *VersionBundle) Iterator() []*Version {
 	return vb.versions
+}
+
+// GetClosestLesserVersion finds the closest version that is less than the given version string
+func (vb *VersionBundle) GetClosestLesserVersion(versionStr string) (string, error) {
+	// Parse the target version for comparison
+	targetVersion, err := NewVersion(versionStr, nil)
+	if err != nil {
+		return "", fmt.Errorf("invalid version string: %s", versionStr)
+	}
+
+	var closestVersion *Version
+
+	// Check all versions (excluding head)
+	for _, v := range vb.versions {
+		if v.IsOlderThan(targetVersion) {
+			if closestVersion == nil || v.IsNewerThan(closestVersion) {
+				closestVersion = v
+			}
+		}
+	}
+
+	if closestVersion == nil {
+		return "", fmt.Errorf("no version found that is less than %s", versionStr)
+	}
+
+	return closestVersion.String(), nil
 }

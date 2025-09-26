@@ -1,4 +1,4 @@
-.PHONY: test validate-fmt build clean help
+.PHONY: test test-ginkgo test-unit test-examples validate-fmt build clean help coverage deps
 
 # Default target
 .DEFAULT_GOAL := help
@@ -6,7 +6,27 @@
 ## test: Run all tests with race detection and coverage
 test:
 	@echo "Running tests..."
-	go test -race -coverprofile=coverage.out -covermode=atomic ./...
+	go test -race -coverprofile=coverage.out -covermode=atomic -v ./...
+	@echo "Validating examples compile..."
+	go run validate.go
+
+## test-ginkgo: Run tests using Ginkgo (if installed)
+test-ginkgo:
+	@echo "Running tests with Ginkgo..."
+	@if command -v ginkgo >/dev/null 2>&1; then \
+		ginkgo -r --race --cover --coverprofile=coverage.out --covermode=atomic -v ./cadwyn; \
+	else \
+		echo "Ginkgo not installed, falling back to go test..."; \
+		$(MAKE) test; \
+	fi
+
+## test-unit: Run only unit tests (cadwyn package)
+test-unit:
+	@echo "Running unit tests..."
+	go test -race -coverprofile=coverage.out -covermode=atomic -v ./cadwyn
+
+## test-examples: Validate that examples compile
+test-examples:
 	@echo "Validating examples compile..."
 	go run validate.go
 
