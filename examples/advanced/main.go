@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/isaacchung/cadwyn-go/cadwyn"
+	"github.com/astronomer/cadwyn-go/cadwyn"
 )
 
 // UserV1 - Original user model

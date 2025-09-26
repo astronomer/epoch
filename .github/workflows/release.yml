@@ -84,4 +84,4 @@ jobs:
       - name: Update Go module proxy
         run: |
           # Trigger Go module proxy to fetch the new version
-          GOPROXY=proxy.golang.org go list -m github.com/isaacchung/cadwyn-go@${{ steps.release_notes.outputs.tag_name }}
+          GOPROXY=proxy.golang.org go list -m github.com/astronomer/cadwyn-go@${{ steps.release_notes.outputs.tag_name }}

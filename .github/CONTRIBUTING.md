@@ -19,7 +19,7 @@ This document provides guidelines and instructions for contributing to this proj
 
 ### Prerequisites
 
-- **Go 1.19+** - We support multiple Go versions, but use the latest stable version for development
+- **Go 1.23+** - We support multiple Go versions, but use the latest stable version for development
 - **Git** - For version control
 - **GitHub account** - For submitting pull requests
 
@@ -33,7 +33,7 @@ This document provides guidelines and instructions for contributing to this proj
    ```
 3. **Add the upstream repository**:
    ```bash
-   git remote add upstream https://github.com/isaacchung/cadwyn-go.git
+   git remote add upstream https://github.com/astronomer/cadwyn-go.git
    ```
 4. **Install dependencies**:
    ```bash
@@ -214,53 +214,6 @@ Use the feature request template and include:
 - Use cases and examples
 - Alternative solutions considered
 
-## 👥 Community Guidelines
-
-### Code of Conduct
-
-- **Be respectful** and inclusive
-- **Be patient** with newcomers
-- **Be constructive** in feedback
-- **Be collaborative** in discussions
-
-### Communication
-
-- **GitHub Issues**: For bug reports and feature requests
-- **GitHub Discussions**: For questions and community discussion
-- **Pull Request comments**: For code review and technical discussion
-
-### Getting Help
-
-- **Check the README** and examples first
-- **Search existing issues** and discussions
-- **Ask in GitHub Discussions** for general questions
-- **Create an issue** for specific bugs or feature requests
-
-## 🎯 What We're Looking For
-
-### High Priority
-
-- **Bug fixes** and security improvements
-- **Performance optimizations**
-- **Better error messages** and debugging experience
-- **Documentation improvements**
-- **Example applications** and use cases
-
-### Medium Priority
-
-- **New version format support**
-- **Additional middleware features**
-- **Integration improvements**
-- **Testing utilities**
-
-### Guidelines for New Features
-
-- **Start with an issue** to discuss the feature
-- **Keep backward compatibility** when possible
-- **Follow existing patterns** and conventions
-- **Add comprehensive tests** and documentation
-- **Consider performance impact**
-
 ## 🚀 Development Tips
 
 ### Running Examples
@@ -275,32 +228,6 @@ cd examples/advanced && go run main.go
 # Gin server example
 cd examples/gin_server && go run main.go
 ```
-
-### Debugging
-
-- Use Go's built-in debugger or VS Code/GoLand debugging
-- Add strategic log statements for complex logic
-- Write unit tests to isolate issues
-- Use the examples to test changes manually
-
-### Performance
-
-- Benchmark critical paths with `go test -bench`
-- Profile memory usage when dealing with large data
-- Consider concurrent safety for shared resources
-
-## 🙏 Recognition
-
-Contributors will be:
-- **Listed** in the project's contributors
-- **Mentioned** in release notes for significant contributions
-- **Acknowledged** in documentation for major features
-
-## 📞 Contact
-
-- **GitHub Issues**: Technical discussion and bug reports
-- **GitHub Discussions**: General questions and community chat
-- **Maintainer**: [@isaacchung](https://github.com/isaacchung)
 
 ---
 
