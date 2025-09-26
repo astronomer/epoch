@@ -306,18 +306,28 @@ func (mc *MigrationChain) GetChanges() []*VersionChange {
 
 // GetMigrationPath returns the changes needed to migrate from one version to another
 func (mc *MigrationChain) GetMigrationPath(from, to *Version) []*VersionChange {
+	if from.Equal(to) {
+		return []*VersionChange{}
+	}
+
 	var path []*VersionChange
 
-	// Find changes that apply between the two versions
-	for _, change := range mc.changes {
-		// If migrating forward (from older to newer)
-		if from.IsOlderThan(to) {
-			if change.FromVersion().Equal(from) || (change.FromVersion().IsOlderThan(to) && change.FromVersion().IsNewerThan(from)) {
+	// If migrating forward (from older to newer)
+	if from.IsOlderThan(to) {
+		for _, change := range mc.changes {
+			// Include changes that are in the path from 'from' to 'to'
+			if (change.FromVersion().Equal(from) || change.FromVersion().IsNewerThan(from)) &&
+				(change.ToVersion().Equal(to) || change.ToVersion().IsOlderThan(to)) {
 				path = append(path, change)
 			}
-		} else {
-			// If migrating backward (from newer to older)
-			if change.ToVersion().Equal(to) || (change.ToVersion().IsNewerThan(to) && change.ToVersion().IsOlderThan(from)) {
+		}
+	} else {
+		// If migrating backward (from newer to older)
+		// We need to reverse the changes that got us from 'to' to 'from'
+		for _, change := range mc.changes {
+			// Include changes that are in the path from 'to' to 'from'
+			if (change.FromVersion().Equal(to) || change.FromVersion().IsNewerThan(to)) &&
+				(change.ToVersion().Equal(from) || change.ToVersion().IsOlderThan(from)) {
 				path = append(path, change)
 			}
 		}

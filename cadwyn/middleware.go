@@ -186,8 +186,10 @@ func (vm *VersionMiddleware) Middleware() gin.HandlerFunc {
 			// Parse the requested version
 			requestedVersion, err = vm.versionBundle.ParseVersion(versionStr)
 			if err != nil {
-				// Try waterfall logic - find closest older version
-				requestedVersion = vm.findClosestOlderVersion(versionStr)
+				// Try waterfall logic - find closest older version (only for valid version formats)
+				if vm.isValidVersionFormat(versionStr) {
+					requestedVersion = vm.findClosestOlderVersion(versionStr)
+				}
 				if requestedVersion == nil {
 					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Unknown version: %s", versionStr)})
 					c.Abort()
@@ -226,6 +228,27 @@ func (vm *VersionMiddleware) findClosestOlderVersion(requestedVersion string) *V
 	}
 
 	return closestVersion
+}
+
+// isValidVersionFormat checks if a string matches a valid version format
+func (vm *VersionMiddleware) isValidVersionFormat(versionStr string) bool {
+	// Check for date format (YYYY-MM-DD)
+	if matched, _ := regexp.MatchString(`^\d{4}-\d{2}-\d{2}$`, versionStr); matched {
+		return true
+	}
+
+	// Check for semver format (X.Y.Z or X.Y)
+	if matched, _ := regexp.MatchString(`^v?\d+\.\d+(\.\d+)?$`, versionStr); matched {
+		return true
+	}
+
+	// For string versions, we're more permissive but exclude obviously invalid ones
+	// like "invalid" which is clearly not a version
+	if versionStr == "invalid" || versionStr == "unknown" || versionStr == "error" {
+		return false
+	}
+
+	return true
 }
 
 // GetVersionFromContext extracts the version from the Gin context

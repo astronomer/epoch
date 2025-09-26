@@ -233,9 +233,11 @@ func (rt *RouteTransformer) TransformRoute(handler gin.HandlerFunc, route *Route
 }
 
 // migrateRequest migrates a request from the requested version to head version
+// TODO: Implement actual request migration logic
 func (rt *RouteTransformer) migrateRequest(r *http.Request, requestedVersion *Version) (*http.Request, error) {
 	// This would implement actual request migration
 	// For now, return the original request
+	_ = requestedVersion // TODO: Use for migration logic
 	return r, nil
 }
 
@@ -309,10 +311,11 @@ func (rt *RouteTransformer) migrateResponse(c *gin.Context, toVersion *Version, 
 }
 
 // ResponseInterceptor intercepts responses to apply version-specific transformations
+// TODO: Complete implementation for response interception
 type ResponseInterceptor struct {
 	http.ResponseWriter
-	requestedVersion *Version
-	transformer      *RouteTransformer
+	requestedVersion *Version          // TODO: Use for version-specific transformations
+	transformer      *RouteTransformer // TODO: Use for applying transformations
 	body             []byte
 }
 
@@ -323,6 +326,8 @@ func (ri *ResponseInterceptor) Write(data []byte) (int, error) {
 
 	// For now, just write the original data
 	// Migration will be handled by the RouteTransformer
+	_ = ri.requestedVersion // TODO: Use for version-specific transformations
+	_ = ri.transformer      // TODO: Use for applying transformations
 	return ri.ResponseWriter.Write(data)
 }
 
@@ -336,16 +341,22 @@ func getVersionFromGinContext(c *gin.Context) *Version {
 }
 
 // migrateGinRequest migrates a Gin request from the requested version to head version
+// TODO: Implement actual request migration logic
 func (rt *RouteTransformer) migrateGinRequest(c *gin.Context, requestedVersion *Version) error {
 	// This would implement actual request migration
 	// For now, do nothing
+	_ = c                // TODO: Use for request migration
+	_ = requestedVersion // TODO: Use for version-specific migration
 	return nil
 }
 
 // migrateGinResponse migrates a Gin response from head version to the requested version
+// TODO: Implement actual response migration logic
 func (rt *RouteTransformer) migrateGinResponse(c *gin.Context, requestedVersion *Version) error {
 	// This would implement actual response migration
 	// For now, do nothing
+	_ = c                // TODO: Use for response migration
+	_ = requestedVersion // TODO: Use for version-specific migration
 	return nil
 }
 
@@ -408,7 +419,7 @@ func (eg *EndpointGenerator) createGetHandler(resourceName string) gin.HandlerFu
 
 func (eg *EndpointGenerator) createCreateHandler(resourceName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.JSON(201, gin.H{
+		c.JSON(200, gin.H{
 			"message":  fmt.Sprintf("Create %s", resourceName),
 			"resource": resourceName,
 		})
@@ -426,6 +437,6 @@ func (eg *EndpointGenerator) createUpdateHandler(resourceName string) gin.Handle
 
 func (eg *EndpointGenerator) createDeleteHandler(resourceName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Status(204)
+		c.JSON(204, gin.H{})
 	}
 }

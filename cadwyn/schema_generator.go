@@ -83,6 +83,7 @@ type PackageInfo struct {
 }
 
 // ASTCache caches parsed AST nodes for performance
+// The mu field will be used for concurrent access protection in future implementation
 type ASTCache struct {
 	files map[string]*ast.File
 	mu    sync.RWMutex
@@ -109,7 +110,7 @@ type FieldWrapper struct {
 	goType       string
 	jsonTag      string
 	isRequired   bool
-	defaultValue interface{}
+	defaultValue interface{} // TODO: Use for default field values
 	isDeleted    bool
 }
 
@@ -124,6 +125,9 @@ func NewSchemaGenerator(versionBundle *VersionBundle, migrationChain *MigrationC
 	}
 
 	sg.buildVersionSpecificGenerators()
+
+	// Note: astCache.mu will be used for concurrent access protection in future implementation
+
 	return sg
 }
 
@@ -423,15 +427,6 @@ func (sg *SchemaGenerator) formatGoCode(code string) (string, error) {
 	return buf.String(), nil
 }
 
-// Helper function to extract package name from path
-func extractPackageName(packagePath string) string {
-	parts := strings.Split(packagePath, "/")
-	if len(parts) == 0 {
-		return "main"
-	}
-	return parts[len(parts)-1]
-}
-
 // GetVersionSpecificType returns the version-specific type for a given struct
 func (sg *SchemaGenerator) GetVersionSpecificType(structType reflect.Type, targetVersion string) (reflect.Type, error) {
 	generator, exists := sg.generators[targetVersion]
@@ -463,6 +458,17 @@ func (sg *SchemaGenerator) ListVersionedStructs() map[string][]reflect.Type {
 	}
 
 	return result
+}
+
+// extractPackageName extracts the package name from a package path
+func extractPackageName(packagePath string) string {
+	if packagePath == "" {
+		return "main"
+	}
+
+	// Extract the last part of the path as the package name
+	parts := strings.Split(packagePath, "/")
+	return parts[len(parts)-1]
 }
 
 // RegisterPackage registers a package in the type registry
@@ -553,15 +559,15 @@ func (sg *SchemaGenerator) generateVersionedStruct(typeInfo *TypeInfo, generator
 func (sg *SchemaGenerator) generateUtilityFunctions(targetVersion string) string {
 	var builder strings.Builder
 
-	builder.WriteString(fmt.Sprintf("// Version returns the version of this generated code\n"))
-	builder.WriteString(fmt.Sprintf("func Version() string {\n"))
+	builder.WriteString("// Version returns the version of this generated code\n")
+	builder.WriteString("func Version() string {\n")
 	builder.WriteString(fmt.Sprintf("\treturn \"%s\"\n", targetVersion))
-	builder.WriteString(fmt.Sprintf("}\n\n"))
+	builder.WriteString("}\n\n")
 
-	builder.WriteString(fmt.Sprintf("// GeneratedAt returns when this code was generated\n"))
-	builder.WriteString(fmt.Sprintf("func GeneratedAt() string {\n"))
-	builder.WriteString(fmt.Sprintf("\treturn \"%s\"\n", "time.Now().Format(time.RFC3339)"))
-	builder.WriteString(fmt.Sprintf("}\n\n"))
+	builder.WriteString("// GeneratedAt returns when this code was generated\n")
+	builder.WriteString("func GeneratedAt() string {\n")
+	builder.WriteString("\treturn \"time.Now().Format(time.RFC3339)\"\n")
+	builder.WriteString("}\n\n")
 
 	// Add migration helper functions
 	builder.WriteString(sg.generateMigrationHelpers(targetVersion))
@@ -600,6 +606,11 @@ func (sg *SchemaGenerator) generateMigrationHelpers(targetVersion string) string
 func (sg *SchemaGenerator) RegisterType(t reflect.Type) error {
 	sg.typeRegistry.mu.Lock()
 	defer sg.typeRegistry.mu.Unlock()
+
+	// Handle pointer types by getting the element type
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
 
 	typeName := t.Name()
 	if typeName == "" {
