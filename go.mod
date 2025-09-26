@@ -1,4 +1,4 @@
-module github.com/isaacchung/cadwyn-go
+module github.com/astronomer/cadwyn-go
 
 go 1.24.4
 

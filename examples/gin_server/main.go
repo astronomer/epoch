@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/astronomer/cadwyn-go/cadwyn"
 	"github.com/gin-gonic/gin"
-	"github.com/isaacchung/cadwyn-go/cadwyn"
 )
 
 // User models for different versions

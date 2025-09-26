@@ -58,7 +58,7 @@ body:
 
         import (
             "github.com/gin-gonic/gin"
-            "github.com/isaacchung/cadwyn-go/cadwyn"
+            "github.com/astronomer/cadwyn-go/cadwyn"
         )
 
         func main() {

@@ -25,7 +25,7 @@ Cadwyn-Go is a Go implementation inspired by [Python Cadwyn](https://github.com/
 ### Installation
 
 ```bash
-go get github.com/isaacchung/cadwyn-go
+go get github.com/astronomer/cadwyn-go
 ```
 
 ### Basic Usage with Existing Gin App
@@ -35,7 +35,7 @@ package main
 
 import (
     "github.com/gin-gonic/gin"
-    "github.com/isaacchung/cadwyn-go/cadwyn"
+    "github.com/astronomer/cadwyn-go/cadwyn"
 )
 
 // Define your API models
