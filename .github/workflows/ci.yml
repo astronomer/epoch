@@ -44,14 +44,6 @@ jobs:
         run: go install github.com/onsi/ginkgo/v2/ginkgo@latest
       - name: Run unit tests
         run: make test-ginkgo
-      - name: Upload coverage reports to Codecov
-        if: success()
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.out
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
 
   test-matrix:
     name: Test on Go ${{ matrix.go-version }} and ${{ matrix.os }}
