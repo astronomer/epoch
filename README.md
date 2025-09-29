@@ -4,7 +4,7 @@
 
 Cadwyn-Go is a Go implementation inspired by [Python Cadwyn](https://github.com/zmievsa/cadwyn), providing automatic API versioning with a clean, instruction-based architecture. **Now with a simplified approach that works with your existing Gin applications!**
 
-[![Build Status](https://github.com/isaacchung/cadwyn-go/actions/workflows/ci.yml/badge.svg)](https://github.com/isaacchung/cadwyn-go/actions/workflows/ci.yml)
+[![Build Status](https://github.com/astronomer/cadwyn-go/actions/workflows/ci.yml/badge.svg)](https://github.com/astronomer/cadwyn-go/actions/workflows/ci.yml)
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue.svg)](https://golang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
