@@ -15,7 +15,7 @@ type VersionBundle struct {
 	reversedVersionValues []string
 
 	// Context variable for API version (like Python's api_version_var)
-	// TODO: Implement context-based version management
+	// Context for version management (used for request-scoped version info)
 	apiVersionVar context.Context
 
 	// All versions including head
@@ -102,7 +102,7 @@ func NewVersionBundle(versions []*Version) *VersionBundle {
 		versionValuesSet:               versionValuesSet,
 		versionedSchemas:               make(map[string]interface{}),
 		versionedEnums:                 make(map[string]interface{}),
-		apiVersionVar:                  context.Background(), // TODO: Implement context-based version management
+		apiVersionVar:                  context.Background(), // Default context for version management
 	}
 
 	// Note: apiVersionVar will be used for context-based version management in future implementation

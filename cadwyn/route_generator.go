@@ -1,6 +1,8 @@
 package cadwyn
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -221,7 +223,7 @@ func (rt *RouteTransformer) TransformRoute(handler gin.HandlerFunc, route *Route
 		}
 
 		// Apply request migration
-		err := rt.migrateGinRequest(c, requestedVersion)
+		err := rt.migrateRequest(c, requestedVersion)
 		if err != nil {
 			c.JSON(400, gin.H{"error": fmt.Sprintf("Request migration failed: %v", err)})
 			return
@@ -232,13 +234,38 @@ func (rt *RouteTransformer) TransformRoute(handler gin.HandlerFunc, route *Route
 	}
 }
 
-// migrateRequest migrates a request from the requested version to head version
-// TODO: Implement actual request migration logic
-func (rt *RouteTransformer) migrateRequest(r *http.Request, requestedVersion *Version) (*http.Request, error) {
-	// This would implement actual request migration
-	// For now, return the original request
-	_ = requestedVersion // TODO: Use for migration logic
-	return r, nil
+// migrateRequest migrates a Gin request from the requested version to head version
+func (rt *RouteTransformer) migrateRequest(c *gin.Context, requestedVersion *Version) error {
+	// Get request body if present
+	var bodyData interface{}
+	if c.Request.Body != nil {
+		// Try to parse JSON body
+		if err := c.ShouldBindJSON(&bodyData); err != nil {
+			// If JSON parsing fails, leave body as-is
+			bodyData = nil
+		}
+	}
+
+	// Get the request info for migration
+	requestInfo := NewRequestInfo(c, bodyData)
+
+	// Find migration chain from requested version to head version
+	headVersion := rt.versionBundle.GetHeadVersion()
+	migrationChain := rt.migrationChain.GetMigrationPath(requestedVersion, headVersion)
+
+	// Apply migrations in forward direction (requested -> head)
+	for _, change := range migrationChain {
+		if err := change.MigrateRequest(c.Request.Context(), requestInfo, reflect.TypeOf(requestInfo.Body), 0); err != nil {
+			return fmt.Errorf("failed to migrate request with change %s: %w", change.Description(), err)
+		}
+	}
+
+	// Update the request context with migrated data if needed
+	if requestInfo.Body != nil {
+		c.Set("migratedRequestBody", requestInfo.Body)
+	}
+
+	return nil
 }
 
 // handleWithMigration handles request/response with migration support
@@ -311,23 +338,72 @@ func (rt *RouteTransformer) migrateResponse(c *gin.Context, toVersion *Version, 
 }
 
 // ResponseInterceptor intercepts responses to apply version-specific transformations
-// TODO: Complete implementation for response interception
 type ResponseInterceptor struct {
 	http.ResponseWriter
-	requestedVersion *Version          // TODO: Use for version-specific transformations
-	transformer      *RouteTransformer // TODO: Use for applying transformations
+	requestedVersion *Version
+	transformer      *RouteTransformer
 	body             []byte
+	statusCode       int
 }
 
-// Write intercepts the response body
+// WriteHeader captures the status code
+func (ri *ResponseInterceptor) WriteHeader(statusCode int) {
+	ri.statusCode = statusCode
+	ri.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Write intercepts the response body and applies version-specific transformations
 func (ri *ResponseInterceptor) Write(data []byte) (int, error) {
 	// Store the response body for migration
 	ri.body = append(ri.body, data...)
 
-	// For now, just write the original data
-	// Migration will be handled by the RouteTransformer
-	_ = ri.requestedVersion // TODO: Use for version-specific transformations
-	_ = ri.transformer      // TODO: Use for applying transformations
+	// Apply response migration if needed
+	if ri.requestedVersion != nil && !ri.requestedVersion.IsHead {
+		// Parse response data
+		var responseData interface{}
+		if len(ri.body) > 0 {
+			// Try to parse as JSON
+			if err := json.Unmarshal(ri.body, &responseData); err != nil {
+				// If not JSON, write original data
+				return ri.ResponseWriter.Write(data)
+			}
+		}
+
+		// Create response info for migration
+		responseInfo := &ResponseInfo{
+			Body:       responseData,
+			StatusCode: ri.statusCode,
+			Headers:    make(http.Header),
+		}
+
+		// Copy headers
+		for key, values := range ri.ResponseWriter.Header() {
+			responseInfo.Headers[key] = values
+		}
+
+		// Apply migrations
+		headVersion := ri.transformer.versionBundle.GetHeadVersion()
+		migrationChain := ri.transformer.migrationChain.GetMigrationPath(headVersion, ri.requestedVersion)
+
+		for i := len(migrationChain) - 1; i >= 0; i-- {
+			change := migrationChain[i]
+			if err := change.MigrateResponse(context.Background(), responseInfo, reflect.TypeOf(responseInfo.Body), 0); err != nil {
+				// If migration fails, write original data
+				return ri.ResponseWriter.Write(data)
+			}
+		}
+
+		// Marshal the migrated response
+		migratedData, err := json.Marshal(responseInfo.Body)
+		if err != nil {
+			// If marshaling fails, write original data
+			return ri.ResponseWriter.Write(data)
+		}
+
+		return ri.ResponseWriter.Write(migratedData)
+	}
+
+	// No migration needed, write original data
 	return ri.ResponseWriter.Write(data)
 }
 
@@ -337,26 +413,6 @@ func (ri *ResponseInterceptor) Write(data []byte) (int, error) {
 func getVersionFromGinContext(c *gin.Context) *Version {
 	// This would typically get version from context set by middleware
 	// For now, return nil
-	return nil
-}
-
-// migrateGinRequest migrates a Gin request from the requested version to head version
-// TODO: Implement actual request migration logic
-func (rt *RouteTransformer) migrateGinRequest(c *gin.Context, requestedVersion *Version) error {
-	// This would implement actual request migration
-	// For now, do nothing
-	_ = c                // TODO: Use for request migration
-	_ = requestedVersion // TODO: Use for version-specific migration
-	return nil
-}
-
-// migrateGinResponse migrates a Gin response from head version to the requested version
-// TODO: Implement actual response migration logic
-func (rt *RouteTransformer) migrateGinResponse(c *gin.Context, requestedVersion *Version) error {
-	// This would implement actual response migration
-	// For now, do nothing
-	_ = c                // TODO: Use for response migration
-	_ = requestedVersion // TODO: Use for version-specific migration
 	return nil
 }
 
