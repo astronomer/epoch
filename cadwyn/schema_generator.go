@@ -109,7 +109,7 @@ type FieldWrapper struct {
 	goType       string
 	jsonTag      string
 	isRequired   bool
-	defaultValue interface{} // TODO: Use for default field values
+	defaultValue interface{} // Default value for field (used during schema generation)
 	isDeleted    bool
 }
 

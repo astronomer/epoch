@@ -1,0 +1,128 @@
+# GoReleaser configuration for Cadwyn-Go
+# Documentation: https://goreleaser.com
+
+# Project information
+project_name: cadwyn-go
+
+# Environment variables
+env:
+  - GO111MODULE=on
+  - CGO_ENABLED=0
+
+# Before hooks - run before building
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+# Build configuration
+# Skip builds since this is a library, not an application
+builds:
+  - skip: true
+
+# Checksum configuration
+checksum:
+  name_template: 'checksums.txt'
+
+# Snapshot configuration (for non-tag builds)
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+# Changelog configuration
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^refactor:'
+      - '^style:'
+      - 'merge conflict'
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+  groups:
+    - title: 'New Features'
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: 'Bug Fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: 'Performance Improvements'
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: 'Dependencies'
+      regexp: '^.*?(feat|fix|perf)(\([[:word:]]+\))??!?:.+$'
+      order: 999
+    - title: 'Other'
+      order: 9999
+
+# Release configuration
+release:
+  # Repository to release to
+  github:
+    owner: astronomer
+    name: cadwyn-go
+
+  # Release name template
+  name_template: "Release {{.Tag}}"
+
+  # Prerelease detection
+  prerelease: auto
+
+  # Release notes
+  header: |
+    ## Cadwyn-Go {{.Tag}}
+    
+    **Stripe-like API versioning for Go applications**
+    
+    ### Installation
+    ```bash
+    go get github.com/astronomer/cadwyn-go@{{.Tag}}
+    ```
+
+  footer: |
+    ## Usage
+
+    ```go
+    import "github.com/astronomer/cadwyn-go/cadwyn"
+    
+    func main() {
+        app := cadwyn.NewCadwyn().
+            WithSemverVersions("1.0.0", "2.0.0").
+            Build()
+        // ... use the library
+    }
+    ```
+
+    ---
+    
+    **Full Documentation**: [README.md](https://github.com/astronomer/cadwyn-go#readme)
+    
+    **Examples**: Check the [examples/](https://github.com/astronomer/cadwyn-go/tree/main/examples) directory.
+
+# Sign configuration (requires GPG key setup)
+signs:
+  - artifacts: checksum
+    args:
+      - "--batch"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+
+# Go module proxy configuration
+# This ensures the module is available via go get immediately
+gomod:
+  proxy: true
+  env:
+    - GOPROXY=https://proxy.golang.org,direct
+    - GOSUMDB=sum.golang.org
+
+# Metadata
+metadata:
+  mod_timestamp: "{{ .CommitTimestamp }}"
