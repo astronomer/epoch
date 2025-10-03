@@ -196,7 +196,10 @@ func (cb *CadwynBuilder) Build() (*Cadwyn, error) {
 	}
 
 	// Create version bundle
-	versionBundle := NewVersionBundle(cb.versions)
+	versionBundle, err := NewVersionBundle(cb.versions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create version bundle: %w", err)
+	}
 
 	// Create migration chain
 	migrationChain := NewMigrationChain(cb.changes)
@@ -205,10 +208,13 @@ func (cb *CadwynBuilder) Build() (*Cadwyn, error) {
 	schemaGenerator := NewSchemaGenerator(versionBundle, migrationChain)
 
 	// Register types with schema generator
+	registeredTypes := make([]string, 0)
 	for _, t := range cb.types {
 		if err := schemaGenerator.RegisterType(t); err != nil {
-			return nil, fmt.Errorf("failed to register type %s: %w", t.Name(), err)
+			return nil, fmt.Errorf("failed to register type '%s': %w (already registered types: %v)",
+				t.Name(), err, registeredTypes)
 		}
+		registeredTypes = append(registeredTypes, t.Name())
 	}
 
 	return &Cadwyn{
@@ -245,27 +251,7 @@ func Simple() (*Cadwyn, error) {
 	return builder.Build()
 }
 
-// Version creation helpers
-
-// DateVersion creates a date-based version
-func DateVersion(date string) *Version {
-	v, err := NewDateVersion(date)
-	if err != nil {
-		panic(fmt.Sprintf("invalid date version '%s': %v", date, err))
-	}
-	return v
-}
-
-// SemverVersion creates a semantic version
-func SemverVersion(semver string) *Version {
-	v, err := NewSemverVersion(semver)
-	if err != nil {
-		panic(fmt.Sprintf("invalid semver version '%s': %v", semver, err))
-	}
-	return v
-}
-
-// StringVersion creates a string version
+// StringVersion creates a string version (convenience wrapper)
 func StringVersion(version string) *Version {
 	return NewStringVersion(version)
 }

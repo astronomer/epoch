@@ -18,7 +18,9 @@ var _ = Describe("Middleware", func() {
 	BeforeEach(func() {
 		v1, _ = NewSemverVersion("1.0.0")
 		v2, _ = NewSemverVersion("2.0.0")
-		bundle = NewVersionBundle([]*Version{v1, v2})
+		var err error
+		bundle, err = NewVersionBundle([]*Version{v1, v2})
+		Expect(err).NotTo(HaveOccurred())
 		chain = NewMigrationChain([]*VersionChange{})
 		gin.SetMode(gin.TestMode)
 	})

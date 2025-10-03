@@ -1,362 +1,298 @@
-# 🔄 Cadwyn-Go
+# Cadwyn-Go
 
-**Stripe-like API versioning for Go applications**
+**API versioning for Go with automatic request/response migrations**
 
-Cadwyn-Go is a Go implementation inspired by [Python Cadwyn](https://github.com/zmievsa/cadwyn), providing automatic API versioning with a clean, instruction-based architecture. **Now with a simplified approach that works with your existing Gin applications!**
+Cadwyn-Go lets you version your Go APIs the way Stripe does - write your handlers once for the latest version, then define migrations to transform requests and responses for older API versions automatically.
 
-[![Build Status](https://github.com/isaacchung/cadwyn-go/actions/workflows/ci.yml/badge.svg)](https://github.com/isaacchung/cadwyn-go/actions/workflows/ci.yml)
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue.svg)](https://golang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## ✨ Features
+## Why Cadwyn-Go?
 
-- **🎯 Simple & Flexible** - Add versioning to existing Gin apps with minimal changes
-- **📅 Multiple Version Formats** - Date-based (`2023-01-15`), semantic (`1.0.0`, `2.1`), and string (`alpha`) versioning
-- **🔄 Instruction-Based Migrations** - Transform requests and responses with clear instructions
-- **🏗️ Builder Pattern** - Fluent API for easy configuration
-- **🧪 Type-Safe** - Full Go type safety with compile-time checks
-- **📦 Lightweight** - Minimal dependencies, focused on core functionality
-- **🌐 Gin Integration** - Works with your existing Gin setup
-- **🔧 Schema Generation** - Generate version-specific Go structs
-- **⚡ Version Detection Middleware** - Automatic version detection from headers/query/path
-- **🎛️ Selective Versioning** - Only version the endpoints that need it
+- **Write once** - Implement handlers for your latest API version only
+- **Automatic migrations** - Define transformations between versions declaratively
+- **No duplication** - No need to maintain multiple versions of the same endpoint
+- **Flexible versioning** - Support date-based (`2024-01-01`), semantic (`v1.0.0`), or string versions
+- **Gin integration** - Drop into existing Gin applications with minimal changes
 
-## 🚀 Quick Start
-
-### Installation
+## Installation
 
 ```bash
 go get github.com/astronomer/cadwyn-go
 ```
 
-### Basic Usage with Existing Gin App
+## Quick Start
 
 ```go
 package main
 
 import (
-    "github.com/gin-gonic/gin"
     "github.com/astronomer/cadwyn-go/cadwyn"
+    "github.com/gin-gonic/gin"
 )
 
-// Define your API models
-type CreateUserRequest struct {
-    Name  string `json:"name"`
-    Email string `json:"email"`
-    Phone string `json:"phone,omitempty"` // Added in v2.0
-}
-
-type UserResponse struct {
+type User struct {
     ID    int    `json:"id"`
     Name  string `json:"name"`
-    Email string `json:"email"`
-    Phone string `json:"phone,omitempty"` // Added in v2.0
+    Email string `json:"email"` // Added in v2.0.0
 }
 
 func main() {
-    // Create your Gin app as usual
-    r := gin.Default()
+    // Define version migration
+    v1, _ := cadwyn.NewSemverVersion("1.0.0")
+    v2, _ := cadwyn.NewSemverVersion("2.0.0")
     
-    // Add your own middleware
-    r.Use(gin.Logger())
-    r.Use(gin.Recovery())
-    
-    // Create Cadwyn with just the versioning logic
-    cadwynInstance, err := cadwyn.NewCadwyn().
-        WithDateVersions("2023-01-01", "2024-01-01").
+    migration := cadwyn.NewVersionChange(
+        "Add email to User",
+        v1, v2,
+        // Forward: v1 request → v2 (add email)
+        &cadwyn.AlterRequestInstruction{
+            Schemas: []interface{}{User{}},
+            Transformer: func(req *cadwyn.RequestInfo) error {
+                if user, ok := req.Body.(map[string]interface{}); ok {
+                    if _, hasEmail := user["email"]; !hasEmail {
+                        user["email"] = "user@example.com"
+                    }
+                }
+                return nil
+            },
+        },
+        // Backward: v2 response → v1 (remove email)
+        &cadwyn.AlterResponseInstruction{
+            Schemas: []interface{}{User{}},
+            Transformer: func(resp *cadwyn.ResponseInfo) error {
+                if user, ok := resp.Body.(map[string]interface{}); ok {
+                    delete(user, "email")
+                }
+                return nil
+            },
+        },
+    )
+
+    // Setup Cadwyn
+    cadwynInstance, _ := cadwyn.NewCadwyn().
+        WithVersions(v1, v2).
         WithHeadVersion().
-        WithTypes(CreateUserRequest{}, UserResponse{}).
-        WithVersionLocation(cadwyn.VersionLocationHeader).
+        WithChanges(migration).
         Build()
-    
-    if err != nil {
-        panic(err)
-    }
-    
-    // Apply Cadwyn's version detection middleware
+
+    // Add to Gin
+    r := gin.Default()
     r.Use(cadwynInstance.Middleware())
     
-    // Wrap only the handlers that need versioning
-    r.GET("/users", cadwynInstance.WrapHandler(getUsersHandler))
-    r.POST("/users", cadwynInstance.WrapHandler(createUserHandler))
-    
-    // Regular handlers don't need versioning
-    r.GET("/health", healthHandler)
+    // Wrap handlers that need versioning
+    r.GET("/users/:id", cadwynInstance.WrapHandler(getUser))
+    r.POST("/users", cadwynInstance.WrapHandler(createUser))
     
     r.Run(":8080")
 }
 
-func getUsersHandler(c *gin.Context) {
-    // Get version from context (set by Cadwyn middleware)
-    version := cadwyn.GetVersionFromContext(c)
-    
-    // Your handler logic with version-aware responses
-    users := getUsers()
-    c.JSON(200, transformUsersForVersion(users, version))
+func getUser(c *gin.Context) {
+    // Always implement for HEAD (latest) version
+    user := User{ID: 1, Name: "John", Email: "john@example.com"}
+    c.JSON(200, user)
+}
+
+func createUser(c *gin.Context) {
+    var user User
+    c.ShouldBindJSON(&user)
+    c.JSON(201, user)
 }
 ```
 
-## 🎯 Key Benefits of the New Approach
+**Test it:**
+```bash
+# v1.0.0 - No email in response
+curl http://localhost:8080/users/1 -H "X-API-Version: 1.0.0"
+# {"id":1,"name":"John"}
 
-### ✅ **Use Your Existing Gin Setup**
-```go
-// You control your Gin engine
-r := gin.New() // or gin.Default()
-r.Use(yourCustomMiddleware())
-r.Use(cors.Default())
-
-// Just add versioning where needed
-r.Use(cadwyn.Middleware())
-r.GET("/api/users", cadwyn.WrapHandler(handler))
+# v2.0.0 - Email included
+curl http://localhost:8080/users/1 -H "X-API-Version: 2.0.0"
+# {"id":1,"name":"John","email":"john@example.com"}
 ```
 
-### ✅ **Selective Versioning**
+## Core Concepts
+
+### 1. Version Types
+
+**Date-based** (recommended for public APIs):
 ```go
-// Version only what needs it
-r.GET("/api/users", cadwyn.WrapHandler(getUsersHandler))     // ✅ Versioned
-r.GET("/api/posts", cadwyn.WrapHandler(getPostsHandler))     // ✅ Versioned
-r.GET("/health", healthHandler)                              // ❌ Not versioned
-r.GET("/metrics", metricsHandler)                            // ❌ Not versioned
+v1, _ := cadwyn.NewDateVersion("2024-01-01")
+v2, _ := cadwyn.NewDateVersion("2024-06-15")
 ```
 
-### ✅ **Minimal Configuration**
+**Semantic versioning**:
 ```go
-// Simple builder - just versions, changes, and types
-cadwyn := cadwyn.NewCadwyn().
-    WithVersions(v1, v2).
-    WithChanges(userChange).
-    WithTypes(UserRequest{}, UserResponse{}).
+v1, _ := cadwyn.NewSemverVersion("1.0.0")
+v2, _ := cadwyn.NewSemverVersion("2.0.0")
+```
+
+**String-based**:
+```go
+v1 := cadwyn.NewStringVersion("alpha")
+v2 := cadwyn.NewStringVersion("beta")
+```
+
+### 2. Version Changes
+
+Define what changed between versions:
+
+```go
+change := cadwyn.NewVersionChange(
+    "Description of change",
+    fromVersion,
+    toVersion,
+    // Instructions for migration
+    &cadwyn.AlterRequestInstruction{...},
+    &cadwyn.AlterResponseInstruction{...},
+)
+```
+
+### 3. Migration Instructions
+
+**AlterRequestInstruction** - Transform old requests to new format:
+```go
+&cadwyn.AlterRequestInstruction{
+    Schemas: []interface{}{User{}},
+    Transformer: func(req *cadwyn.RequestInfo) error {
+        // Modify req.Body to add missing fields, rename fields, etc.
+        return nil
+    },
+}
+```
+
+**AlterResponseInstruction** - Transform new responses to old format:
+```go
+&cadwyn.AlterResponseInstruction{
+    Schemas: []interface{}{User{}},
+    Transformer: func(resp *cadwyn.ResponseInfo) error {
+        // Modify resp.Body to remove new fields, rename fields, etc.
+        return nil
+    },
+}
+```
+
+### 4. Version Detection
+
+Cadwyn automatically detects versions from:
+- **Headers** (default): `X-API-Version: 2024-01-01`
+- **Query params**: `?version=2024-01-01`
+- **URL path**: `/v2024-01-01/users`
+
+Configure the detection method:
+```go
+cadwyn.NewCadwyn().
+    WithVersionLocation(cadwyn.VersionLocationHeader).  // or Query, Path
+    WithVersionParameter("X-API-Version").              // Custom header/param name
     Build()
 ```
 
-## 📚 Examples
+## Builder API
 
-### Gin Server Example
+```go
+builder := cadwyn.NewCadwyn()
 
-```bash
-cd examples/gin_server
-go run main.go
+// Add versions
+builder.WithVersions(v1, v2, v3)
+builder.WithDateVersions("2023-01-01", "2024-01-01")    // Convenience method
+builder.WithSemverVersions("1.0.0", "2.0.0")             // Convenience method
+builder.WithHeadVersion()                                 // Always latest
+
+// Add migrations
+builder.WithChanges(change1, change2, change3)
+
+// Configure version detection
+builder.WithVersionLocation(cadwyn.VersionLocationHeader)
+builder.WithVersionParameter("X-API-Version")
+builder.WithVersionFormat(cadwyn.VersionFormatDate)
+
+// Build
+cadwynInstance, err := builder.Build()
 ```
 
-Test with different versions:
-
-```bash
-# Version 2023-01-01 (no phone field)
-curl -H "X-API-Version: 2023-01-01" http://localhost:8080/users
-
-# Version 2024-01-01 (with phone field)  
-curl -H "X-API-Version: 2024-01-01" http://localhost:8080/users
-
-# Latest version (no header)
-curl http://localhost:8080/users
-```
+## Examples
 
 ### Basic Example
-
+A minimal example showing simple version migration:
 ```bash
 cd examples/basic
 go run main.go
 ```
 
-### Advanced Example
+Demonstrates:
+- Semantic versioning (v1.0.0, v2.0.0)
+- Single field addition (email)
+- Request/response transformations
 
+### Advanced Example
+A full REST API with complex migrations:
 ```bash
-cd examples/advanced  
+cd examples/advanced
 go run main.go
 ```
 
-## 🏗️ Core Concepts
+Demonstrates:
+- Date-based versioning
+- Multiple models (User, Product)
+- Field additions and renames
+- Array transformations
+- Full CRUD operations
 
-### Version Types
+## How It Works
 
-Cadwyn supports multiple version formats to suit different needs:
+1. **You write handlers for the HEAD (latest) version only**
+2. **Cadwyn middleware detects the requested API version** from headers/query/path
+3. **Request migration**: Transforms incoming request from old → new format
+4. **Your handler executes** with the migrated request
+5. **Response migration**: Transforms outgoing response from new → old format
+6. **Client receives response** in the format matching their requested version
 
-#### 📅 **Date-Based Versions**
-```go
-cadwyn := cadwyn.NewCadwyn().
-    WithDateVersions("2023-01-01", "2023-06-15", "2024-01-01").
-    WithHeadVersion().
-    Build()
-
-// Or using convenience function
-cadwyn := cadwyn.QuickStart("2023-01-01", "2024-01-01")
+```
+Client (v1) → [v1 Request] → Migration → [v2 Request] → Handler (v2)
+                                                             ↓
+Client (v1) ← [v1 Response] ← Migration ← [v2 Response] ← Handler (v2)
 ```
 
-#### 🔢 **Semantic Versions (supports both major.minor.patch and major.minor)**
-```go
-cadwyn := cadwyn.NewCadwyn().
-    WithSemverVersions("1.0.0", "1.2", "2.0.0").  // Mix of full and short semver
-    WithHeadVersion().
-    Build()
+## Architecture: Middleware vs Router Generation
 
-// Or using convenience function
-cadwyn := cadwyn.WithSemver("1.0", "2.0")  // Both major.minor and major.minor.patch work
-```
+Cadwyn-Go uses a **middleware approach** instead of Python Cadwyn's router generation:
 
-#### 📝 **String Versions**
-```go
-cadwyn := cadwyn.NewCadwyn().
-    WithStringVersions("alpha", "beta", "stable").
-    WithHeadVersion().
-    Build()
+**Go (Middleware)**:
+- Single router with runtime transformation
+- Integrates naturally with Gin's middleware chain
+- Lower memory footprint
+- Simpler mental model
 
-// Or using convenience function
-cadwyn := cadwyn.WithStrings("alpha", "beta", "stable")
-```
+**Python (Router Generation)**:
+- Generates separate routers per version at startup
+- Fits FastAPI's ASGI architecture
+- Different approach, same versioning semantics
 
-#### 🏁 **Head Version**
-```go
-// Always represents the latest version
-cadwyn := cadwyn.NewCadwyn().
-    WithHeadVersion().
-    Build()
+Both achieve **transparent API versioning with automatic migrations** - the implementation just follows each language's idioms.
 
-// Or using convenience function
-cadwyn := cadwyn.Simple()
-```
-
-### Version Changes
-
-Define how your API evolves between versions:
-
-```go
-change := cadwyn.NewVersionChange(
-    fromVersion,
-    toVersion,
-    "Add phone field to User",
-    []cadwyn.MigrationInstruction{
-        &cadwyn.AlterRequestInstruction{
-            Schemas: []interface{}{CreateUserRequest{}},
-            Transformer: func(req *cadwyn.RequestInfo) error {
-                // Transform request from old to new version
-                return nil
-            },
-        },
-        &cadwyn.AlterResponseInstruction{
-            Schemas: []interface{}{UserResponse{}},
-            Transformer: func(resp *cadwyn.ResponseInfo) error {
-                // Transform response from new to old version
-                return nil
-            },
-        },
-    },
-)
-```
-
-### Version Detection
-
-Cadwyn can detect versions from:
-
-- **Headers**: `X-API-Version: 2024-01-01`
-- **Query parameters**: `?version=2024-01-01`  
-- **Path**: `/v2024-01-01/users`
-
-```go
-cadwyn := cadwyn.NewCadwyn().
-    WithVersionLocation(cadwyn.VersionLocationHeader).  // or Query, Path
-    WithVersionParameter("X-API-Version").              // custom header/param name
-    Build()
-```
-
-## 📖 API Reference
-
-### CadwynBuilder
-
-- `NewCadwyn()` - Create a new builder
-- `WithVersions(...*Version)` - Add versions
-- `WithDateVersions(...string)` - Add date-based versions
-- `WithSemverVersions(...string)` - Add semantic versions (supports both major.minor.patch and major.minor)
-- `WithStringVersions(...string)` - Add string-based versions
-- `WithHeadVersion()` - Add head version
-- `WithChanges(...*VersionChange)` - Add version changes
-- `WithTypes(...interface{})` - Register types for schema generation
-- `WithVersionLocation(VersionLocation)` - Set version detection location
-- `WithVersionParameter(string)` - Set version parameter name
-- `WithVersionFormat(VersionFormat)` - Set version format
-- `WithDefaultVersion(*Version)` - Set default version
-- `Build() (*Cadwyn, error)` - Build the Cadwyn instance
-
-### Cadwyn
-
-- `Middleware() gin.HandlerFunc` - Version detection middleware
-- `WrapHandler(gin.HandlerFunc) gin.HandlerFunc` - Wrap handler for versioning
-- `GetVersions() []*Version` - Get all versions
-- `ParseVersion(string) (*Version, error)` - Parse version string
-- `GenerateStructForVersion(interface{}, string) (string, error)` - Generate version-specific struct
-
-### Convenience Functions
-
-- `cadwyn.QuickStart(dates ...string)` - Quick setup with date versions
-- `cadwyn.WithSemver(semvers ...string)` - Quick setup with semantic versions
-- `cadwyn.WithStrings(versions ...string)` - Quick setup with string versions
-- `cadwyn.Simple()` - Simple setup with just head version
-
-### Version Helpers
-
-- `cadwyn.DateVersion(date string)` - Create date version
-- `cadwyn.SemverVersion(semver string)` - Create semantic version (supports both formats)
-- `cadwyn.StringVersion(version string)` - Create string version
-- `cadwyn.HeadVersion()` - Create head version
-
-## 🧪 Testing
-
-### Running Tests
-
-The project includes comprehensive unit tests using [Ginkgo](https://onsi.github.io/ginkgo/) BDD framework:
+## Testing
 
 ```bash
-# Run all tests with make
-make test
+# Run all tests
+go test ./cadwyn/...
 
-# Run tests with Ginkgo (if installed)
-make test-ginkgo
+# Run with coverage
+go test ./cadwyn/... -coverprofile=coverage.out
+go tool cover -html=coverage.out
 
-# Run only unit tests
-make test-unit
-
-# Validate examples compile
-make test-examples
-
-# Generate coverage report
-make coverage
-
-# Use the test script for full validation
-./scripts/test.sh
-
-# Run with coverage report
-./scripts/test.sh --coverage
+# Verify examples compile
+cd examples/basic && go build
+cd examples/advanced && go build
 ```
 
-### Installing Ginkgo (Optional)
+## Contributing
 
-For better test output and reporting:
+Contributions welcome! Please feel free to submit a Pull Request.
 
-```bash
-go install github.com/onsi/ginkgo/v2/ginkgo@latest
-```
-
-### Test Structure
-
-- **Unit Tests**: Comprehensive tests for all core functionality
-- **Integration Tests**: Tests for component interactions  
-- **HTTP Tests**: Tests for middleware and handlers
-- **Example Validation**: Ensures all examples compile and run
-
-### Continuous Integration
-
-The project uses GitHub Actions for:
-- ✅ **Multi-platform testing** (Linux, Windows, macOS)
-- ✅ **Code quality checks** and linting
-- ✅ **Example validation** to ensure documentation accuracy
-
-## 📝 License
+## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
 
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 🙏 Acknowledgments
+## Acknowledgments
 
 Inspired by [Python Cadwyn](https://github.com/zmievsa/cadwyn) - bringing Stripe-like API versioning to the Go ecosystem.

@@ -33,7 +33,9 @@ var _ = Describe("SchemaGenerator", func() {
 		v1, _ = NewSemverVersion("1.0.0")
 		v2, _ = NewSemverVersion("2.0.0")
 		v3, _ = NewSemverVersion("3.0.0")
-		bundle = NewVersionBundle([]*Version{v1, v2, v3})
+		var err error
+		bundle, err = NewVersionBundle([]*Version{v1, v2, v3})
+		Expect(err).NotTo(HaveOccurred())
 		chain = NewMigrationChain([]*VersionChange{})
 		generator = NewSchemaGenerator(bundle, chain)
 		testStructType = reflect.TypeOf(TestStruct{})

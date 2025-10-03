@@ -1,159 +1,121 @@
 package main
 
 import (
-	"fmt"
-	"strings"
+	"net/http"
 
 	"github.com/astronomer/cadwyn-go/cadwyn"
+	"github.com/gin-gonic/gin"
 )
 
-// UserV1 - Original user model
-type UserV1 struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
-}
-
-// UserV2 - Added email field
-type UserV2 struct {
+// User represents our data model
+// This is the HEAD version (latest) with all fields
+type User struct {
 	ID    int    `json:"id"`
 	Name  string `json:"name"`
-	Email string `json:"email"`
+	Email string `json:"email"` // Added in v2.0.0
 }
 
 func main() {
-	fmt.Println("🚀 Cadwyn-Go - Basic Example")
-	fmt.Println("Getting Started with API Versioning")
-	fmt.Println(strings.Repeat("=", 50))
-
-	// Create versions using the simple builder
+	// Create a simple versioned API with Cadwyn
+	// v1.0.0: User has ID and Name
+	// v2.0.0: User adds Email field
 	cadwynInstance, err := cadwyn.NewCadwyn().
-		WithSemverVersions("1.0", "2.0").
+		WithSemverVersions("1.0.0", "2.0.0").
 		WithHeadVersion().
-		WithTypes(UserV1{}, UserV2{}).
+		WithChanges(createV1ToV2Change()).
 		Build()
 
 	if err != nil {
-		fmt.Printf("❌ Error creating Cadwyn instance: %v\n", err)
+		panic(err)
+	}
+
+	// Setup Gin with Cadwyn middleware
+	r := gin.Default()
+
+	// Add Cadwyn version detection middleware
+	r.Use(cadwynInstance.Middleware())
+
+	// Define routes with version-aware handlers
+	r.GET("/users/:id", cadwynInstance.WrapHandler(getUser))
+	r.POST("/users", cadwynInstance.WrapHandler(createUser))
+
+	// Run server
+	r.Run(":8080")
+}
+
+// createV1ToV2Change defines the migration between v1.0.0 and v2.0.0
+func createV1ToV2Change() *cadwyn.VersionChange {
+	v1, _ := cadwyn.NewSemverVersion("1.0.0")
+	v2, _ := cadwyn.NewSemverVersion("2.0.0")
+
+	return cadwyn.NewVersionChange(
+		"Add email field to User",
+		v1,
+		v2,
+		// Request migration: v1 -> v2 (add email if missing)
+		&cadwyn.AlterRequestInstruction{
+			Schemas: []interface{}{User{}},
+			Transformer: func(req *cadwyn.RequestInfo) error {
+				if userMap, ok := req.Body.(map[string]interface{}); ok {
+					if _, hasEmail := userMap["email"]; !hasEmail {
+						userMap["email"] = "default@example.com"
+					}
+				}
+				return nil
+			},
+		},
+		// Response migration: v2 -> v1 (remove email)
+		&cadwyn.AlterResponseInstruction{
+			Schemas: []interface{}{User{}},
+			Transformer: func(resp *cadwyn.ResponseInfo) error {
+				if userMap, ok := resp.Body.(map[string]interface{}); ok {
+					delete(userMap, "email")
+				}
+				return nil
+			},
+		},
+	)
+}
+
+// getUser returns a user (HEAD version)
+func getUser(c *gin.Context) {
+	// Always implement your handler for the HEAD (latest) version
+	user := User{
+		ID:    1,
+		Name:  "John Doe",
+		Email: "john@example.com",
+	}
+	c.JSON(http.StatusOK, user)
+}
+
+// createUser creates a user (HEAD version)
+func createUser(c *gin.Context) {
+	var user User
+	if err := c.ShouldBindJSON(&user); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	fmt.Printf("✅ Created Cadwyn instance with %d versions\n", len(cadwynInstance.GetVersions()))
+	// In a real app, save to database here
+	user.ID = 1
 
-	// Demonstrate version parsing
-	fmt.Println("\n📋 Version Parsing:")
-	testVersions := []string{"1.0", "2.0", "head", "invalid"}
-	for _, vStr := range testVersions {
-		if v, err := cadwynInstance.ParseVersion(vStr); err == nil {
-			fmt.Printf("   ✅ %s -> %s (Type: %s)\n", vStr, v.String(), v.Type.String())
-		} else {
-			fmt.Printf("   ❌ %s -> Error: %s\n", vStr, err.Error())
-		}
-	}
-
-	// Show version information
-	fmt.Println("\n📦 Version Information:")
-	fmt.Printf("   • Head version: %s\n", cadwynInstance.GetHeadVersion().String())
-	fmt.Printf("   • All versions: ")
-	for i, v := range cadwynInstance.GetVersions() {
-		if i > 0 {
-			fmt.Print(", ")
-		}
-		fmt.Print(v.String())
-	}
-	fmt.Println()
-
-	// Demonstrate instruction-based migrations
-	fmt.Println("\n🔄 Migration Instructions:")
-	demonstrateMigrations()
-
-	// Show schema generation
-	fmt.Println("\n🏗️  Schema Generation:")
-	demonstrateSchemaGeneration(cadwynInstance)
-
-	fmt.Println("\n" + strings.Repeat("=", 50))
-	fmt.Println("🎉 Basic Example Complete!")
-	fmt.Println("📚 Next Steps:")
-	fmt.Println("   • Check out examples/gin_server/ for a full web server")
-	fmt.Println("   • Check out examples/advanced/ for complex migrations")
-	fmt.Println("   • Start building your versioned API!")
+	c.JSON(http.StatusCreated, user)
 }
 
-func demonstrateMigrations() {
-	// Create a simple migration instruction
-	requestInstruction := &cadwyn.AlterRequestInstruction{
-		Schemas: []interface{}{UserV1{}},
-		Transformer: func(requestInfo *cadwyn.RequestInfo) error {
-			if userMap, ok := requestInfo.Body.(map[string]interface{}); ok {
-				// Add email field for v1 -> v2 migration
-				if _, hasEmail := userMap["email"]; !hasEmail {
-					userMap["email"] = "migrated@example.com"
-					fmt.Printf("   📥 Added email field to request: %+v\n", userMap)
-				}
-				requestInfo.Body = userMap
-			}
-			return nil
-		},
-	}
+/*
+Try it out:
 
-	responseInstruction := &cadwyn.AlterResponseInstruction{
-		Schemas: []interface{}{UserV2{}},
-		Transformer: func(responseInfo *cadwyn.ResponseInfo) error {
-			if userMap, ok := responseInfo.Body.(map[string]interface{}); ok {
-				// Remove email field for v2 -> v1 migration
-				delete(userMap, "email")
-				fmt.Printf("   📤 Removed email field from response: %+v\n", userMap)
-				responseInfo.Body = userMap
-			}
-			return nil
-		},
-	}
+# v2.0.0 request (includes email)
+curl -X POST http://localhost:8080/users \
+  -H "X-API-Version: 2.0.0" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Jane","email":"jane@example.com"}'
 
-	// Test request migration
-	fmt.Println("   Testing Request Migration (v1 -> v2):")
-	requestInfo := &cadwyn.RequestInfo{
-		Body: map[string]interface{}{
-			"id":   1,
-			"name": "John Doe",
-		},
-	}
-	fmt.Printf("      Before: %+v\n", requestInfo.Body)
-	requestInstruction.Transformer(requestInfo)
+# v1.0.0 request (no email in response)
+curl http://localhost:8080/users/1 \
+  -H "X-API-Version: 1.0.0"
 
-	// Test response migration
-	fmt.Println("   Testing Response Migration (v2 -> v1):")
-	responseInfo := &cadwyn.ResponseInfo{
-		Body: map[string]interface{}{
-			"id":    1,
-			"name":  "John Doe",
-			"email": "john@example.com",
-		},
-	}
-	fmt.Printf("      Before: %+v\n", responseInfo.Body)
-	responseInstruction.Transformer(responseInfo)
-}
-
-func demonstrateSchemaGeneration(cadwynInstance *cadwyn.Cadwyn) {
-	// Generate struct for different versions
-	versions := []string{"1.0", "2.0", "head"}
-
-	for _, version := range versions {
-		fmt.Printf("   Generating UserV2 for version %s:\n", version)
-		if generatedCode, err := cadwynInstance.GenerateStructForVersion(UserV2{}, version); err == nil {
-			// Show just the first few lines to keep output manageable
-			lines := strings.Split(generatedCode, "\n")
-			maxLines := 5
-			if len(lines) > maxLines {
-				lines = lines[:maxLines]
-				lines = append(lines, "      ... (truncated)")
-			}
-			for _, line := range lines {
-				if strings.TrimSpace(line) != "" {
-					fmt.Printf("      %s\n", line)
-				}
-			}
-		} else {
-			fmt.Printf("      ❌ Error: %s\n", err.Error())
-		}
-		fmt.Println()
-	}
-}
+# HEAD request (latest, includes email)
+curl http://localhost:8080/users/1 \
+  -H "X-API-Version: head"
+*/

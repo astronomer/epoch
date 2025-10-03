@@ -1,7 +1,10 @@
 package cadwyn
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -191,7 +194,11 @@ func (vm *VersionMiddleware) Middleware() gin.HandlerFunc {
 					requestedVersion = vm.findClosestOlderVersion(versionStr)
 				}
 				if requestedVersion == nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Unknown version: %s", versionStr)})
+					c.JSON(http.StatusBadRequest, gin.H{
+						"error":              fmt.Sprintf("Unknown version: %s", versionStr),
+						"available_versions": vm.versionBundle.GetVersionValues(),
+						"hint":               fmt.Sprintf("Use %s header with one of the available versions", vm.parameterName),
+					})
 					c.Abort()
 					return
 				}
@@ -214,14 +221,19 @@ func (vm *VersionMiddleware) Middleware() gin.HandlerFunc {
 
 // findClosestOlderVersion implements waterfall versioning logic
 // If requested version doesn't exist, find the closest older version
-func (vm *VersionMiddleware) findClosestOlderVersion(requestedVersion string) *Version {
+func (vm *VersionMiddleware) findClosestOlderVersion(requestedVersionStr string) *Version {
+	// Parse the requested version first to enable proper comparison
+	requestedVersion, err := NewVersion(requestedVersionStr)
+	if err != nil {
+		return nil // Invalid version format
+	}
+
 	var closestVersion *Version
 
 	for _, v := range vm.versionBundle.GetVersions() {
-		// For date-based versions, we can do string comparison
-		// For semantic versions, we'd need more sophisticated comparison
-		if v.String() <= requestedVersion {
-			if closestVersion == nil || v.String() > closestVersion.String() {
+		// Use proper version comparison instead of string comparison
+		if v.IsOlderThan(requestedVersion) {
+			if closestVersion == nil || v.IsNewerThan(closestVersion) {
 				closestVersion = v
 			}
 		}
@@ -302,12 +314,6 @@ func (vah *VersionAwareHandler) HandlerFunc() gin.HandlerFunc {
 	}
 }
 
-// WrapHandler wraps any Gin handler with version-aware migration
-func (vm *VersionMiddleware) WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
-	versionAwareHandler := NewVersionAwareHandler(handler, vm.versionBundle, vm.migrationChain)
-	return versionAwareHandler.HandlerFunc()
-}
-
 // handleWithMigration handles request/response migration for version-aware handlers
 func (vah *VersionAwareHandler) handleWithMigration(c *gin.Context, requestedVersion *Version) {
 	// Skip migration if requesting head version
@@ -363,20 +369,11 @@ func (vah *VersionAwareHandler) migrateRequest(c *gin.Context, fromVersion *Vers
 		return nil // No body to migrate
 	}
 
-	// Read the request body
-	bodyBytes, err := c.GetRawData()
-	if err != nil {
-		return fmt.Errorf("failed to read request body: %w", err)
-	}
-
-	if len(bodyBytes) == 0 {
-		return nil // No body to migrate
-	}
-
-	// Parse JSON body
+	// Parse JSON body directly - ShouldBindJSON handles reading and parsing
 	var bodyData interface{}
 	if err := c.ShouldBindJSON(&bodyData); err != nil {
-		// If JSON parsing fails, leave body as-is
+		// If JSON parsing fails, the body is already consumed
+		// We can't restore it, so just return (handler will also fail to parse)
 		return nil
 	}
 
@@ -397,19 +394,26 @@ func (vah *VersionAwareHandler) migrateRequest(c *gin.Context, fromVersion *Vers
 	// Update the request context with migrated data
 	c.Set("migratedRequestBody", requestInfo.Body)
 
+	// Marshal the migrated body and restore it for the handler to read
+	migratedBytes, err := json.Marshal(requestInfo.Body)
+	if err != nil {
+		return fmt.Errorf("failed to marshal migrated request: %w", err)
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(migratedBytes))
+
 	return nil
 }
 
 // migrateResponse migrates response data from head version back to requested version
 func (vah *VersionAwareHandler) migrateResponse(c *gin.Context, toVersion *Version, responseCapture *ResponseCapture) error {
-	// Parse captured response body
+	// Parse captured response body using the bytes from responseCapture
 	var responseData interface{}
 	if len(responseCapture.body) > 0 {
-		if err := c.ShouldBindJSON(&responseData); err != nil {
+		if err := json.Unmarshal(responseCapture.body, &responseData); err != nil {
 			// If JSON parsing fails, write original response
 			c.Writer = responseCapture.ResponseWriter
 			c.Writer.WriteHeader(responseCapture.statusCode)
-			c.Writer.Write(responseCapture.body)
+			_, _ = c.Writer.Write(responseCapture.body)
 			return nil
 		}
 	}
