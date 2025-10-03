@@ -229,30 +229,41 @@ func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *Reque
 	// Find the starting point in the version chain
 	start := -1
 	for i, change := range mc.changes {
-		if change.FromVersion().Equal(from) {
+		if change.FromVersion().Equal(from) || change.FromVersion().IsOlderThan(from) {
 			start = i
 			break
 		}
 	}
 
 	if start == -1 {
-		return fmt.Errorf("no migration path found from version %s", from.String())
+		return fmt.Errorf("no migration path found from version %s (available changes: %d)",
+			from.String(), len(mc.changes))
 	}
 
 	// Apply changes in sequence until we reach the target version
 	for i := start; i < len(mc.changes); i++ {
 		change := mc.changes[i]
+
+		// Stop if we've reached the target version
+		if change.ToVersion().Equal(to) {
+			if err := change.MigrateRequest(ctx, requestInfo, bodyType, routeID); err != nil {
+				return fmt.Errorf("migration failed at %s->%s: %w",
+					change.FromVersion().String(), change.ToVersion().String(), err)
+			}
+			break
+		}
+
+		// Stop if this change would take us past the target
 		if change.ToVersion().IsNewerThan(to) {
 			break
 		}
 
-		if err := change.MigrateRequest(ctx, requestInfo, bodyType, routeID); err != nil {
-			return fmt.Errorf("migration failed at %s->%s: %w",
-				change.FromVersion().String(), change.ToVersion().String(), err)
-		}
-
-		if change.ToVersion().Equal(to) {
-			break
+		// Apply this change if it's part of the migration path
+		if change.FromVersion().IsOlderThan(to) || change.FromVersion().Equal(to) {
+			if err := change.MigrateRequest(ctx, requestInfo, bodyType, routeID); err != nil {
+				return fmt.Errorf("migration failed at %s->%s: %w",
+					change.FromVersion().String(), change.ToVersion().String(), err)
+			}
 		}
 	}
 
@@ -264,30 +275,41 @@ func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *Res
 	// Find the ending point in the version chain
 	end := -1
 	for i, change := range mc.changes {
-		if change.ToVersion().Equal(from) {
+		if change.ToVersion().Equal(from) || change.ToVersion().IsNewerThan(from) {
 			end = i
 			break
 		}
 	}
 
 	if end == -1 {
-		return fmt.Errorf("no migration path found from version %s", from.String())
+		return fmt.Errorf("no migration path found from version %s (available changes: %d)",
+			from.String(), len(mc.changes))
 	}
 
 	// Apply changes in reverse until we reach the target version
 	for i := end; i >= 0; i-- {
 		change := mc.changes[i]
+
+		// Stop if we've reached the target version
+		if change.FromVersion().Equal(to) {
+			if err := change.MigrateResponse(ctx, responseInfo, responseType, routeID); err != nil {
+				return fmt.Errorf("reverse migration failed at %s->%s: %w",
+					change.ToVersion().String(), change.FromVersion().String(), err)
+			}
+			break
+		}
+
+		// Stop if this change would take us past the target (going backwards)
 		if change.FromVersion().IsOlderThan(to) {
 			break
 		}
 
-		if err := change.MigrateResponse(ctx, responseInfo, responseType, routeID); err != nil {
-			return fmt.Errorf("reverse migration failed at %s->%s: %w",
-				change.ToVersion().String(), change.FromVersion().String(), err)
-		}
-
-		if change.FromVersion().Equal(to) {
-			break
+		// Apply this change if it's part of the migration path
+		if change.ToVersion().IsNewerThan(to) || change.ToVersion().Equal(to) {
+			if err := change.MigrateResponse(ctx, responseInfo, responseType, routeID); err != nil {
+				return fmt.Errorf("reverse migration failed at %s->%s: %w",
+					change.ToVersion().String(), change.FromVersion().String(), err)
+			}
 		}
 	}
 

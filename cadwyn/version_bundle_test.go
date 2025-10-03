@@ -20,7 +20,9 @@ var _ = Describe("VersionBundle", func() {
 	Describe("NewVersionBundle", func() {
 		Context("with regular versions", func() {
 			BeforeEach(func() {
-				bundle = NewVersionBundle([]*Version{v1, v2, v3})
+				var err error
+				bundle, err = NewVersionBundle([]*Version{v1, v2, v3})
+				Expect(err).NotTo(HaveOccurred())
 			})
 
 			It("should create a bundle with head version", func() {
@@ -47,33 +49,37 @@ var _ = Describe("VersionBundle", func() {
 		Context("with head version first", func() {
 			It("should use the provided head version", func() {
 				head := NewHeadVersion()
-				bundle = NewVersionBundle([]*Version{head, v1, v2})
+				var err error
+				bundle, err = NewVersionBundle([]*Version{head, v1, v2})
+				Expect(err).NotTo(HaveOccurred())
 				Expect(bundle.GetHeadVersion()).To(Equal(head))
 				Expect(bundle.GetVersions()).To(HaveLen(2))
 			})
 		})
 
 		Context("with empty versions", func() {
-			It("should panic", func() {
-				Expect(func() {
-					NewVersionBundle([]*Version{})
-				}).To(Panic())
+			It("should return an error", func() {
+				_, err := NewVersionBundle([]*Version{})
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("at least one version"))
 			})
 		})
 
 		Context("with duplicate versions", func() {
-			It("should panic", func() {
+			It("should return an error", func() {
 				v1Duplicate, _ := NewSemverVersion("1.0.0")
-				Expect(func() {
-					NewVersionBundle([]*Version{v1, v1Duplicate})
-				}).To(Panic())
+				_, err := NewVersionBundle([]*Version{v1, v1Duplicate})
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("duplicate version"))
 			})
 		})
 	})
 
 	Describe("ParseVersion", func() {
 		BeforeEach(func() {
-			bundle = NewVersionBundle([]*Version{v1, v2, v3})
+			var err error
+			bundle, err = NewVersionBundle([]*Version{v1, v2, v3})
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		Context("with valid version strings", func() {
@@ -107,7 +113,9 @@ var _ = Describe("VersionBundle", func() {
 
 	Describe("GetClosestLesserVersion", func() {
 		BeforeEach(func() {
-			bundle = NewVersionBundle([]*Version{v1, v2, v3})
+			var err error
+			bundle, err = NewVersionBundle([]*Version{v1, v2, v3})
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should find closest lesser version", func() {
@@ -125,7 +133,9 @@ var _ = Describe("VersionBundle", func() {
 
 	Describe("IsVersionDefined", func() {
 		BeforeEach(func() {
-			bundle = NewVersionBundle([]*Version{v1, v2, v3})
+			var err error
+			bundle, err = NewVersionBundle([]*Version{v1, v2, v3})
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should return true for defined versions", func() {
@@ -140,7 +150,9 @@ var _ = Describe("VersionBundle", func() {
 
 	Describe("GetVersionedSchemas", func() {
 		It("should return empty map when no schemas are defined", func() {
-			bundle = NewVersionBundle([]*Version{v1})
+			var err error
+			bundle, err = NewVersionBundle([]*Version{v1})
+			Expect(err).NotTo(HaveOccurred())
 			schemas := bundle.GetVersionedSchemas()
 			Expect(schemas).NotTo(BeNil())
 		})
@@ -148,7 +160,9 @@ var _ = Describe("VersionBundle", func() {
 
 	Describe("GetVersionedEnums", func() {
 		It("should return empty map when no enums are defined", func() {
-			bundle = NewVersionBundle([]*Version{v1})
+			var err error
+			bundle, err = NewVersionBundle([]*Version{v1})
+			Expect(err).NotTo(HaveOccurred())
 			enums := bundle.GetVersionedEnums()
 			Expect(enums).NotTo(BeNil())
 		})
@@ -156,7 +170,9 @@ var _ = Describe("VersionBundle", func() {
 
 	Describe("Iterator", func() {
 		BeforeEach(func() {
-			bundle = NewVersionBundle([]*Version{v1, v2, v3})
+			var err error
+			bundle, err = NewVersionBundle([]*Version{v1, v2, v3})
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should return all versions", func() {

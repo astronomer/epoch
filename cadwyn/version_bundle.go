@@ -34,9 +34,10 @@ type VersionBundle struct {
 
 // NewVersionBundle creates a new version bundle
 // If the first version is a head version, it becomes the head, otherwise a new head is created
-func NewVersionBundle(versions []*Version) *VersionBundle {
+// Returns an error if no versions are provided or if validation fails
+func NewVersionBundle(versions []*Version) (*VersionBundle, error) {
 	if len(versions) == 0 {
-		panic("You must define at least one version in a VersionBundle")
+		return nil, fmt.Errorf("at least one version must be defined in a VersionBundle")
 	}
 
 	var headVersion *Version
@@ -51,45 +52,50 @@ func NewVersionBundle(versions []*Version) *VersionBundle {
 		regularVersions = versions
 	}
 
-	// Reverse the versions for easier processing
-	reversedVersions := make([]*Version, len(regularVersions))
-	for i, v := range regularVersions {
-		reversedVersions[len(regularVersions)-1-i] = v
-	}
-
-	// Extract version values
-	versionValues := make([]string, len(regularVersions))
-	reversedVersionValues := make([]string, len(regularVersions))
+	// Single pass: collect values, check duplicates, reverse, and build mappings
+	numVersions := len(regularVersions)
+	versionValues := make([]string, numVersions)
+	reversedVersions := make([]*Version, numVersions)
+	reversedVersionValues := make([]string, numVersions)
 	versionValuesSet := make(map[string]bool)
+	versionChangesToVersionMapping := make(map[interface{}]string)
 
 	for i, v := range regularVersions {
-		versionValues[i] = v.String()
-		reversedVersionValues[len(regularVersions)-1-i] = v.String()
+		versionStr := v.String()
 
-		if versionValuesSet[v.String()] {
-			panic(fmt.Sprintf("You tried to define two versions with the same value: '%s'", v.String()))
+		// Check for duplicates
+		if versionValuesSet[versionStr] {
+			return nil, fmt.Errorf("duplicate version detected: '%s' (versions must be unique)", versionStr)
 		}
-		versionValuesSet[v.String()] = true
+		versionValuesSet[versionStr] = true
+
+		// Store values
+		versionValues[i] = versionStr
+
+		// Reverse version arrays
+		reversedIndex := numVersions - 1 - i
+		reversedVersions[reversedIndex] = v
+		reversedVersionValues[reversedIndex] = versionStr
+
+		// Build version changes mapping
+		for _, change := range v.Changes {
+			versionChangesToVersionMapping[change] = versionStr
+		}
 	}
 
-	// Validate that the first version has no changes
-	if len(regularVersions) > 0 && len(regularVersions[len(regularVersions)-1].Changes) > 0 {
-		panic(fmt.Sprintf("The first version \"%s\" cannot have any version changes",
-			regularVersions[len(regularVersions)-1].String()))
+	// Validate that the oldest version (last in array) has no changes
+	if numVersions > 0 {
+		oldestVersion := regularVersions[numVersions-1]
+		if len(oldestVersion.Changes) > 0 {
+			return nil, fmt.Errorf("the oldest version '%s' cannot have version changes (it's the baseline with nothing to migrate from)",
+				oldestVersion.String())
+		}
 	}
 
 	// Create all versions slice
-	allVersions := make([]*Version, 0, len(regularVersions)+1)
+	allVersions := make([]*Version, 0, numVersions+1)
 	allVersions = append(allVersions, headVersion)
 	allVersions = append(allVersions, regularVersions...)
-
-	// Create version changes mapping
-	versionChangesToVersionMapping := make(map[interface{}]string)
-	for _, v := range regularVersions {
-		for _, change := range v.Changes {
-			versionChangesToVersionMapping[change] = v.String()
-		}
-	}
 
 	vb := &VersionBundle{
 		headVersion:                    headVersion,
@@ -102,12 +108,10 @@ func NewVersionBundle(versions []*Version) *VersionBundle {
 		versionValuesSet:               versionValuesSet,
 		versionedSchemas:               make(map[string]interface{}),
 		versionedEnums:                 make(map[string]interface{}),
-		apiVersionVar:                  context.Background(), // Default context for version management
+		apiVersionVar:                  context.Background(),
 	}
 
-	// Note: apiVersionVar will be used for context-based version management in future implementation
-
-	return vb
+	return vb, nil
 }
 
 // GetHeadVersion returns the head version
@@ -246,7 +250,8 @@ func (vb *VersionBundle) GetClosestLesserVersion(versionStr string) (string, err
 	// Parse the target version for comparison
 	targetVersion, err := NewVersion(versionStr, nil)
 	if err != nil {
-		return "", fmt.Errorf("invalid version string: %s", versionStr)
+		return "", fmt.Errorf("invalid version string '%s': %w (available versions: %v)",
+			versionStr, err, vb.GetVersionValues())
 	}
 
 	var closestVersion *Version
@@ -261,7 +266,8 @@ func (vb *VersionBundle) GetClosestLesserVersion(versionStr string) (string, err
 	}
 
 	if closestVersion == nil {
-		return "", fmt.Errorf("no version found that is less than %s", versionStr)
+		return "", fmt.Errorf("no version found that is less than '%s' (available versions: %v, all are >= requested)",
+			versionStr, vb.GetVersionValues())
 	}
 
 	return closestVersion.String(), nil

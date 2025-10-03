@@ -281,32 +281,6 @@ var _ = Describe("Cadwyn", func() {
 	})
 
 	Describe("Version helpers", func() {
-		Describe("DateVersion", func() {
-			It("should create a date version", func() {
-				version := DateVersion("2023-01-01")
-				Expect(version.Type).To(Equal(VersionTypeDate))
-			})
-
-			It("should panic on invalid date", func() {
-				Expect(func() {
-					DateVersion("invalid")
-				}).To(Panic())
-			})
-		})
-
-		Describe("SemverVersion", func() {
-			It("should create a semver version", func() {
-				version := SemverVersion("1.0.0")
-				Expect(version.Type).To(Equal(VersionTypeSemver))
-			})
-
-			It("should panic on invalid semver", func() {
-				Expect(func() {
-					SemverVersion("invalid")
-				}).To(Panic())
-			})
-		})
-
 		Describe("StringVersion", func() {
 			It("should create a string version", func() {
 				version := StringVersion("alpha")

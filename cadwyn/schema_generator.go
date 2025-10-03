@@ -83,10 +83,9 @@ type PackageInfo struct {
 }
 
 // ASTCache caches parsed AST nodes for performance
-// The mu field will be used for concurrent access protection in future implementation
 type ASTCache struct {
 	files map[string]*ast.File
-	mu    sync.RWMutex
+	// TODO: Add mutex when implementing concurrent access
 }
 
 // VersionSpecificGenerator handles generation for a specific version
@@ -149,6 +148,9 @@ func NewASTCache() *ASTCache {
 
 // buildVersionSpecificGenerators creates generators for each version
 func (sg *SchemaGenerator) buildVersionSpecificGenerators() {
+	sg.mu.Lock()
+	defer sg.mu.Unlock()
+
 	// Start with head version
 	headGen := &VersionSpecificGenerator{
 		version:        sg.versionBundle.GetHeadVersion(),
@@ -168,7 +170,10 @@ func (sg *SchemaGenerator) buildVersionSpecificGenerators() {
 
 // GenerateStruct generates Go code for a struct at a specific version
 func (sg *SchemaGenerator) GenerateStruct(structType reflect.Type, targetVersion string) (string, error) {
+	sg.mu.RLock()
 	generator, exists := sg.generators[targetVersion]
+	sg.mu.RUnlock()
+
 	if !exists {
 		return "", fmt.Errorf("version %s not found", targetVersion)
 	}
@@ -429,7 +434,10 @@ func (sg *SchemaGenerator) formatGoCode(code string) (string, error) {
 
 // GetVersionSpecificType returns the version-specific type for a given struct
 func (sg *SchemaGenerator) GetVersionSpecificType(structType reflect.Type, targetVersion string) (reflect.Type, error) {
+	sg.mu.RLock()
 	generator, exists := sg.generators[targetVersion]
+	sg.mu.RUnlock()
+
 	if !exists {
 		return nil, fmt.Errorf("version %s not found", targetVersion)
 	}
@@ -447,6 +455,9 @@ func (sg *SchemaGenerator) GetVersionSpecificType(structType reflect.Type, targe
 
 // ListVersionedStructs returns all structs that have version-specific changes
 func (sg *SchemaGenerator) ListVersionedStructs() map[string][]reflect.Type {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+
 	result := make(map[string][]reflect.Type)
 
 	for versionStr, generator := range sg.generators {
