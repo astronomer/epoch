@@ -104,6 +104,7 @@ type CadwynBuilder struct {
 	changes       []*VersionChange
 	types         []reflect.Type
 	versionConfig VersionConfig
+	errors        []error // Accumulated errors during building
 }
 
 // WithVersions sets the versions for the application
@@ -113,21 +114,29 @@ func (cb *CadwynBuilder) WithVersions(versions ...*Version) *CadwynBuilder {
 }
 
 // WithDateVersions creates and adds date-based versions
+// Invalid date strings are collected and will cause Build() to fail with a detailed error.
 func (cb *CadwynBuilder) WithDateVersions(dates ...string) *CadwynBuilder {
 	for _, dateStr := range dates {
-		if v, err := NewDateVersion(dateStr); err == nil {
-			cb.versions = append(cb.versions, v)
+		v, err := NewDateVersion(dateStr)
+		if err != nil {
+			cb.errors = append(cb.errors, fmt.Errorf("invalid date version '%s': %w", dateStr, err))
+			continue
 		}
+		cb.versions = append(cb.versions, v)
 	}
 	return cb
 }
 
 // WithSemverVersions creates and adds semantic versions (supports both major.minor.patch and major.minor)
+// Invalid semver strings are collected and will cause Build() to fail with a detailed error.
 func (cb *CadwynBuilder) WithSemverVersions(semvers ...string) *CadwynBuilder {
 	for _, semverStr := range semvers {
-		if v, err := NewSemverVersion(semverStr); err == nil {
-			cb.versions = append(cb.versions, v)
+		v, err := NewSemverVersion(semverStr)
+		if err != nil {
+			cb.errors = append(cb.errors, fmt.Errorf("invalid semver version '%s': %w", semverStr, err))
+			continue
 		}
+		cb.versions = append(cb.versions, v)
 	}
 	return cb
 }
@@ -191,6 +200,19 @@ func (cb *CadwynBuilder) WithTypes(types ...interface{}) *CadwynBuilder {
 
 // Build creates the Cadwyn instance
 func (cb *CadwynBuilder) Build() (*Cadwyn, error) {
+	// Check for accumulated errors from builder methods
+	if len(cb.errors) > 0 {
+		// Return first error with context about all errors
+		if len(cb.errors) == 1 {
+			return nil, fmt.Errorf("builder validation failed: %w", cb.errors[0])
+		}
+		errMsg := fmt.Sprintf("builder validation failed with %d errors:", len(cb.errors))
+		for i, err := range cb.errors {
+			errMsg += fmt.Sprintf("\n  %d. %v", i+1, err)
+		}
+		return nil, fmt.Errorf("%s", errMsg)
+	}
+
 	if len(cb.versions) == 0 {
 		return nil, fmt.Errorf("at least one version must be specified")
 	}

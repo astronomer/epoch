@@ -176,14 +176,13 @@ change := cadwyn.NewVersionChange(
 
 Cadwyn automatically detects versions from:
 - **Headers** (default): `X-API-Version: 2024-01-01`
-- **Query params**: `?version=2024-01-01`
-- **URL path**: `/v2024-01-01/users`
+- **URL path**: `/v2024-01-01/users` or `/2024-01-01/users`
 
 Configure the detection method:
 ```go
 cadwyn.NewCadwyn().
-    WithVersionLocation(cadwyn.VersionLocationHeader).  // or Query, Path
-    WithVersionParameter("X-API-Version").              // Custom header/param name
+    WithVersionLocation(cadwyn.VersionLocationHeader).  // or Path
+    WithVersionParameter("X-API-Version").              // Custom header name
     Build()
 ```
 
@@ -241,7 +240,7 @@ Demonstrates:
 ## How It Works
 
 1. **You write handlers for the HEAD (latest) version only**
-2. **Cadwyn middleware detects the requested API version** from headers/query/path
+2. **Cadwyn middleware detects the requested API version** from headers or URL path
 3. **Request migration**: Transforms incoming request from old → new format
 4. **Your handler executes** with the migrated request
 5. **Response migration**: Transforms outgoing response from new → old format
@@ -251,6 +250,67 @@ Demonstrates:
 Client (v1) → [v1 Request] → Migration → [v2 Request] → Handler (v2)
                                                              ↓
 Client (v1) ← [v1 Response] ← Migration ← [v2 Response] ← Handler (v2)
+```
+
+## Best Practices
+
+### One VersionChange Per Schema
+
+Create separate `VersionChange` objects for different models/schemas. All migrations in a single `VersionChange` are applied together, so mixing multiple schemas can cause unwanted side effects.
+
+**✅ Good:**
+```go
+// Separate changes for different schemas
+userChange := cadwyn.NewVersionChange(
+    "Add email to User",
+    v1, v2,
+    &cadwyn.AlterResponseInstruction{
+        Schemas: []interface{}{User{}},
+        Transformer: func(resp *cadwyn.ResponseInfo) error {
+            // Only transforms User responses
+            if userMap, ok := resp.Body.(map[string]interface{}); ok {
+                delete(userMap, "email")
+            }
+            return nil
+        },
+    },
+)
+
+productChange := cadwyn.NewVersionChange(
+    "Add SKU to Product",
+    v1, v2,
+    &cadwyn.AlterResponseInstruction{
+        Schemas: []interface{}{Product{}},
+        Transformer: func(resp *cadwyn.ResponseInfo) error {
+            // Only transforms Product responses
+            if productMap, ok := resp.Body.(map[string]interface{}); ok {
+                delete(productMap, "sku")
+            }
+            return nil
+        },
+    },
+)
+
+cadwyn.NewCadwyn().
+    WithChanges(userChange, productChange).
+    Build()
+```
+
+**❌ Avoid:**
+```go
+// Multiple schemas in one VersionChange - transformers run on ALL responses!
+change := cadwyn.NewVersionChange(
+    "Multiple changes",
+    v1, v2,
+    &cadwyn.AlterResponseInstruction{
+        Schemas: []interface{}{User{}},
+        Transformer: func(resp) { /* runs on User AND Product */ },
+    },
+    &cadwyn.AlterResponseInstruction{
+        Schemas: []interface{}{Product{}},
+        Transformer: func(resp) { /* runs on User AND Product */ },
+    },
+)
 ```
 
 ## Architecture: Middleware vs Router Generation

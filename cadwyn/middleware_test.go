@@ -55,34 +55,6 @@ var _ = Describe("Middleware", func() {
 		})
 	})
 
-	Describe("QueryVersionManager", func() {
-		var manager *QueryVersionManager
-
-		BeforeEach(func() {
-			manager = NewQueryVersionManager("version")
-		})
-
-		It("should extract version from query parameter", func() {
-			req := httptest.NewRequest("GET", "/test?version=1.0.0", nil)
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = req
-
-			version, err := manager.GetVersion(c)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(version).To(Equal("1.0.0"))
-		})
-
-		It("should return empty string when query parameter is missing", func() {
-			req := httptest.NewRequest("GET", "/test", nil)
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = req
-
-			version, err := manager.GetVersion(c)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(version).To(Equal(""))
-		})
-	})
-
 	Describe("PathVersionManager", func() {
 		var manager *PathVersionManager
 
@@ -133,17 +105,6 @@ var _ = Describe("Middleware", func() {
 					MigrationChain: chain,
 					ParameterName:  "X-API-Version",
 					Location:       VersionLocationHeader,
-				}
-				mw := NewVersionMiddleware(config)
-				Expect(mw).NotTo(BeNil())
-			})
-
-			It("should create middleware with query location", func() {
-				config := MiddlewareConfig{
-					VersionBundle:  bundle,
-					MigrationChain: chain,
-					ParameterName:  "version",
-					Location:       VersionLocationQuery,
 				}
 				mw := NewVersionMiddleware(config)
 				Expect(mw).NotTo(BeNil())
