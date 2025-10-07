@@ -18,7 +18,7 @@ type Version struct {
 	Type VersionType
 	// IsHead indicates if this is the latest version
 	IsHead bool
-	// Changes associated with this version (like Python Cadwyn)
+	// Changes associated with this version
 	Changes []VersionChangeInterface
 }
 
@@ -58,17 +58,12 @@ func (vt VersionType) String() string {
 	}
 }
 
-// NewVersion creates a new version with associated changes (like Python Cadwyn)
+// NewVersion creates a new version with associated changes
 func NewVersion(value string, changes ...VersionChangeInterface) (*Version, error) {
 	// Try to parse as date first
-	if date, err := time.Parse("2006-01-02", value); err == nil {
-		return &Version{
-			Raw:     value,
-			Date:    &date,
-			Type:    VersionTypeDate,
-			IsHead:  false,
-			Changes: changes,
-		}, nil
+	if date, err := NewDateVersion(value); err == nil {
+		date.Changes = changes
+		return date, nil
 	}
 
 	// Try to parse as semver
@@ -79,6 +74,7 @@ func NewVersion(value string, changes ...VersionChangeInterface) (*Version, erro
 
 	// Fallback to string version
 	version := NewStringVersion(value, changes...)
+	version.Changes = changes
 	return version, nil
 }
 

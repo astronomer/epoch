@@ -7,13 +7,12 @@ import (
 )
 
 // VersionChange defines a set of instructions for migrating between two API versions
-// This matches the Python Cadwyn VersionChange class structure
 type VersionChange struct {
 	description                            string
 	isHiddenFromChangelog                  bool
 	instructionsToMigrateToPreviousVersion []interface{}
 
-	// Organized instruction containers (like Python Cadwyn)
+	// Organized instruction containers
 	alterSchemaInstructions           []*SchemaInstruction
 	alterEnumInstructions             []*EnumInstruction
 	alterEndpointInstructions         []*EndpointInstruction
@@ -26,7 +25,7 @@ type VersionChange struct {
 	fromVersion *Version
 	toVersion   *Version
 
-	// Route mappings (like Python's _route_to_*_mapping)
+	// Route mappings
 	routeToRequestMigrationMapping  map[int][]*AlterRequestInstruction
 	routeToResponseMigrationMapping map[int][]*AlterResponseInstruction
 }
@@ -50,7 +49,7 @@ func NewVersionChange(description string, fromVersion, toVersion *Version, instr
 	return vc
 }
 
-// extractInstructionsIntoContainers organizes instructions by type (like Python Cadwyn)
+// extractInstructionsIntoContainers organizes instructions by type
 func (vc *VersionChange) extractInstructionsIntoContainers() {
 	for _, instruction := range vc.instructionsToMigrateToPreviousVersion {
 		switch inst := instruction.(type) {
@@ -88,13 +87,13 @@ func (vc *VersionChange) extractInstructionsIntoContainers() {
 
 // MigrateRequest applies request migrations for this version change
 func (vc *VersionChange) MigrateRequest(ctx context.Context, requestInfo *RequestInfo, bodyType reflect.Type, routeID int) error {
-	// Apply schema-based request migrations
-	if bodyType != nil {
-		if instructions, exists := vc.alterRequestBySchemaInstructions[bodyType]; exists {
-			for _, instruction := range instructions {
-				if err := instruction.Transformer(requestInfo); err != nil {
-					return fmt.Errorf("request schema migration failed: %w", err)
-				}
+	// Apply all schema-based request migrations
+	// IMPORTANT: All migrations in this VersionChange are applied together.
+	// Best practice: Use one VersionChange per schema/route to avoid unwanted side effects.
+	for _, instructions := range vc.alterRequestBySchemaInstructions {
+		for _, instruction := range instructions {
+			if err := instruction.Transformer(requestInfo); err != nil {
+				return fmt.Errorf("request schema migration failed: %w", err)
 			}
 		}
 	}
@@ -113,17 +112,17 @@ func (vc *VersionChange) MigrateRequest(ctx context.Context, requestInfo *Reques
 
 // MigrateResponse applies response migrations for this version change
 func (vc *VersionChange) MigrateResponse(ctx context.Context, responseInfo *ResponseInfo, responseType reflect.Type, routeID int) error {
-	// Apply schema-based response migrations
-	if responseType != nil {
-		if instructions, exists := vc.alterResponseBySchemaInstructions[responseType]; exists {
-			for _, instruction := range instructions {
-				// Check if we should migrate error responses
-				if responseInfo.StatusCode >= 300 && !instruction.MigrateHTTPErrors {
-					continue
-				}
-				if err := instruction.Transformer(responseInfo); err != nil {
-					return fmt.Errorf("response schema migration failed: %w", err)
-				}
+	// Apply all schema-based response migrations
+	// IMPORTANT: All migrations in this VersionChange are applied together.
+	// Best practice: Use one VersionChange per schema/route to avoid unwanted side effects.
+	for _, instructions := range vc.alterResponseBySchemaInstructions {
+		for _, instruction := range instructions {
+			// Check if we should migrate error responses
+			if responseInfo.StatusCode >= 300 && !instruction.MigrateHTTPErrors {
+				continue
+			}
+			if err := instruction.Transformer(responseInfo); err != nil {
+				return fmt.Errorf("response schema migration failed: %w", err)
 			}
 		}
 	}

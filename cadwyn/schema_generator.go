@@ -13,7 +13,6 @@ import (
 )
 
 // SchemaGenerator generates version-specific Go structs with advanced AST-like capabilities
-// This is inspired by Python Cadwyn's schema_generation.py but adapted for Go's type system
 type SchemaGenerator struct {
 	versionBundle  *VersionBundle
 	migrationChain *MigrationChain
@@ -85,7 +84,7 @@ type PackageInfo struct {
 // ASTCache caches parsed AST nodes for performance
 type ASTCache struct {
 	files map[string]*ast.File
-	// TODO: Add mutex when implementing concurrent access
+	mu    sync.RWMutex
 }
 
 // VersionSpecificGenerator handles generation for a specific version
@@ -125,8 +124,6 @@ func NewSchemaGenerator(versionBundle *VersionBundle, migrationChain *MigrationC
 
 	sg.buildVersionSpecificGenerators()
 
-	// Note: astCache.mu will be used for concurrent access protection in future implementation
-
 	return sg
 }
 
@@ -144,6 +141,28 @@ func NewASTCache() *ASTCache {
 	return &ASTCache{
 		files: make(map[string]*ast.File),
 	}
+}
+
+// Get retrieves a cached AST file (thread-safe)
+func (ac *ASTCache) Get(filename string) (*ast.File, bool) {
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
+	file, exists := ac.files[filename]
+	return file, exists
+}
+
+// Set stores an AST file in the cache (thread-safe)
+func (ac *ASTCache) Set(filename string, file *ast.File) {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	ac.files[filename] = file
+}
+
+// Clear removes all cached files (thread-safe)
+func (ac *ASTCache) Clear() {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	ac.files = make(map[string]*ast.File)
 }
 
 // buildVersionSpecificGenerators creates generators for each version

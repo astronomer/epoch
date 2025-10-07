@@ -1,22 +1,16 @@
 package cadwyn
 
 import (
-	"context"
 	"fmt"
 )
 
 // VersionBundle manages a collection of versions and their changes
-// This matches the Python Cadwyn VersionBundle class
 type VersionBundle struct {
 	headVersion           *Version
 	versions              []*Version
 	reversedVersions      []*Version
 	versionValues         []string
 	reversedVersionValues []string
-
-	// Context variable for API version (like Python's api_version_var)
-	// Context for version management (used for request-scoped version info)
-	apiVersionVar context.Context
 
 	// All versions including head
 	allVersions []*Version
@@ -108,7 +102,6 @@ func NewVersionBundle(versions []*Version) (*VersionBundle, error) {
 		versionValuesSet:               versionValuesSet,
 		versionedSchemas:               make(map[string]interface{}),
 		versionedEnums:                 make(map[string]interface{}),
-		apiVersionVar:                  context.Background(),
 	}
 
 	return vb, nil

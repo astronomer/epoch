@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"reflect"
 	"regexp"
 	"strings"
 
@@ -18,7 +17,6 @@ type VersionLocation string
 
 const (
 	VersionLocationHeader VersionLocation = "header"
-	VersionLocationQuery  VersionLocation = "query"
 	VersionLocationPath   VersionLocation = "path"
 )
 
@@ -53,23 +51,6 @@ func (hvm *HeaderVersionManager) GetVersion(c *gin.Context) (string, error) {
 	if version == "" {
 		return "", nil // No version specified
 	}
-	return version, nil
-}
-
-// QueryVersionManager extracts version from query parameters
-type QueryVersionManager struct {
-	paramName string
-}
-
-// NewQueryVersionManager creates a new query-based version manager
-func NewQueryVersionManager(paramName string) *QueryVersionManager {
-	return &QueryVersionManager{
-		paramName: paramName,
-	}
-}
-
-func (qvm *QueryVersionManager) GetVersion(c *gin.Context) (string, error) {
-	version := c.Query(qvm.paramName)
 	return version, nil
 }
 
@@ -135,18 +116,17 @@ func NewVersionMiddleware(config MiddlewareConfig) *VersionMiddleware {
 	var versionManager VersionManager
 
 	switch config.Location {
-	case VersionLocationHeader:
-		versionManager = NewHeaderVersionManager(config.ParameterName)
-	case VersionLocationQuery:
-		versionManager = NewQueryVersionManager(config.ParameterName)
 	case VersionLocationPath:
 		versions := make([]string, len(config.VersionBundle.GetVersions()))
 		for i, v := range config.VersionBundle.GetVersions() {
 			versions[i] = v.String()
 		}
 		versionManager = NewPathVersionManager(versions)
+	case VersionLocationHeader:
+		fallthrough
 	default:
-		versionManager = NewHeaderVersionManager("X-API-Version")
+		// Default to header-based versioning
+		versionManager = NewHeaderVersionManager(config.ParameterName)
 	}
 
 	return &VersionMiddleware{
@@ -194,10 +174,16 @@ func (vm *VersionMiddleware) Middleware() gin.HandlerFunc {
 					requestedVersion = vm.findClosestOlderVersion(versionStr)
 				}
 				if requestedVersion == nil {
+					var hint string
+					if vm.location == VersionLocationHeader {
+						hint = fmt.Sprintf("Use '%s' header with one of the available versions", vm.parameterName)
+					} else {
+						hint = "Include version in the URL path (e.g., /v1/resource or /2024-01-01/resource)"
+					}
 					c.JSON(http.StatusBadRequest, gin.H{
 						"error":              fmt.Sprintf("Unknown version: %s", versionStr),
 						"available_versions": vm.versionBundle.GetVersionValues(),
-						"hint":               fmt.Sprintf("Use %s header with one of the available versions", vm.parameterName),
+						"hint":               hint,
 					})
 					c.Abort()
 					return
@@ -369,11 +355,24 @@ func (vah *VersionAwareHandler) migrateRequest(c *gin.Context, fromVersion *Vers
 		return nil // No body to migrate
 	}
 
-	// Parse JSON body directly - ShouldBindJSON handles reading and parsing
+	// Read body once and preserve it
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read request body: %w", err)
+	}
+	c.Request.Body.Close()
+
+	// If body is empty, nothing to migrate
+	if len(bodyBytes) == 0 {
+		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		return nil
+	}
+
+	// Parse JSON body
 	var bodyData interface{}
-	if err := c.ShouldBindJSON(&bodyData); err != nil {
-		// If JSON parsing fails, the body is already consumed
-		// We can't restore it, so just return (handler will also fail to parse)
+	if err := json.Unmarshal(bodyBytes, &bodyData); err != nil {
+		// If JSON parsing fails, restore original body and let handler deal with it
+		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		return nil
 	}
 
@@ -385,8 +384,10 @@ func (vah *VersionAwareHandler) migrateRequest(c *gin.Context, fromVersion *Vers
 	migrationChain := vah.migrationChain.GetMigrationPath(fromVersion, headVersion)
 
 	// Apply migrations in forward direction
+	// Note: We pass nil for bodyType since JSON unmarshaling creates map[string]interface{}
+	// which doesn't match the original struct types. Schema-based matching doesn't work with JSON.
 	for _, change := range migrationChain {
-		if err := change.MigrateRequest(c.Request.Context(), requestInfo, reflect.TypeOf(requestInfo.Body), 0); err != nil {
+		if err := change.MigrateRequest(c.Request.Context(), requestInfo, nil, 0); err != nil {
 			return fmt.Errorf("failed to migrate request with change %s: %w", change.Description(), err)
 		}
 	}
@@ -427,19 +428,22 @@ func (vah *VersionAwareHandler) migrateResponse(c *gin.Context, toVersion *Versi
 	migrationChain := vah.migrationChain.GetMigrationPath(headVersion, toVersion)
 
 	// Apply migrations in reverse direction
+	// Note: We pass nil for responseType since JSON unmarshaling creates map[string]interface{}
+	// which doesn't match the original struct types. Schema-based matching doesn't work with JSON.
 	for i := len(migrationChain) - 1; i >= 0; i-- {
 		change := migrationChain[i]
-		if err := change.MigrateResponse(c.Request.Context(), responseInfo, reflect.TypeOf(responseInfo.Body), 0); err != nil {
+		if err := change.MigrateResponse(c.Request.Context(), responseInfo, nil, 0); err != nil {
 			return fmt.Errorf("failed to migrate response with change %s: %w", change.Description(), err)
 		}
 	}
 
 	// Write the migrated response
 	c.Writer = responseCapture.ResponseWriter
-	c.Writer.WriteHeader(responseInfo.StatusCode)
 
 	if responseInfo.Body != nil {
 		c.JSON(responseInfo.StatusCode, responseInfo.Body)
+	} else {
+		c.Writer.WriteHeader(responseInfo.StatusCode)
 	}
 
 	return nil
