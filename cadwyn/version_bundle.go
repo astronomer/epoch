@@ -6,11 +6,9 @@ import (
 
 // VersionBundle manages a collection of versions and their changes
 type VersionBundle struct {
-	headVersion           *Version
-	versions              []*Version
-	reversedVersions      []*Version
-	versionValues         []string
-	reversedVersionValues []string
+	headVersion   *Version
+	versions      []*Version
+	versionValues []string
 
 	// All versions including head
 	allVersions []*Version
@@ -46,11 +44,9 @@ func NewVersionBundle(versions []*Version) (*VersionBundle, error) {
 		regularVersions = versions
 	}
 
-	// Single pass: collect values, check duplicates, reverse, and build mappings
+	// Single pass: collect values, check duplicates, and build mappings
 	numVersions := len(regularVersions)
 	versionValues := make([]string, numVersions)
-	reversedVersions := make([]*Version, numVersions)
-	reversedVersionValues := make([]string, numVersions)
 	versionValuesSet := make(map[string]bool)
 	versionChangesToVersionMapping := make(map[interface{}]string)
 
@@ -65,11 +61,6 @@ func NewVersionBundle(versions []*Version) (*VersionBundle, error) {
 
 		// Store values
 		versionValues[i] = versionStr
-
-		// Reverse version arrays
-		reversedIndex := numVersions - 1 - i
-		reversedVersions[reversedIndex] = v
-		reversedVersionValues[reversedIndex] = versionStr
 
 		// Build version changes mapping
 		for _, change := range v.Changes {
@@ -94,9 +85,7 @@ func NewVersionBundle(versions []*Version) (*VersionBundle, error) {
 	vb := &VersionBundle{
 		headVersion:                    headVersion,
 		versions:                       regularVersions,
-		reversedVersions:               reversedVersions,
 		versionValues:                  versionValues,
-		reversedVersionValues:          reversedVersionValues,
 		allVersions:                    allVersions,
 		versionChangesToVersionMapping: versionChangesToVersionMapping,
 		versionValuesSet:               versionValuesSet,

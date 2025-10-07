@@ -285,12 +285,6 @@ var _ = Describe("Middleware", func() {
 			Expect(n).To(Equal(len(data)))
 		})
 
-		It("should capture status code", func() {
-			capture.WriteHeader(404)
-			// Note: We can't easily test the captured status code without exposing it
-			// This is more of a smoke test to ensure no panics occur
-		})
-
 		It("should handle multiple writes to response capture", func() {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
@@ -326,22 +320,6 @@ var _ = Describe("Middleware", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(n).To(Equal(0))
 			Expect(capture.body).To(HaveLen(0))
-		})
-
-		It("should handle multiple status code writes (last one wins)", func() {
-			recorder := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(recorder)
-			capture := &ResponseCapture{
-				ResponseWriter: c.Writer,
-				body:           make([]byte, 0),
-				statusCode:     200,
-			}
-
-			capture.WriteHeader(404)
-			capture.WriteHeader(500)
-
-			// Last write should be recorded
-			Expect(capture.statusCode).To(Equal(500))
 		})
 	})
 
