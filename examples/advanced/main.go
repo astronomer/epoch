@@ -105,7 +105,6 @@ func main() {
 			createErrorMigration(v1, v2),
 		).
 		WithTypes(User{}, Product{}, Order{}).
-		WithVersionLocation(epoch.VersionLocationHeader).
 		WithVersionParameter("X-API-Version").
 		WithVersionFormat(epoch.VersionFormatDate).
 		Build()

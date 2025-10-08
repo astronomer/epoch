@@ -17,7 +17,6 @@ type Epoch struct {
 
 // VersionConfig holds configuration for version detection and handling
 type VersionConfig struct {
-	VersionLocation      VersionLocation
 	VersionParameterName string
 	VersionFormat        VersionFormat
 	DefaultVersion       *Version
@@ -30,7 +29,6 @@ func NewEpoch() *EpochBuilder {
 		changes:  []*VersionChange{},
 		types:    []reflect.Type{},
 		versionConfig: VersionConfig{
-			VersionLocation:      VersionLocationHeader,
 			VersionParameterName: "X-API-Version",
 			VersionFormat:        VersionFormatSemver,
 		},
@@ -42,7 +40,6 @@ func (c *Epoch) Middleware() gin.HandlerFunc {
 	middleware := NewVersionMiddleware(MiddlewareConfig{
 		VersionBundle:  c.versionBundle,
 		MigrationChain: c.migrationChain,
-		Location:       c.versionConfig.VersionLocation,
 		ParameterName:  c.versionConfig.VersionParameterName,
 		Format:         c.versionConfig.VersionFormat,
 		DefaultVersion: c.versionConfig.DefaultVersion,
@@ -159,12 +156,6 @@ func (cb *EpochBuilder) WithHeadVersion() *EpochBuilder {
 // WithChanges sets the version changes for the application
 func (cb *EpochBuilder) WithChanges(changes ...*VersionChange) *EpochBuilder {
 	cb.changes = append(cb.changes, changes...)
-	return cb
-}
-
-// WithVersionLocation sets where to look for version information
-func (cb *EpochBuilder) WithVersionLocation(location VersionLocation) *EpochBuilder {
-	cb.versionConfig.VersionLocation = location
 	return cb
 }
 

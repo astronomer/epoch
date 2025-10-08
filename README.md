@@ -174,17 +174,54 @@ change := epoch.NewVersionChange(
 
 ### 4. Version Detection
 
-Cadwyn automatically detects versions from:
-- **Headers** (default): `X-API-Version: 2024-01-01`
-- **URL path**: `/v2024-01-01/users` or `/2024-01-01/users`
+Epoch automatically detects versions from **all locations** simultaneously:
+- **Headers**: `X-API-Version: 2024-01-01` (checked first, highest priority)
+- **URL path**: `/v2024-01-01/users` or `/2024-01-01/users` (checked second)
 
-Configure the detection method:
+If both header and path contain a version, the header version takes priority.
+
+Customize the header name:
 ```go
 epoch.NewEpoch().
-    WithVersionLocation(epoch.VersionLocationHeader).  // or Path
-    WithVersionParameter("X-API-Version").              // Custom header name
+    WithVersionParameter("X-API-Version").  // Custom header name (default: "X-API-Version")
     Build()
 ```
+
+#### Partial Version Matching
+
+Epoch supports **major version shortcuts** in URL paths - specify just the major version and it automatically resolves to the latest minor/patch version:
+
+```go
+// Configure versions: 1.0.0, 1.1.0, 1.2.0, 2.0.0, 2.1.0
+epochInstance, _ := epoch.NewEpoch().
+    WithSemverVersions("1.0.0", "1.1.0", "1.2.0", "2.0.0", "2.1.0").
+    WithHeadVersion().
+    Build()
+
+// Setup routes using major version
+r.GET("/api/v1/users", epochInstance.WrapHandler(getUsers))  // Routes to v1.x
+r.GET("/api/v2/users", epochInstance.WrapHandler(getUsers))  // Routes to v2.x
+```
+
+**Request examples:**
+```bash
+# Path with major version only → resolves to latest matching version
+curl http://localhost:8080/api/v1/users
+# Automatically uses v1.2.0 (latest v1.x)
+
+curl http://localhost:8080/api/v2/users  
+# Automatically uses v2.1.0 (latest v2.x)
+
+# Full version still works
+curl http://localhost:8080/api/v1.1.0/users
+# Uses exactly v1.1.0
+
+# Header takes priority over path
+curl http://localhost:8080/api/v1/users -H "X-API-Version: 2.0.0"
+# Uses v2.0.0 (from header, not path)
+```
+
+This pattern makes it easy for clients to request "latest v1" without needing to know the exact minor/patch version.
 
 ## Builder API
 
@@ -200,10 +237,9 @@ builder.WithHeadVersion()                                 // Always latest
 // Add migrations
 builder.WithChanges(change1, change2, change3)
 
-// Configure version detection
-builder.WithVersionLocation(epoch.VersionLocationHeader)
-builder.WithVersionParameter("X-API-Version")
-builder.WithVersionFormat(epoch.VersionFormatDate)
+// Configure version detection (optional)
+builder.WithVersionParameter("X-API-Version")        // Custom header name
+builder.WithVersionFormat(epoch.VersionFormatDate)   // Expected format
 
 // Build
 epochInstance, err := builder.Build()

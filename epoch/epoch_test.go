@@ -93,13 +93,6 @@ var _ = Describe("Cadwyn", func() {
 			})
 		})
 
-		Describe("WithVersionLocation", func() {
-			It("should set version location", func() {
-				result := builder.WithVersionLocation(VersionLocationHeader)
-				Expect(result).To(Equal(builder))
-			})
-		})
-
 		Describe("WithVersionParameter", func() {
 			It("should set version parameter name", func() {
 				result := builder.WithVersionParameter("API-Version")
