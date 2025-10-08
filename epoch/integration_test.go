@@ -566,7 +566,6 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				WithVersions(v1, v2).
 				WithChanges(change).
 				WithTypes(UserV1{}, UserV2{}).
-				WithVersionLocation(VersionLocationHeader).
 				WithVersionParameter("X-API-Version").
 				WithVersionFormat(VersionFormatDate).
 				WithDefaultVersion(v1).

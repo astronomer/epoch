@@ -12,14 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// VersionLocation defines where to look for version information
-type VersionLocation string
-
-const (
-	VersionLocationHeader VersionLocation = "header"
-	VersionLocationPath   VersionLocation = "path"
-)
-
 // VersionFormat defines the format of version values
 type VersionFormat string
 
@@ -29,39 +21,17 @@ const (
 	VersionFormatString VersionFormat = "string"
 )
 
-// VersionManager handles version extraction from Gin contexts
-type VersionManager interface {
-	GetVersion(c *gin.Context) (string, error)
-}
-
-// HeaderVersionManager extracts version from HTTP headers
-type HeaderVersionManager struct {
-	headerName string
-}
-
-// NewHeaderVersionManager creates a new header-based version manager
-func NewHeaderVersionManager(headerName string) *HeaderVersionManager {
-	return &HeaderVersionManager{
-		headerName: headerName,
-	}
-}
-
-func (hvm *HeaderVersionManager) GetVersion(c *gin.Context) (string, error) {
-	version := c.GetHeader(hvm.headerName)
-	if version == "" {
-		return "", nil // No version specified
-	}
-	return version, nil
-}
-
-// PathVersionManager extracts version from URL path
-type PathVersionManager struct {
+// VersionManager checks all locations for version information
+// Priority: Header > Path
+type VersionManager struct {
+	headerName       string
 	versionRegex     *regexp.Regexp
 	possibleVersions map[string]bool
 }
 
-// NewPathVersionManager creates a new path-based version manager
-func NewPathVersionManager(possibleVersions []string) *PathVersionManager {
+// NewVersionManager creates a new version manager that checks all locations
+// Priority: Header > Path
+func NewVersionManager(headerName string, possibleVersions []string) *VersionManager {
 	versionMap := make(map[string]bool)
 	for _, v := range possibleVersions {
 		versionMap[v] = true
@@ -76,17 +46,29 @@ func NewPathVersionManager(possibleVersions []string) *PathVersionManager {
 	pattern := fmt.Sprintf("/(%s)/", strings.Join(escapedVersions, "|"))
 	regex := regexp.MustCompile(pattern)
 
-	return &PathVersionManager{
+	return &VersionManager{
+		headerName:       headerName,
 		versionRegex:     regex,
 		possibleVersions: versionMap,
 	}
 }
 
-func (pvm *PathVersionManager) GetVersion(c *gin.Context) (string, error) {
-	matches := pvm.versionRegex.FindStringSubmatch(c.Request.URL.Path)
+// GetVersion checks all locations for version information
+// Priority: Header > Path
+func (vm *VersionManager) GetVersion(c *gin.Context) (string, error) {
+	// First, check header (highest priority)
+	headerVersion := c.GetHeader(vm.headerName)
+	if headerVersion != "" {
+		return headerVersion, nil
+	}
+
+	// Second, check URL path
+	matches := vm.versionRegex.FindStringSubmatch(c.Request.URL.Path)
 	if len(matches) > 1 {
 		return matches[1], nil
 	}
+
+	// No version found in any location
 	return "", nil
 }
 
@@ -94,10 +76,9 @@ func (pvm *PathVersionManager) GetVersion(c *gin.Context) (string, error) {
 type VersionMiddleware struct {
 	versionBundle  *VersionBundle
 	migrationChain *MigrationChain
-	versionManager VersionManager
+	versionManager *VersionManager
 	defaultVersion *Version
 	parameterName  string
-	location       VersionLocation
 	format         VersionFormat
 }
 
@@ -106,28 +87,21 @@ type MiddlewareConfig struct {
 	VersionBundle  *VersionBundle
 	MigrationChain *MigrationChain
 	ParameterName  string
-	Location       VersionLocation
 	Format         VersionFormat
 	DefaultVersion *Version
 }
 
 // NewVersionMiddleware creates a new version detection middleware
+// Automatically checks all locations (header and path) with header taking priority
 func NewVersionMiddleware(config MiddlewareConfig) *VersionMiddleware {
-	var versionManager VersionManager
-
-	switch config.Location {
-	case VersionLocationPath:
-		versions := make([]string, len(config.VersionBundle.GetVersions()))
-		for i, v := range config.VersionBundle.GetVersions() {
-			versions[i] = v.String()
-		}
-		versionManager = NewPathVersionManager(versions)
-	case VersionLocationHeader:
-		fallthrough
-	default:
-		// Default to header-based versioning
-		versionManager = NewHeaderVersionManager(config.ParameterName)
+	// Get all possible version strings for path matching
+	versions := make([]string, len(config.VersionBundle.GetVersions()))
+	for i, v := range config.VersionBundle.GetVersions() {
+		versions[i] = v.String()
 	}
+
+	// Create version manager that checks all locations
+	versionManager := NewVersionManager(config.ParameterName, versions)
 
 	return &VersionMiddleware{
 		versionBundle:  config.VersionBundle,
@@ -135,7 +109,6 @@ func NewVersionMiddleware(config MiddlewareConfig) *VersionMiddleware {
 		versionManager: versionManager,
 		defaultVersion: config.DefaultVersion,
 		parameterName:  config.ParameterName,
-		location:       config.Location,
 		format:         config.Format,
 	}
 }
@@ -174,12 +147,7 @@ func (vm *VersionMiddleware) Middleware() gin.HandlerFunc {
 					requestedVersion = vm.findClosestOlderVersion(versionStr)
 				}
 				if requestedVersion == nil {
-					var hint string
-					if vm.location == VersionLocationHeader {
-						hint = fmt.Sprintf("Use '%s' header with one of the available versions", vm.parameterName)
-					} else {
-						hint = "Include version in the URL path (e.g., /v1/resource or /2024-01-01/resource)"
-					}
+					hint := fmt.Sprintf("Specify version using '%s' header or include it in the URL path (e.g., /v1/resource)", vm.parameterName)
 					c.JSON(http.StatusBadRequest, gin.H{
 						"error":              fmt.Sprintf("Unknown version: %s", versionStr),
 						"available_versions": vm.versionBundle.GetVersionValues(),

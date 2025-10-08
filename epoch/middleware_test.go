@@ -27,11 +27,11 @@ var _ = Describe("Middleware", func() {
 		gin.SetMode(gin.TestMode)
 	})
 
-	Describe("HeaderVersionManager", func() {
-		var manager *HeaderVersionManager
+	Describe("VersionManager", func() {
+		var manager *VersionManager
 
 		BeforeEach(func() {
-			manager = NewHeaderVersionManager("X-API-Version")
+			manager = NewVersionManager("X-API-Version", []string{"1.0.0", "2.0.0"})
 		})
 
 		It("should extract version from header", func() {
@@ -46,24 +46,6 @@ var _ = Describe("Middleware", func() {
 			Expect(version).To(Equal("1.0.0"))
 		})
 
-		It("should return empty string when header is missing", func() {
-			req := httptest.NewRequest("GET", "/test", nil)
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = req
-
-			version, err := manager.GetVersion(c)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(version).To(Equal(""))
-		})
-	})
-
-	Describe("PathVersionManager", func() {
-		var manager *PathVersionManager
-
-		BeforeEach(func() {
-			manager = NewPathVersionManager([]string{"1.0.0", "2.0.0"})
-		})
-
 		It("should extract version from path", func() {
 			req := httptest.NewRequest("GET", "/api/1.0.0/users", nil)
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -72,6 +54,16 @@ var _ = Describe("Middleware", func() {
 			version, err := manager.GetVersion(c)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(version).To(Equal("1.0.0"))
+		})
+
+		It("should return empty string when header and path are missing version", func() {
+			req := httptest.NewRequest("GET", "/test", nil)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = req
+
+			version, err := manager.GetVersion(c)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(version).To(Equal(""))
 		})
 
 		It("should return empty string when version not in path", func() {
@@ -83,6 +75,18 @@ var _ = Describe("Middleware", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(version).To(Equal(""))
 		})
+
+		It("should prioritize header over path when both are present", func() {
+			req := httptest.NewRequest("GET", "/api/1.0.0/users", nil)
+			req.Header.Set("X-API-Version", "2.0.0")
+
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = req
+
+			version, err := manager.GetVersion(c)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(version).To(Equal("2.0.0")) // Header takes priority
+		})
 	})
 
 	Describe("VersionMiddleware", func() {
@@ -93,7 +97,6 @@ var _ = Describe("Middleware", func() {
 				VersionBundle:  bundle,
 				MigrationChain: chain,
 				ParameterName:  "X-API-Version",
-				Location:       VersionLocationHeader,
 				Format:         VersionFormatSemver,
 				DefaultVersion: nil,
 			}
@@ -101,34 +104,21 @@ var _ = Describe("Middleware", func() {
 		})
 
 		Describe("NewVersionMiddleware", func() {
-			It("should create middleware with header location", func() {
+			It("should create middleware with automatic version detection", func() {
 				config := MiddlewareConfig{
 					VersionBundle:  bundle,
 					MigrationChain: chain,
 					ParameterName:  "X-API-Version",
-					Location:       VersionLocationHeader,
 				}
 				mw := NewVersionMiddleware(config)
 				Expect(mw).NotTo(BeNil())
 			})
 
-			It("should create middleware with path location", func() {
+			It("should create middleware that checks both header and path", func() {
 				config := MiddlewareConfig{
 					VersionBundle:  bundle,
 					MigrationChain: chain,
 					ParameterName:  "v",
-					Location:       VersionLocationPath,
-				}
-				mw := NewVersionMiddleware(config)
-				Expect(mw).NotTo(BeNil())
-			})
-
-			It("should default to header when location is unknown", func() {
-				config := MiddlewareConfig{
-					VersionBundle:  bundle,
-					MigrationChain: chain,
-					ParameterName:  "X-API-Version",
-					Location:       VersionLocation("unknown"),
 				}
 				mw := NewVersionMiddleware(config)
 				Expect(mw).NotTo(BeNil())
@@ -189,6 +179,45 @@ var _ = Describe("Middleware", func() {
 				router.ServeHTTP(recorder, req)
 
 				Expect(recorder.Header().Get("X-API-Version")).To(Equal("1.0.0"))
+			})
+
+			It("should prioritize header over path when both are present", func() {
+				router.GET("/api/1.0.0/test", func(c *gin.Context) {
+					version := GetVersionFromContext(c)
+					c.JSON(200, gin.H{"version": version.String()})
+				})
+
+				recorder = httptest.NewRecorder()
+				// Path has 1.0.0 but header has 2.0.0
+				req := httptest.NewRequest("GET", "/api/1.0.0/test", nil)
+				req.Header.Set("X-API-Version", "2.0.0")
+
+				router.ServeHTTP(recorder, req)
+
+				Expect(recorder.Code).To(Equal(200))
+				var response map[string]interface{}
+				err := json.Unmarshal(recorder.Body.Bytes(), &response)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(response["version"]).To(Equal("2.0.0")) // Header takes priority
+			})
+
+			It("should fallback to path when header is not present", func() {
+				router.GET("/api/1.0.0/test", func(c *gin.Context) {
+					version := GetVersionFromContext(c)
+					c.JSON(200, gin.H{"version": version.String()})
+				})
+
+				recorder = httptest.NewRecorder()
+				// No header, but path has 1.0.0
+				req := httptest.NewRequest("GET", "/api/1.0.0/test", nil)
+
+				router.ServeHTTP(recorder, req)
+
+				Expect(recorder.Code).To(Equal(200))
+				var response map[string]interface{}
+				err := json.Unmarshal(recorder.Body.Bytes(), &response)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(response["version"]).To(Equal("1.0.0")) // Path is used when header is absent
 			})
 		})
 	})
@@ -347,7 +376,6 @@ var _ = Describe("Middleware", func() {
 					VersionBundle:  bundle,
 					MigrationChain: chain,
 					ParameterName:  "X-API-Version",
-					Location:       VersionLocationHeader,
 					Format:         VersionFormatSemver,
 				}
 				middleware = NewVersionMiddleware(config)
@@ -424,7 +452,6 @@ var _ = Describe("Middleware", func() {
 					VersionBundle:  bundle,
 					MigrationChain: chain,
 					ParameterName:  "X-API-Version",
-					Location:       VersionLocationHeader,
 					Format:         VersionFormatDate,
 				}
 				middleware = NewVersionMiddleware(config)
@@ -470,7 +497,6 @@ var _ = Describe("Middleware", func() {
 				VersionBundle:  bundle,
 				MigrationChain: chain,
 				ParameterName:  "X-API-Version",
-				Location:       VersionLocationHeader,
 				Format:         VersionFormatSemver,
 			}
 			middleware = NewVersionMiddleware(config)
@@ -540,7 +566,6 @@ var _ = Describe("Middleware", func() {
 				VersionBundle:  bundle,
 				MigrationChain: chain,
 				ParameterName:  "X-API-Version",
-				Location:       VersionLocationHeader,
 				Format:         VersionFormatSemver,
 			}
 			middleware = NewVersionMiddleware(config)
@@ -607,7 +632,6 @@ var _ = Describe("Middleware", func() {
 				VersionBundle:  bundle,
 				MigrationChain: chain,
 				ParameterName:  "version",
-				Location:       VersionLocationPath,
 				Format:         VersionFormatSemver,
 			}
 			middleware = NewVersionMiddleware(config)
@@ -670,7 +694,6 @@ var _ = Describe("Middleware", func() {
 				VersionBundle:  bundle,
 				MigrationChain: chain,
 				ParameterName:  "X-API-Version",
-				Location:       VersionLocationHeader,
 				DefaultVersion: v1, // Set v1 as default
 			}
 			middleware = NewVersionMiddleware(config)
@@ -704,7 +727,6 @@ var _ = Describe("Middleware", func() {
 				VersionBundle:  bundle,
 				MigrationChain: chain,
 				ParameterName:  "X-API-Version",
-				Location:       VersionLocationHeader,
 				DefaultVersion: v1,
 			}
 			middleware = NewVersionMiddleware(config)
@@ -736,7 +758,7 @@ var _ = Describe("Middleware", func() {
 
 	Describe("Version Manager Edge Cases", func() {
 		It("should handle case-insensitive headers", func() {
-			manager := NewHeaderVersionManager("x-api-version")
+			manager := NewVersionManager("x-api-version", []string{"1.0.0", "2.0.0"})
 			req := httptest.NewRequest("GET", "/test", nil)
 			req.Header.Set("X-API-VERSION", "1.0.0")
 
@@ -749,7 +771,7 @@ var _ = Describe("Middleware", func() {
 		})
 
 		It("should handle multiple version headers (first one wins)", func() {
-			manager := NewHeaderVersionManager("X-API-Version")
+			manager := NewVersionManager("X-API-Version", []string{"1.0.0", "2.0.0"})
 			req := httptest.NewRequest("GET", "/test", nil)
 			req.Header.Add("X-API-Version", "1.0.0")
 			req.Header.Add("X-API-Version", "2.0.0")
@@ -763,7 +785,7 @@ var _ = Describe("Middleware", func() {
 		})
 
 		It("should handle path with multiple matching versions", func() {
-			manager := NewPathVersionManager([]string{"1.0.0", "2.0.0", "10.0.0"})
+			manager := NewVersionManager("X-API-Version", []string{"1.0.0", "2.0.0", "10.0.0"})
 			req := httptest.NewRequest("GET", "/api/1.0.0/resource", nil)
 
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -775,7 +797,7 @@ var _ = Describe("Middleware", func() {
 		})
 
 		It("should handle special characters in version strings", func() {
-			manager := NewPathVersionManager([]string{"v1.0-beta", "v2.0-rc1"})
+			manager := NewVersionManager("X-API-Version", []string{"v1.0-beta", "v2.0-rc1"})
 			req := httptest.NewRequest("GET", "/api/v1.0-beta/users", nil)
 
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())

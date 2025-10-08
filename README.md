@@ -174,15 +174,16 @@ change := epoch.NewVersionChange(
 
 ### 4. Version Detection
 
-Cadwyn automatically detects versions from:
-- **Headers** (default): `X-API-Version: 2024-01-01`
-- **URL path**: `/v2024-01-01/users` or `/2024-01-01/users`
+Epoch automatically detects versions from **all locations** simultaneously:
+- **Headers**: `X-API-Version: 2024-01-01` (checked first, highest priority)
+- **URL path**: `/v2024-01-01/users` or `/2024-01-01/users` (checked second)
 
-Configure the detection method:
+If both header and path contain a version, the header version takes priority.
+
+Customize the header name:
 ```go
 epoch.NewEpoch().
-    WithVersionLocation(epoch.VersionLocationHeader).  // or Path
-    WithVersionParameter("X-API-Version").              // Custom header name
+    WithVersionParameter("X-API-Version").  // Custom header name (default: "X-API-Version")
     Build()
 ```
 
@@ -200,10 +201,9 @@ builder.WithHeadVersion()                                 // Always latest
 // Add migrations
 builder.WithChanges(change1, change2, change3)
 
-// Configure version detection
-builder.WithVersionLocation(epoch.VersionLocationHeader)
-builder.WithVersionParameter("X-API-Version")
-builder.WithVersionFormat(epoch.VersionFormatDate)
+// Configure version detection (optional)
+builder.WithVersionParameter("X-API-Version")        // Custom header name
+builder.WithVersionFormat(epoch.VersionFormatDate)   // Expected format
 
 // Build
 epochInstance, err := builder.Build()
