@@ -3,7 +3,7 @@ package main
 import (
 	"net/http"
 
-	"github.com/astronomer/cadwyn-go/cadwyn"
+	"github.com/astronomer/epoch/epoch"
 	"github.com/gin-gonic/gin"
 )
 
@@ -16,10 +16,10 @@ type User struct {
 }
 
 func main() {
-	// Create a simple versioned API with Cadwyn
+	// Create a simple versioned API with Epoch
 	// v1.0.0: User has ID and Name
 	// v2.0.0: User adds Email field
-	cadwynInstance, err := cadwyn.NewCadwyn().
+	epochInstance, err := epoch.NewEpoch().
 		WithSemverVersions("1.0.0", "2.0.0").
 		WithHeadVersion().
 		WithChanges(createV1ToV2Change()).
@@ -29,33 +29,33 @@ func main() {
 		panic(err)
 	}
 
-	// Setup Gin with Cadwyn middleware
+	// Setup Gin with Epoch middleware
 	r := gin.Default()
 
-	// Add Cadwyn version detection middleware
-	r.Use(cadwynInstance.Middleware())
+	// Add Epoch version detection middleware
+	r.Use(epochInstance.Middleware())
 
 	// Define routes with version-aware handlers
-	r.GET("/users/:id", cadwynInstance.WrapHandler(getUser))
-	r.POST("/users", cadwynInstance.WrapHandler(createUser))
+	r.GET("/users/:id", epochInstance.WrapHandler(getUser))
+	r.POST("/users", epochInstance.WrapHandler(createUser))
 
 	// Run server
 	r.Run(":8080")
 }
 
 // createV1ToV2Change defines the migration between v1.0.0 and v2.0.0
-func createV1ToV2Change() *cadwyn.VersionChange {
-	v1, _ := cadwyn.NewSemverVersion("1.0.0")
-	v2, _ := cadwyn.NewSemverVersion("2.0.0")
+func createV1ToV2Change() *epoch.VersionChange {
+	v1, _ := epoch.NewSemverVersion("1.0.0")
+	v2, _ := epoch.NewSemverVersion("2.0.0")
 
-	return cadwyn.NewVersionChange(
+	return epoch.NewVersionChange(
 		"Add email field to User",
 		v1,
 		v2,
 		// Request migration: v1 -> v2 (add email if missing)
-		&cadwyn.AlterRequestInstruction{
+		&epoch.AlterRequestInstruction{
 			Schemas: []interface{}{User{}},
-			Transformer: func(req *cadwyn.RequestInfo) error {
+			Transformer: func(req *epoch.RequestInfo) error {
 				if userMap, ok := req.Body.(map[string]interface{}); ok {
 					if _, hasEmail := userMap["email"]; !hasEmail {
 						userMap["email"] = "default@example.com"
@@ -65,9 +65,9 @@ func createV1ToV2Change() *cadwyn.VersionChange {
 			},
 		},
 		// Response migration: v2 -> v1 (remove email)
-		&cadwyn.AlterResponseInstruction{
+		&epoch.AlterResponseInstruction{
 			Schemas: []interface{}{User{}},
-			Transformer: func(resp *cadwyn.ResponseInfo) error {
+			Transformer: func(resp *epoch.ResponseInfo) error {
 				if userMap, ok := resp.Body.(map[string]interface{}); ok {
 					delete(userMap, "email")
 				}

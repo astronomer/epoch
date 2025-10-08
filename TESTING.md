@@ -1,10 +1,10 @@
-# 🧪 Testing Guide for Cadwyn-Go
+# 🧪 Testing Guide for Epoch
 
-This document provides comprehensive information about testing in the Cadwyn-Go project.
+This document provides comprehensive information about testing in the Epoch project.
 
 ## 📋 Overview
 
-Cadwyn-Go uses [Ginkgo](https://onsi.github.io/ginkgo/) as the BDD testing framework with [Gomega](https://onsi.github.io/gomega/) for assertions. The test suite provides comprehensive coverage of all core functionality.
+Epoch uses [Ginkgo](https://onsi.github.io/ginkgo/) as the BDD testing framework with [Gomega](https://onsi.github.io/gomega/) for assertions. The test suite provides comprehensive coverage of all core functionality.
 
 ## 🚀 Quick Start
 
@@ -41,19 +41,19 @@ make coverage
 ## 📁 Test Structure
 
 ```
-cadwyn/
+epoch/
 ├── version_test.go              # Version creation and comparison
 ├── version_bundle_test.go       # Version bundle management
-├── cadwyn_test.go              # Main API and builder pattern
-├── middleware_test.go          # Version detection middleware
-├── version_change_test.go      # Migration logic
-├── migration_types_test.go     # Request/response migration
-├── schema_generator_test.go    # AST and schema generation
-├── router_test.go              # Versioned routing
-├── route_generator_test.go     # Route transformation
-├── gin_application_test.go     # Application setup
-├── cadwyn_suite_test.go        # Test suite configuration
-└── ginkgo.config              # Ginkgo configuration
+├── epoch_test.go                # Main API and builder pattern
+├── middleware_test.go           # Version detection middleware
+├── version_change_test.go       # Migration logic
+├── migration_types_test.go      # Request/response migration
+├── schema_generator_test.go     # AST and schema generation
+├── router_test.go               # Versioned routing
+├── route_generator_test.go      # Route transformation
+├── gin_application_test.go      # Application setup
+├── epoch_suite_test.go          # Test suite configuration
+└── ginkgo.config                # Ginkgo configuration
 ```
 
 ## 🎯 Test Categories
@@ -89,7 +89,7 @@ cadwyn/
 
 ## 🏗️ Test Configuration
 
-### Ginkgo Configuration (`cadwyn/ginkgo.config`)
+### Ginkgo Configuration (`epoch/ginkgo.config`)
 - Race detection enabled
 - Coverage reporting with atomic mode
 - Verbose output
@@ -182,16 +182,16 @@ var _ = Describe("ComponentName", func() {
 
 ```bash
 # Watch mode (if using ginkgo)
-ginkgo watch ./cadwyn
+ginkgo watch ./epoch
 
 # Run specific test
-ginkgo -focus "Version creation" ./cadwyn
+ginkgo -focus "Version creation" ./epoch
 
 # Run tests with specific labels
-ginkgo --label-filter="unit" ./cadwyn
+ginkgo --label-filter="unit" ./epoch
 
 # Debug mode
-ginkgo -v --trace ./cadwyn
+ginkgo -v --trace ./epoch
 ```
 
 ### Pre-commit Checks
@@ -219,16 +219,16 @@ The `scripts/test.sh` script provides a comprehensive pre-commit check:
 
 ```bash
 # Verbose test output
-go test -v ./cadwyn
+go test -v ./epoch
 
 # Race detection
-go test -race ./cadwyn
+go test -race ./epoch
 
 # CPU profiling
-go test -cpuprofile=cpu.prof ./cadwyn
+go test -cpuprofile=cpu.prof ./epoch
 
 # Memory profiling
-go test -memprofile=mem.prof ./cadwyn
+go test -memprofile=mem.prof ./epoch
 ```
 
 ## 🎉 Contributing Tests

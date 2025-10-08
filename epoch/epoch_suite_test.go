@@ -1,4 +1,4 @@
-package cadwyn
+package epoch
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestCadwyn(t *testing.T) {
+func TestEpoch(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Cadwyn Suite")
+	RunSpecs(t, "Epoch Suite")
 }

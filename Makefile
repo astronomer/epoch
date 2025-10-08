@@ -14,16 +14,16 @@ test:
 test-ginkgo:
 	@echo "Running tests with Ginkgo..."
 	@if command -v ginkgo >/dev/null 2>&1; then \
-		ginkgo -r --race --cover --coverprofile=coverage.out --covermode=atomic -v ./cadwyn; \
+		ginkgo -r --race --cover --coverprofile=coverage.out --covermode=atomic -v ./epoch; \
 	else \
 		echo "Ginkgo not installed, falling back to go test..."; \
 		$(MAKE) test; \
 	fi
 
-## test-unit: Run only unit tests (cadwyn package)
+## test-unit: Run only unit tests (epoch package)
 test-unit:
 	@echo "Running unit tests..."
-	go test -race -coverprofile=coverage.out -covermode=atomic -v ./cadwyn
+	go test -race -coverprofile=coverage.out -covermode=atomic -v ./epoch
 
 ## test-examples: Validate that examples compile
 test-examples:
