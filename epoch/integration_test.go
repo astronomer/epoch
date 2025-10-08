@@ -1,4 +1,4 @@
-package cadwyn
+package epoch
 
 import (
 	"bytes"
@@ -92,7 +92,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			)
 
 			// Build Cadwyn instance
-			cadwynInstance, err := NewCadwyn().
+			cadwynInstance, err := NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change).
 				WithTypes(UserV1{}, UserV2{}).
@@ -174,7 +174,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				},
 			)
 
-			cadwynInstance, err := NewCadwyn().
+			cadwynInstance, err := NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change).
 				WithTypes(UserV1{}, UserV2{}).
@@ -286,7 +286,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			)
 
 			// Build Cadwyn instance
-			cadwynInstance, err := NewCadwyn().
+			cadwynInstance, err := NewEpoch().
 				WithVersions(v1, v2, v3).
 				WithChanges(change1, change2).
 				WithTypes(UserV1{}, UserV2{}, UserV3{}).
@@ -392,7 +392,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				},
 			)
 
-			cadwynInstance, err := NewCadwyn().
+			cadwynInstance, err := NewEpoch().
 				WithVersions(v1, v2, v3).
 				WithChanges(change).
 				WithTypes(ProductV1{}, ProductV3{}).
@@ -473,7 +473,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				},
 			)
 
-			cadwynInstance, err := NewCadwyn().
+			cadwynInstance, err := NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change).
 				WithVersionFormat(VersionFormatDate).
@@ -523,7 +523,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				},
 			)
 
-			cadwynInstance, err := NewCadwyn().
+			cadwynInstance, err := NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change).
 				WithVersionFormat(VersionFormatDate).
@@ -562,7 +562,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 
 			change := NewVersionChange("Test change", v1, v2)
 
-			instance, err := NewCadwyn().
+			instance, err := NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change).
 				WithTypes(UserV1{}, UserV2{}).
@@ -579,7 +579,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 		})
 
 		It("should accumulate errors during building", func() {
-			_, err := NewCadwyn().
+			_, err := NewEpoch().
 				WithSemverVersions("invalid-version", "1.0.0").
 				Build()
 
@@ -611,7 +611,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2023-01-01")
 			v2, _ := NewDateVersion("2024-01-01")
 
-			instance, err := NewCadwyn().
+			instance, err := NewEpoch().
 				WithVersions(v1, v2).
 				WithTypes(UserV1{}).
 				WithVersionFormat(VersionFormatDate).
@@ -628,7 +628,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 		It("should handle pointer types in schema generation", func() {
 			v1, _ := NewDateVersion("2023-01-01")
 
-			instance, err := NewCadwyn().
+			instance, err := NewEpoch().
 				WithVersions(v1).
 				WithTypes(&UserV1{}).
 				WithVersionFormat(VersionFormatDate).
@@ -726,7 +726,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				},
 			)
 
-			instance, err := NewCadwyn().
+			instance, err := NewEpoch().
 				WithVersions(v1, v2, v3).
 				WithHeadVersion().
 				WithChanges(userChange1, userChange2, productChange).

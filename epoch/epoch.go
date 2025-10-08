@@ -1,4 +1,4 @@
-package cadwyn
+package epoch
 
 import (
 	"fmt"
@@ -7,8 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Cadwyn provides API versioning capabilities for existing Gin applications
-type Cadwyn struct {
+// Epoch provides API versioning capabilities for existing Gin applications
+type Epoch struct {
 	versionBundle   *VersionBundle
 	migrationChain  *MigrationChain
 	schemaGenerator *SchemaGenerator
@@ -23,9 +23,9 @@ type VersionConfig struct {
 	DefaultVersion       *Version
 }
 
-// NewCadwyn creates a new Cadwyn instance for API versioning
-func NewCadwyn() *CadwynBuilder {
-	return &CadwynBuilder{
+// NewEpoch creates a new Epoch instance for API versioning
+func NewEpoch() *EpochBuilder {
+	return &EpochBuilder{
 		versions: []*Version{},
 		changes:  []*VersionChange{},
 		types:    []reflect.Type{},
@@ -38,7 +38,7 @@ func NewCadwyn() *CadwynBuilder {
 }
 
 // Middleware returns a Gin middleware that detects API versions from requests
-func (c *Cadwyn) Middleware() gin.HandlerFunc {
+func (c *Epoch) Middleware() gin.HandlerFunc {
 	middleware := NewVersionMiddleware(MiddlewareConfig{
 		VersionBundle:  c.versionBundle,
 		MigrationChain: c.migrationChain,
@@ -51,43 +51,43 @@ func (c *Cadwyn) Middleware() gin.HandlerFunc {
 }
 
 // WrapHandler wraps a Gin handler to provide automatic request/response migration
-func (c *Cadwyn) WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
+func (c *Epoch) WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
 	versionAwareHandler := NewVersionAwareHandler(handler, c.versionBundle, c.migrationChain)
 	return versionAwareHandler.HandlerFunc()
 }
 
 // GetVersionBundle returns the version bundle
-func (c *Cadwyn) GetVersionBundle() *VersionBundle {
+func (c *Epoch) GetVersionBundle() *VersionBundle {
 	return c.versionBundle
 }
 
 // GetMigrationChain returns the migration chain
-func (c *Cadwyn) GetMigrationChain() *MigrationChain {
+func (c *Epoch) GetMigrationChain() *MigrationChain {
 	return c.migrationChain
 }
 
 // GetSchemaGenerator returns the schema generator
-func (c *Cadwyn) GetSchemaGenerator() *SchemaGenerator {
+func (c *Epoch) GetSchemaGenerator() *SchemaGenerator {
 	return c.schemaGenerator
 }
 
 // GetVersions returns all configured versions
-func (c *Cadwyn) GetVersions() []*Version {
+func (c *Epoch) GetVersions() []*Version {
 	return c.versionBundle.GetVersions()
 }
 
 // GetHeadVersion returns the head (latest) version
-func (c *Cadwyn) GetHeadVersion() *Version {
+func (c *Epoch) GetHeadVersion() *Version {
 	return c.versionBundle.GetHeadVersion()
 }
 
 // ParseVersion parses a version string
-func (c *Cadwyn) ParseVersion(versionStr string) (*Version, error) {
+func (c *Epoch) ParseVersion(versionStr string) (*Version, error) {
 	return c.versionBundle.ParseVersion(versionStr)
 }
 
 // GenerateStructForVersion generates Go code for a struct at a specific version
-func (c *Cadwyn) GenerateStructForVersion(structType interface{}, targetVersion string) (string, error) {
+func (c *Epoch) GenerateStructForVersion(structType interface{}, targetVersion string) (string, error) {
 	if c.schemaGenerator == nil {
 		return "", fmt.Errorf("schema generation is not enabled")
 	}
@@ -98,8 +98,8 @@ func (c *Cadwyn) GenerateStructForVersion(structType interface{}, targetVersion 
 	return c.schemaGenerator.GenerateStruct(reflectType, targetVersion)
 }
 
-// CadwynBuilder provides a fluent API for building Cadwyn instances
-type CadwynBuilder struct {
+// EpochBuilder provides a fluent API for building Epoch instances
+type EpochBuilder struct {
 	versions      []*Version
 	changes       []*VersionChange
 	types         []reflect.Type
@@ -108,14 +108,14 @@ type CadwynBuilder struct {
 }
 
 // WithVersions sets the versions for the application
-func (cb *CadwynBuilder) WithVersions(versions ...*Version) *CadwynBuilder {
+func (cb *EpochBuilder) WithVersions(versions ...*Version) *EpochBuilder {
 	cb.versions = append(cb.versions, versions...)
 	return cb
 }
 
 // WithDateVersions creates and adds date-based versions
 // Invalid date strings are collected and will cause Build() to fail with a detailed error.
-func (cb *CadwynBuilder) WithDateVersions(dates ...string) *CadwynBuilder {
+func (cb *EpochBuilder) WithDateVersions(dates ...string) *EpochBuilder {
 	for _, dateStr := range dates {
 		v, err := NewDateVersion(dateStr)
 		if err != nil {
@@ -129,7 +129,7 @@ func (cb *CadwynBuilder) WithDateVersions(dates ...string) *CadwynBuilder {
 
 // WithSemverVersions creates and adds semantic versions (supports both major.minor.patch and major.minor)
 // Invalid semver strings are collected and will cause Build() to fail with a detailed error.
-func (cb *CadwynBuilder) WithSemverVersions(semvers ...string) *CadwynBuilder {
+func (cb *EpochBuilder) WithSemverVersions(semvers ...string) *EpochBuilder {
 	for _, semverStr := range semvers {
 		v, err := NewSemverVersion(semverStr)
 		if err != nil {
@@ -142,7 +142,7 @@ func (cb *CadwynBuilder) WithSemverVersions(semvers ...string) *CadwynBuilder {
 }
 
 // WithStringVersions creates and adds string-based versions
-func (cb *CadwynBuilder) WithStringVersions(versions ...string) *CadwynBuilder {
+func (cb *EpochBuilder) WithStringVersions(versions ...string) *EpochBuilder {
 	for _, versionStr := range versions {
 		v := NewStringVersion(versionStr)
 		cb.versions = append(cb.versions, v)
@@ -151,43 +151,43 @@ func (cb *CadwynBuilder) WithStringVersions(versions ...string) *CadwynBuilder {
 }
 
 // WithHeadVersion adds a head version
-func (cb *CadwynBuilder) WithHeadVersion() *CadwynBuilder {
+func (cb *EpochBuilder) WithHeadVersion() *EpochBuilder {
 	cb.versions = append(cb.versions, NewHeadVersion())
 	return cb
 }
 
 // WithChanges sets the version changes for the application
-func (cb *CadwynBuilder) WithChanges(changes ...*VersionChange) *CadwynBuilder {
+func (cb *EpochBuilder) WithChanges(changes ...*VersionChange) *EpochBuilder {
 	cb.changes = append(cb.changes, changes...)
 	return cb
 }
 
 // WithVersionLocation sets where to look for version information
-func (cb *CadwynBuilder) WithVersionLocation(location VersionLocation) *CadwynBuilder {
+func (cb *EpochBuilder) WithVersionLocation(location VersionLocation) *EpochBuilder {
 	cb.versionConfig.VersionLocation = location
 	return cb
 }
 
 // WithVersionParameter sets the parameter name for version detection
-func (cb *CadwynBuilder) WithVersionParameter(name string) *CadwynBuilder {
+func (cb *EpochBuilder) WithVersionParameter(name string) *EpochBuilder {
 	cb.versionConfig.VersionParameterName = name
 	return cb
 }
 
 // WithVersionFormat sets the version format
-func (cb *CadwynBuilder) WithVersionFormat(format VersionFormat) *CadwynBuilder {
+func (cb *EpochBuilder) WithVersionFormat(format VersionFormat) *EpochBuilder {
 	cb.versionConfig.VersionFormat = format
 	return cb
 }
 
 // WithDefaultVersion sets the default version
-func (cb *CadwynBuilder) WithDefaultVersion(v *Version) *CadwynBuilder {
+func (cb *EpochBuilder) WithDefaultVersion(v *Version) *EpochBuilder {
 	cb.versionConfig.DefaultVersion = v
 	return cb
 }
 
 // WithTypes registers multiple types for schema generation
-func (cb *CadwynBuilder) WithTypes(types ...interface{}) *CadwynBuilder {
+func (cb *EpochBuilder) WithTypes(types ...interface{}) *EpochBuilder {
 	for _, t := range types {
 		reflectType := reflect.TypeOf(t)
 		if reflectType.Kind() == reflect.Ptr {
@@ -198,8 +198,8 @@ func (cb *CadwynBuilder) WithTypes(types ...interface{}) *CadwynBuilder {
 	return cb
 }
 
-// Build creates the Cadwyn instance
-func (cb *CadwynBuilder) Build() (*Cadwyn, error) {
+// Build creates the Epoch instance
+func (cb *EpochBuilder) Build() (*Epoch, error) {
 	// Check for accumulated errors from builder methods
 	if len(cb.errors) > 0 {
 		// Return first error with context about all errors
@@ -239,7 +239,7 @@ func (cb *CadwynBuilder) Build() (*Cadwyn, error) {
 		registeredTypes = append(registeredTypes, t.Name())
 	}
 
-	return &Cadwyn{
+	return &Epoch{
 		versionBundle:   versionBundle,
 		migrationChain:  migrationChain,
 		schemaGenerator: schemaGenerator,
@@ -249,27 +249,27 @@ func (cb *CadwynBuilder) Build() (*Cadwyn, error) {
 
 // Convenience functions for common setups
 
-// QuickStart creates a Cadwyn instance with date versions and head version
-func QuickStart(dates ...string) (*Cadwyn, error) {
-	builder := NewCadwyn().WithDateVersions(dates...).WithHeadVersion()
+// QuickStart creates an Epoch instance with date versions and head version
+func QuickStart(dates ...string) (*Epoch, error) {
+	builder := NewEpoch().WithDateVersions(dates...).WithHeadVersion()
 	return builder.Build()
 }
 
-// WithSemver creates a Cadwyn instance with semantic versions and head version
-func WithSemver(semvers ...string) (*Cadwyn, error) {
-	builder := NewCadwyn().WithSemverVersions(semvers...).WithHeadVersion()
+// WithSemver creates an Epoch instance with semantic versions and head version
+func WithSemver(semvers ...string) (*Epoch, error) {
+	builder := NewEpoch().WithSemverVersions(semvers...).WithHeadVersion()
 	return builder.Build()
 }
 
-// WithStringVersions creates a Cadwyn instance with string versions and head version
-func WithStrings(versions ...string) (*Cadwyn, error) {
-	builder := NewCadwyn().WithStringVersions(versions...).WithHeadVersion()
+// WithStringVersions creates an Epoch instance with string versions and head version
+func WithStrings(versions ...string) (*Epoch, error) {
+	builder := NewEpoch().WithStringVersions(versions...).WithHeadVersion()
 	return builder.Build()
 }
 
-// Simple creates a Cadwyn instance with just a head version
-func Simple() (*Cadwyn, error) {
-	builder := NewCadwyn().WithHeadVersion()
+// Simple creates an Epoch instance with just a head version
+func Simple() (*Epoch, error) {
+	builder := NewEpoch().WithHeadVersion()
 	return builder.Build()
 }
 

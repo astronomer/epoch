@@ -1,4 +1,4 @@
-package cadwyn
+package epoch
 
 import (
 	"github.com/gin-gonic/gin"
@@ -28,17 +28,17 @@ var _ = Describe("Cadwyn", func() {
 	})
 
 	Describe("NewCadwyn", func() {
-		It("should create a new CadwynBuilder", func() {
-			builder := NewCadwyn()
+		It("should create a new EpochBuilder", func() {
+			builder := NewEpoch()
 			Expect(builder).NotTo(BeNil())
 		})
 	})
 
-	Describe("CadwynBuilder", func() {
-		var builder *CadwynBuilder
+	Describe("EpochBuilder", func() {
+		var builder *EpochBuilder
 
 		BeforeEach(func() {
-			builder = NewCadwyn()
+			builder = NewEpoch()
 		})
 
 		Describe("WithVersions", func() {
@@ -159,11 +159,11 @@ var _ = Describe("Cadwyn", func() {
 	})
 
 	Describe("Cadwyn instance", func() {
-		var cadwynInstance *Cadwyn
+		var cadwynInstance *Epoch
 
 		BeforeEach(func() {
 			var err error
-			cadwynInstance, err = NewCadwyn().
+			cadwynInstance, err = NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change).
 				WithTypes(TestUser{}).

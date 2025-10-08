@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/astronomer/cadwyn-go/cadwyn"
+	"github.com/astronomer/epoch/epoch"
 	"github.com/gin-gonic/gin"
 )
 
@@ -75,12 +75,12 @@ var (
 
 func main() {
 	// Create date-based versions
-	v1, _ := cadwyn.NewDateVersion("2023-01-01")
-	v2, _ := cadwyn.NewDateVersion("2023-06-01")
-	v3, _ := cadwyn.NewDateVersion("2024-01-01")
+	v1, _ := epoch.NewDateVersion("2023-01-01")
+	v2, _ := epoch.NewDateVersion("2023-06-01")
+	v3, _ := epoch.NewDateVersion("2024-01-01")
 
-	// Build Cadwyn instance with ALL types of migrations
-	cadwynInstance, err := cadwyn.NewCadwyn().
+	// Build Epoch instance with ALL types of migrations
+	epochInstance, err := epoch.NewEpoch().
 		WithVersions(v1, v2, v3).
 		WithHeadVersion().
 		WithChanges(
@@ -105,13 +105,13 @@ func main() {
 			createErrorMigration(v1, v2),
 		).
 		WithTypes(User{}, Product{}, Order{}).
-		WithVersionLocation(cadwyn.VersionLocationHeader).
+		WithVersionLocation(epoch.VersionLocationHeader).
 		WithVersionParameter("X-API-Version").
-		WithVersionFormat(cadwyn.VersionFormatDate).
+		WithVersionFormat(epoch.VersionFormatDate).
 		Build()
 
 	if err != nil {
-		panic(fmt.Sprintf("Failed to create Cadwyn instance: %v", err))
+		panic(fmt.Sprintf("Failed to create Epoch instance: %v", err))
 	}
 
 	// Setup Gin
@@ -119,52 +119,52 @@ func main() {
 	r := gin.Default()
 
 	// Middleware
-	r.Use(cadwynInstance.Middleware())
+	r.Use(epochInstance.Middleware())
 	r.Use(corsMiddleware())
 
 	// User endpoints
 	userRoutes := r.Group("/users")
 	{
-		userRoutes.GET("", cadwynInstance.WrapHandler(listUsers))
-		userRoutes.GET("/:id", cadwynInstance.WrapHandler(getUser))
-		userRoutes.POST("", cadwynInstance.WrapHandler(createUser))
-		userRoutes.PUT("/:id", cadwynInstance.WrapHandler(updateUser))
-		userRoutes.DELETE("/:id", cadwynInstance.WrapHandler(deleteUser))
+		userRoutes.GET("", epochInstance.WrapHandler(listUsers))
+		userRoutes.GET("/:id", epochInstance.WrapHandler(getUser))
+		userRoutes.POST("", epochInstance.WrapHandler(createUser))
+		userRoutes.PUT("/:id", epochInstance.WrapHandler(updateUser))
+		userRoutes.DELETE("/:id", epochInstance.WrapHandler(deleteUser))
 	}
 
 	// Product endpoints
 	productRoutes := r.Group("/products")
 	{
-		productRoutes.GET("", cadwynInstance.WrapHandler(listProducts))
-		productRoutes.GET("/:id", cadwynInstance.WrapHandler(getProduct))
-		productRoutes.POST("", cadwynInstance.WrapHandler(createProduct))
+		productRoutes.GET("", epochInstance.WrapHandler(listProducts))
+		productRoutes.GET("/:id", epochInstance.WrapHandler(getProduct))
+		productRoutes.POST("", epochInstance.WrapHandler(createProduct))
 	}
 
 	// Order endpoints (demonstrating path-based migrations)
 	orderRoutes := r.Group("/orders")
 	{
-		orderRoutes.GET("", cadwynInstance.WrapHandler(listOrders))
-		orderRoutes.POST("", cadwynInstance.WrapHandler(createOrder))
+		orderRoutes.GET("", epochInstance.WrapHandler(listOrders))
+		orderRoutes.POST("", epochInstance.WrapHandler(createOrder))
 	}
 
 	// Error endpoint (demonstrating error migrations)
-	r.GET("/error", cadwynInstance.WrapHandler(errorEndpoint))
+	r.GET("/error", epochInstance.WrapHandler(errorEndpoint))
 
 	// Meta endpoints (unversioned)
 	r.GET("/health", healthCheck)
 	r.GET("/versions", func(c *gin.Context) {
-		versions := cadwynInstance.GetVersions()
+		versions := epochInstance.GetVersions()
 		versionStrings := make([]string, len(versions))
 		for i, v := range versions {
 			versionStrings[i] = v.String()
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"versions":     versionStrings,
-			"head_version": cadwynInstance.GetHeadVersion().String(),
+			"head_version": epochInstance.GetHeadVersion().String(),
 		})
 	})
 
-	fmt.Println("🚀 Advanced Cadwyn-Go Example Server - ALL Migration Types")
+	fmt.Println("🚀 Advanced Epoch Example Server - ALL Migration Types")
 	fmt.Println("===========================================================")
 	fmt.Println("This example demonstrates ALL possible migration types:")
 	fmt.Println()
@@ -208,15 +208,15 @@ func main() {
 // ============================================================================
 
 // v1 -> v2: Add email and status fields to User (SCHEMA-BASED)
-func createUserV1ToV2Migration(from, to *cadwyn.Version) *cadwyn.VersionChange {
-	return cadwyn.NewVersionChange(
+func createUserV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
+	return epoch.NewVersionChange(
 		"Add email and status fields to User",
 		from,
 		to,
 		// Forward migration: v1 request -> v2 (add email and status)
-		&cadwyn.AlterRequestInstruction{
+		&epoch.AlterRequestInstruction{
 			Schemas: []interface{}{User{}},
-			Transformer: func(req *cadwyn.RequestInfo) error {
+			Transformer: func(req *epoch.RequestInfo) error {
 				if userMap, ok := req.Body.(map[string]interface{}); ok {
 					if _, hasEmail := userMap["email"]; !hasEmail {
 						userMap["email"] = "unknown@example.com"
@@ -229,9 +229,9 @@ func createUserV1ToV2Migration(from, to *cadwyn.Version) *cadwyn.VersionChange {
 			},
 		},
 		// Backward migration: v2 response -> v1 (remove email and status)
-		&cadwyn.AlterResponseInstruction{
+		&epoch.AlterResponseInstruction{
 			Schemas: []interface{}{User{}},
-			Transformer: func(resp *cadwyn.ResponseInfo) error {
+			Transformer: func(resp *epoch.ResponseInfo) error {
 				transformUser := func(userMap map[string]interface{}) {
 					delete(userMap, "email")
 					delete(userMap, "status")
@@ -253,15 +253,15 @@ func createUserV1ToV2Migration(from, to *cadwyn.Version) *cadwyn.VersionChange {
 }
 
 // v2 -> v3: Add phone, rename name -> full_name (SCHEMA-BASED)
-func createUserV2ToV3Migration(from, to *cadwyn.Version) *cadwyn.VersionChange {
-	return cadwyn.NewVersionChange(
+func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
+	return epoch.NewVersionChange(
 		"Add phone field and rename name to full_name",
 		from,
 		to,
 		// Forward migration: v2 request -> v3
-		&cadwyn.AlterRequestInstruction{
+		&epoch.AlterRequestInstruction{
 			Schemas: []interface{}{User{}},
-			Transformer: func(req *cadwyn.RequestInfo) error {
+			Transformer: func(req *epoch.RequestInfo) error {
 				if userMap, ok := req.Body.(map[string]interface{}); ok {
 					// Rename name -> full_name
 					if name, hasName := userMap["name"]; hasName {
@@ -277,9 +277,9 @@ func createUserV2ToV3Migration(from, to *cadwyn.Version) *cadwyn.VersionChange {
 			},
 		},
 		// Backward migration: v3 response -> v2
-		&cadwyn.AlterResponseInstruction{
+		&epoch.AlterResponseInstruction{
 			Schemas: []interface{}{User{}},
-			Transformer: func(resp *cadwyn.ResponseInfo) error {
+			Transformer: func(resp *epoch.ResponseInfo) error {
 				transformUser := func(userMap map[string]interface{}) {
 					// Rename full_name -> name
 					if fullName, hasFullName := userMap["full_name"]; hasFullName {
@@ -306,15 +306,15 @@ func createUserV2ToV3Migration(from, to *cadwyn.Version) *cadwyn.VersionChange {
 }
 
 // v2 -> v3: Add description and currency to Product (SCHEMA-BASED)
-func createProductV2ToV3Migration(from, to *cadwyn.Version) *cadwyn.VersionChange {
-	return cadwyn.NewVersionChange(
+func createProductV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
+	return epoch.NewVersionChange(
 		"Add description and currency fields to Product",
 		from,
 		to,
 		// Forward migration: v2 request -> v3
-		&cadwyn.AlterRequestInstruction{
+		&epoch.AlterRequestInstruction{
 			Schemas: []interface{}{Product{}},
-			Transformer: func(req *cadwyn.RequestInfo) error {
+			Transformer: func(req *epoch.RequestInfo) error {
 				if productMap, ok := req.Body.(map[string]interface{}); ok {
 					if _, hasDesc := productMap["description"]; !hasDesc {
 						productMap["description"] = ""
@@ -327,9 +327,9 @@ func createProductV2ToV3Migration(from, to *cadwyn.Version) *cadwyn.VersionChang
 			},
 		},
 		// Backward migration: v3 response -> v2
-		&cadwyn.AlterResponseInstruction{
+		&epoch.AlterResponseInstruction{
 			Schemas: []interface{}{Product{}},
-			Transformer: func(resp *cadwyn.ResponseInfo) error {
+			Transformer: func(resp *epoch.ResponseInfo) error {
 				transformProduct := func(productMap map[string]interface{}) {
 					delete(productMap, "description")
 					delete(productMap, "currency")
@@ -355,16 +355,16 @@ func createProductV2ToV3Migration(from, to *cadwyn.Version) *cadwyn.VersionChang
 // ============================================================================
 
 // v2 -> v3: Add Order endpoint with PATH-BASED migrations
-func createPathBasedOrderMigration(from, to *cadwyn.Version) *cadwyn.VersionChange {
-	return cadwyn.NewVersionChange(
+func createPathBasedOrderMigration(from, to *epoch.Version) *epoch.VersionChange {
+	return epoch.NewVersionChange(
 		"Add Order endpoints with path-based migrations",
 		from,
 		to,
 		// PATH-BASED Request Migration for /orders POST
-		&cadwyn.AlterRequestInstruction{
+		&epoch.AlterRequestInstruction{
 			Path:    "/orders",
 			Methods: []string{"POST"},
-			Transformer: func(req *cadwyn.RequestInfo) error {
+			Transformer: func(req *epoch.RequestInfo) error {
 				// Add created_at timestamp to all order creation requests
 				if orderMap, ok := req.Body.(map[string]interface{}); ok {
 					if _, hasCreatedAt := orderMap["created_at"]; !hasCreatedAt {
@@ -382,10 +382,10 @@ func createPathBasedOrderMigration(from, to *cadwyn.Version) *cadwyn.VersionChan
 			},
 		},
 		// PATH-BASED Response Migration for /orders GET
-		&cadwyn.AlterResponseInstruction{
+		&epoch.AlterResponseInstruction{
 			Path:    "/orders",
 			Methods: []string{"GET"},
-			Transformer: func(resp *cadwyn.ResponseInfo) error {
+			Transformer: func(resp *epoch.ResponseInfo) error {
 				// For older versions, simplify order responses
 				if orderList, ok := resp.Body.([]interface{}); ok {
 					for _, item := range orderList {
@@ -407,14 +407,14 @@ func createPathBasedOrderMigration(from, to *cadwyn.Version) *cadwyn.VersionChan
 // ============================================================================
 
 // v2 -> v3: Add new enum members to User.status
-func createEnumMigration(from, to *cadwyn.Version) *cadwyn.VersionChange {
-	return cadwyn.NewVersionChange(
+func createEnumMigration(from, to *epoch.Version) *epoch.VersionChange {
+	return epoch.NewVersionChange(
 		"Add 'pending' and 'suspended' status values to User.status enum",
 		from,
 		to,
 		// Enum instruction showing that v3 has additional members
 		// The User.Status field has enums:"active,inactive,pending,suspended" tag
-		&cadwyn.EnumInstruction{
+		&epoch.EnumInstruction{
 			Enum: "User.Status", // Reference the field by name
 			Type: "had_members",
 			Members: map[string]interface{}{
@@ -424,9 +424,9 @@ func createEnumMigration(from, to *cadwyn.Version) *cadwyn.VersionChange {
 			IsHidden: false,
 		},
 		// Handle the enum values in responses
-		&cadwyn.AlterResponseInstruction{
+		&epoch.AlterResponseInstruction{
 			Schemas: []interface{}{User{}},
-			Transformer: func(resp *cadwyn.ResponseInfo) error {
+			Transformer: func(resp *epoch.ResponseInfo) error {
 				normalizeStatus := func(userMap map[string]interface{}) {
 					if status, hasStatus := userMap["status"]; hasStatus {
 						// Map new statuses to old ones for backward compatibility
@@ -462,13 +462,13 @@ func createEnumMigration(from, to *cadwyn.Version) *cadwyn.VersionChange {
 // ============================================================================
 
 // v2 -> v3: Schema instruction describing field changes
-func createSchemaMigration(from, to *cadwyn.Version) *cadwyn.VersionChange {
-	return cadwyn.NewVersionChange(
+func createSchemaMigration(from, to *epoch.Version) *epoch.VersionChange {
+	return epoch.NewVersionChange(
 		"Schema changes: User gained phone, status, and full_name fields",
 		from,
 		to,
 		// Schema instruction documenting what changed
-		&cadwyn.SchemaInstruction{
+		&epoch.SchemaInstruction{
 			Schema: User{},
 			Name:   "User",
 			Type:   "had",
@@ -501,13 +501,13 @@ func createSchemaMigration(from, to *cadwyn.Version) *cadwyn.VersionChange {
 // ============================================================================
 
 // v2 -> v3: Endpoint instruction showing new endpoints
-func createEndpointMigration(from, to *cadwyn.Version) *cadwyn.VersionChange {
-	return cadwyn.NewVersionChange(
+func createEndpointMigration(from, to *epoch.Version) *epoch.VersionChange {
+	return epoch.NewVersionChange(
 		"Add /orders endpoints",
 		from,
 		to,
 		// Endpoint instruction showing /orders didn't exist in v2
-		&cadwyn.EndpointInstruction{
+		&epoch.EndpointInstruction{
 			Path:     "/orders",
 			Methods:  []string{"GET", "POST"},
 			FuncName: "listOrders, createOrder",
@@ -526,16 +526,16 @@ func createEndpointMigration(from, to *cadwyn.Version) *cadwyn.VersionChange {
 // ============================================================================
 
 // v1 -> v2: Demonstrate MigrateHTTPErrors flag
-func createErrorMigration(from, to *cadwyn.Version) *cadwyn.VersionChange {
-	return cadwyn.NewVersionChange(
+func createErrorMigration(from, to *epoch.Version) *epoch.VersionChange {
+	return epoch.NewVersionChange(
 		"Change error response format",
 		from,
 		to,
 		// Migrate error responses (MigrateHTTPErrors: true)
-		&cadwyn.AlterResponseInstruction{
+		&epoch.AlterResponseInstruction{
 			Schemas:           []interface{}{User{}},
 			MigrateHTTPErrors: true, // This will also transform error responses!
-			Transformer: func(resp *cadwyn.ResponseInfo) error {
+			Transformer: func(resp *epoch.ResponseInfo) error {
 				// v2+ has structured error format, v1 has simple error format
 				if resp.StatusCode >= 400 {
 					if bodyMap, ok := resp.Body.(map[string]interface{}); ok {

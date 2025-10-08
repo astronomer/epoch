@@ -1,4 +1,4 @@
-module github.com/astronomer/cadwyn-go
+module github.com/astronomer/epoch
 
 go 1.23.0
 

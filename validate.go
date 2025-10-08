@@ -18,7 +18,7 @@ type validationTest struct {
 var tests = []validationTest{
 	{
 		name:        "Core Package Tests",
-		command:     "go test ./cadwyn/...",
+		command:     "go test ./epoch/...",
 		description: "Run all unit tests for core packages",
 	},
 	{
@@ -44,7 +44,7 @@ var tests = []validationTest{
 }
 
 func main() {
-	fmt.Println("🧪 Cadwyn-Go Validation Suite")
+	fmt.Println("🧪 Epoch Validation Suite")
 	fmt.Println("Testing Clean Architecture")
 	fmt.Println(strings.Repeat("=", 60))
 

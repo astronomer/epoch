@@ -1,13 +1,13 @@
-# Cadwyn-Go
+# Epoch
 
 **API versioning for Go with automatic request/response migrations**
 
-Cadwyn-Go lets you version your Go APIs the way Stripe does - write your handlers once for the latest version, then define migrations to transform requests and responses for older API versions automatically.
+Epoch lets you version your Go APIs the way Stripe does - write your handlers once for the latest version, then define migrations to transform requests and responses for older API versions automatically.
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue.svg)](https://golang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Why Cadwyn-Go?
+## Why Epoch?
 
 - **Write once** - Implement handlers for your latest API version only
 - **Automatic migrations** - Define transformations between versions declaratively
@@ -18,7 +18,7 @@ Cadwyn-Go lets you version your Go APIs the way Stripe does - write your handler
 ## Installation
 
 ```bash
-go get github.com/astronomer/cadwyn-go
+go get github.com/astronomer/epoch
 ```
 
 ## Quick Start
@@ -27,7 +27,7 @@ go get github.com/astronomer/cadwyn-go
 package main
 
 import (
-    "github.com/astronomer/cadwyn-go/cadwyn"
+    "github.com/astronomer/epoch/epoch"
     "github.com/gin-gonic/gin"
 )
 
@@ -39,16 +39,16 @@ type User struct {
 
 func main() {
     // Define version migration
-    v1, _ := cadwyn.NewSemverVersion("1.0.0")
-    v2, _ := cadwyn.NewSemverVersion("2.0.0")
+    v1, _ := epoch.NewSemverVersion("1.0.0")
+    v2, _ := epoch.NewSemverVersion("2.0.0")
     
-    migration := cadwyn.NewVersionChange(
+    migration := epoch.NewVersionChange(
         "Add email to User",
         v1, v2,
         // Forward: v1 request → v2 (add email)
-        &cadwyn.AlterRequestInstruction{
+        &epoch.AlterRequestInstruction{
             Schemas: []interface{}{User{}},
-            Transformer: func(req *cadwyn.RequestInfo) error {
+            Transformer: func(req *epoch.RequestInfo) error {
                 if user, ok := req.Body.(map[string]interface{}); ok {
                     if _, hasEmail := user["email"]; !hasEmail {
                         user["email"] = "user@example.com"
@@ -58,9 +58,9 @@ func main() {
             },
         },
         // Backward: v2 response → v1 (remove email)
-        &cadwyn.AlterResponseInstruction{
+        &epoch.AlterResponseInstruction{
             Schemas: []interface{}{User{}},
-            Transformer: func(resp *cadwyn.ResponseInfo) error {
+            Transformer: func(resp *epoch.ResponseInfo) error {
                 if user, ok := resp.Body.(map[string]interface{}); ok {
                     delete(user, "email")
                 }
@@ -69,8 +69,8 @@ func main() {
         },
     )
 
-    // Setup Cadwyn
-    cadwynInstance, _ := cadwyn.NewCadwyn().
+    // Setup Epoch
+    epochInstance, _ := epoch.NewEpoch().
         WithVersions(v1, v2).
         WithHeadVersion().
         WithChanges(migration).
@@ -78,11 +78,11 @@ func main() {
 
     // Add to Gin
     r := gin.Default()
-    r.Use(cadwynInstance.Middleware())
+    r.Use(epochInstance.Middleware())
     
     // Wrap handlers that need versioning
-    r.GET("/users/:id", cadwynInstance.WrapHandler(getUser))
-    r.POST("/users", cadwynInstance.WrapHandler(createUser))
+    r.GET("/users/:id", epochInstance.WrapHandler(getUser))
+    r.POST("/users", epochInstance.WrapHandler(createUser))
     
     r.Run(":8080")
 }
@@ -117,20 +117,20 @@ curl http://localhost:8080/users/1 -H "X-API-Version: 2.0.0"
 
 **Date-based** (recommended for public APIs):
 ```go
-v1, _ := cadwyn.NewDateVersion("2024-01-01")
-v2, _ := cadwyn.NewDateVersion("2024-06-15")
+v1, _ := epoch.NewDateVersion("2024-01-01")
+v2, _ := epoch.NewDateVersion("2024-06-15")
 ```
 
 **Semantic versioning**:
 ```go
-v1, _ := cadwyn.NewSemverVersion("1.0.0")
-v2, _ := cadwyn.NewSemverVersion("2.0.0")
+v1, _ := epoch.NewSemverVersion("1.0.0")
+v2, _ := epoch.NewSemverVersion("2.0.0")
 ```
 
 **String-based**:
 ```go
-v1 := cadwyn.NewStringVersion("alpha")
-v2 := cadwyn.NewStringVersion("beta")
+v1 := epoch.NewStringVersion("alpha")
+v2 := epoch.NewStringVersion("beta")
 ```
 
 ### 2. Version Changes
@@ -138,13 +138,13 @@ v2 := cadwyn.NewStringVersion("beta")
 Define what changed between versions:
 
 ```go
-change := cadwyn.NewVersionChange(
+change := epoch.NewVersionChange(
     "Description of change",
     fromVersion,
     toVersion,
     // Instructions for migration
-    &cadwyn.AlterRequestInstruction{...},
-    &cadwyn.AlterResponseInstruction{...},
+    &epoch.AlterRequestInstruction{...},
+    &epoch.AlterResponseInstruction{...},
 )
 ```
 
@@ -152,9 +152,9 @@ change := cadwyn.NewVersionChange(
 
 **AlterRequestInstruction** - Transform old requests to new format:
 ```go
-&cadwyn.AlterRequestInstruction{
+&epoch.AlterRequestInstruction{
     Schemas: []interface{}{User{}},
-    Transformer: func(req *cadwyn.RequestInfo) error {
+    Transformer: func(req *epoch.RequestInfo) error {
         // Modify req.Body to add missing fields, rename fields, etc.
         return nil
     },
@@ -163,9 +163,9 @@ change := cadwyn.NewVersionChange(
 
 **AlterResponseInstruction** - Transform new responses to old format:
 ```go
-&cadwyn.AlterResponseInstruction{
+&epoch.AlterResponseInstruction{
     Schemas: []interface{}{User{}},
-    Transformer: func(resp *cadwyn.ResponseInfo) error {
+    Transformer: func(resp *epoch.ResponseInfo) error {
         // Modify resp.Body to remove new fields, rename fields, etc.
         return nil
     },
@@ -180,8 +180,8 @@ Cadwyn automatically detects versions from:
 
 Configure the detection method:
 ```go
-cadwyn.NewCadwyn().
-    WithVersionLocation(cadwyn.VersionLocationHeader).  // or Path
+epoch.NewEpoch().
+    WithVersionLocation(epoch.VersionLocationHeader).  // or Path
     WithVersionParameter("X-API-Version").              // Custom header name
     Build()
 ```
@@ -189,7 +189,7 @@ cadwyn.NewCadwyn().
 ## Builder API
 
 ```go
-builder := cadwyn.NewCadwyn()
+builder := epoch.NewEpoch()
 
 // Add versions
 builder.WithVersions(v1, v2, v3)
@@ -201,12 +201,12 @@ builder.WithHeadVersion()                                 // Always latest
 builder.WithChanges(change1, change2, change3)
 
 // Configure version detection
-builder.WithVersionLocation(cadwyn.VersionLocationHeader)
+builder.WithVersionLocation(epoch.VersionLocationHeader)
 builder.WithVersionParameter("X-API-Version")
-builder.WithVersionFormat(cadwyn.VersionFormatDate)
+builder.WithVersionFormat(epoch.VersionFormatDate)
 
 // Build
-cadwynInstance, err := builder.Build()
+epochInstance, err := builder.Build()
 ```
 
 ## Examples
@@ -240,7 +240,7 @@ Demonstrates:
 ## How It Works
 
 1. **You write handlers for the HEAD (latest) version only**
-2. **Cadwyn middleware detects the requested API version** from headers or URL path
+2. **Epoch middleware detects the requested API version** from headers or URL path
 3. **Request migration**: Transforms incoming request from old → new format
 4. **Your handler executes** with the migrated request
 5. **Response migration**: Transforms outgoing response from new → old format
@@ -261,12 +261,12 @@ Create separate `VersionChange` objects for different models/schemas. All migrat
 **✅ Good:**
 ```go
 // Separate changes for different schemas
-userChange := cadwyn.NewVersionChange(
+userChange := epoch.NewVersionChange(
     "Add email to User",
     v1, v2,
-    &cadwyn.AlterResponseInstruction{
+    &epoch.AlterResponseInstruction{
         Schemas: []interface{}{User{}},
-        Transformer: func(resp *cadwyn.ResponseInfo) error {
+        Transformer: func(resp *epoch.ResponseInfo) error {
             // Only transforms User responses
             if userMap, ok := resp.Body.(map[string]interface{}); ok {
                 delete(userMap, "email")
@@ -276,12 +276,12 @@ userChange := cadwyn.NewVersionChange(
     },
 )
 
-productChange := cadwyn.NewVersionChange(
+productChange := epoch.NewVersionChange(
     "Add SKU to Product",
     v1, v2,
-    &cadwyn.AlterResponseInstruction{
+    &epoch.AlterResponseInstruction{
         Schemas: []interface{}{Product{}},
-        Transformer: func(resp *cadwyn.ResponseInfo) error {
+        Transformer: func(resp *epoch.ResponseInfo) error {
             // Only transforms Product responses
             if productMap, ok := resp.Body.(map[string]interface{}); ok {
                 delete(productMap, "sku")
@@ -291,7 +291,7 @@ productChange := cadwyn.NewVersionChange(
     },
 )
 
-cadwyn.NewCadwyn().
+epoch.NewEpoch().
     WithChanges(userChange, productChange).
     Build()
 ```
@@ -299,23 +299,23 @@ cadwyn.NewCadwyn().
 **❌ Avoid:**
 ```go
 // Multiple schemas in one VersionChange - transformers run on ALL responses!
-change := cadwyn.NewVersionChange(
+change := epoch.NewVersionChange(
     "Multiple changes",
     v1, v2,
-    &cadwyn.AlterResponseInstruction{
+    &epoch.AlterResponseInstruction{
         Schemas: []interface{}{User{}},
         Transformer: func(resp) { /* runs on User AND Product */ },
     },
-    &cadwyn.AlterResponseInstruction{
+    &epoch.AlterResponseInstruction{
         Schemas: []interface{}{Product{}},
         Transformer: func(resp) { /* runs on User AND Product */ },
     },
 )
 ```
 
-## Architecture: Middleware vs Router Generation
+## Architecture: Middleware Approach
 
-Cadwyn-Go uses a **middleware approach** instead of Python Cadwyn's router generation:
+Epoch uses a **middleware approach** for Go API versioning:
 
 **Go (Middleware)**:
 - Single router with runtime transformation
@@ -323,21 +323,16 @@ Cadwyn-Go uses a **middleware approach** instead of Python Cadwyn's router gener
 - Lower memory footprint
 - Simpler mental model
 
-**Python (Router Generation)**:
-- Generates separate routers per version at startup
-- Fits FastAPI's ASGI architecture
-- Different approach, same versioning semantics
-
-Both achieve **transparent API versioning with automatic migrations** - the implementation just follows each language's idioms.
+The approach achieves **transparent API versioning with automatic migrations** following Go idioms and best practices.
 
 ## Testing
 
 ```bash
 # Run all tests
-go test ./cadwyn/...
+go test ./epoch/...
 
 # Run with coverage
-go test ./cadwyn/... -coverprofile=coverage.out
+go test ./epoch/... -coverprofile=coverage.out
 go tool cover -html=coverage.out
 
 # Verify examples compile
@@ -355,4 +350,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-Inspired by [Python Cadwyn](https://github.com/zmievsa/cadwyn) - bringing Stripe-like API versioning to the Go ecosystem.
+Inspired by Stripe-style API versioning - bringing elegant version management to the Go ecosystem.

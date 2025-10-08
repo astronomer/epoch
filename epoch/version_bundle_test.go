@@ -1,4 +1,4 @@
-package cadwyn
+package epoch
 
 import (
 	. "github.com/onsi/ginkgo/v2"
