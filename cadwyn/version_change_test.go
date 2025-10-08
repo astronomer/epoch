@@ -344,5 +344,169 @@ var _ = Describe("MigrationChain", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("no migration path found"))
 		})
+
+		Context("with multiple changes at the same version level", func() {
+			var multiChain *MigrationChain
+			var userMigrationApplied, productMigrationApplied, orderMigrationApplied bool
+
+			// Define realistic schema types for testing
+			type User struct {
+				ID       int
+				FullName string
+				Email    string
+				Phone    string
+			}
+
+			type Product struct {
+				ID          int
+				Name        string
+				Price       float64
+				Description string
+				Currency    string
+			}
+
+			type Order struct {
+				ID        int
+				UserID    int
+				ProductID int
+				Quantity  int
+				CreatedAt string
+			}
+
+			BeforeEach(func() {
+				userMigrationApplied = false
+				productMigrationApplied = false
+				orderMigrationApplied = false
+
+				// Create multiple changes all from v2 to v3 (like User, Product, Order migrations)
+				// Simulate realistic backward migrations (v3 -> v2)
+
+				// User migration: v3 has "full_name" and "phone", v2 has "name" without phone
+				userChange := NewVersionChange("User v2->v3: Add phone, rename name to full_name", v2, v3,
+					&AlterResponseInstruction{
+						Schemas: []interface{}{User{}},
+						Transformer: func(resp *ResponseInfo) error {
+							if bodyMap, ok := resp.Body.(map[string]interface{}); ok {
+								// Backward migration: v3 -> v2
+								if fullName, exists := bodyMap["full_name"]; exists {
+									bodyMap["name"] = fullName
+									delete(bodyMap, "full_name")
+								}
+								delete(bodyMap, "phone") // v2 doesn't have phone
+								userMigrationApplied = true
+							}
+							return nil
+						},
+					},
+				)
+
+				// Product migration: v3 has "description" and "currency", v2 has "desc" without currency
+				productChange := NewVersionChange("Product v2->v3: Add currency, rename desc to description", v2, v3,
+					&AlterResponseInstruction{
+						Schemas: []interface{}{Product{}},
+						Transformer: func(resp *ResponseInfo) error {
+							if bodyMap, ok := resp.Body.(map[string]interface{}); ok {
+								// Backward migration: v3 -> v2
+								if description, exists := bodyMap["description"]; exists {
+									bodyMap["desc"] = description
+									delete(bodyMap, "description")
+								}
+								delete(bodyMap, "currency") // v2 doesn't have currency
+								productMigrationApplied = true
+							}
+							return nil
+						},
+					},
+				)
+
+				// Order migration: v3 has "created_at", v2 doesn't
+				orderChange := NewVersionChange("Order v2->v3: Add created_at timestamp", v2, v3,
+					&AlterResponseInstruction{
+						Schemas: []interface{}{Order{}},
+						Transformer: func(resp *ResponseInfo) error {
+							if bodyMap, ok := resp.Body.(map[string]interface{}); ok {
+								// Backward migration: v3 -> v2
+								delete(bodyMap, "created_at") // v2 doesn't have created_at
+								orderMigrationApplied = true
+							}
+							return nil
+						},
+					},
+				)
+
+				multiChain = NewMigrationChain([]*VersionChange{userChange, productChange, orderChange})
+			})
+
+			It("should apply ALL changes with the same FromVersion when migrating backward", func() {
+				// Setup response data representing a v3 response with all fields
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				responseData := map[string]interface{}{
+					// User fields (v3)
+					"id":        1,
+					"full_name": "Alice Johnson",
+					"email":     "alice@example.com",
+					"phone":     "+1-555-0100",
+					// Product fields (v3)
+					"product_id":  100,
+					"name":        "Laptop",
+					"price":       999.99,
+					"description": "High-performance laptop",
+					"currency":    "USD",
+					// Order fields (v3)
+					"order_id":   1000,
+					"user_id":    1,
+					"quantity":   2,
+					"created_at": "2024-01-01T00:00:00Z",
+				}
+				responseInfo := NewResponseInfo(c, responseData)
+
+				// Migrate from v3 to v2 - should apply all three v2->v3 changes in reverse
+				err := multiChain.MigrateResponse(ctx, responseInfo, v3, v2, nil, 0)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify ALL three transformations were applied
+				Expect(userMigrationApplied).To(BeTrue(), "User migration should be applied")
+				Expect(productMigrationApplied).To(BeTrue(), "Product migration should be applied")
+				Expect(orderMigrationApplied).To(BeTrue(), "Order migration should be applied")
+
+				// Verify the response body has all v2 transformations
+				bodyMap := responseInfo.Body.(map[string]interface{})
+
+				// User fields: should have "name" instead of "full_name", no "phone"
+				Expect(bodyMap["name"]).To(Equal("Alice Johnson"), "full_name should be renamed to name")
+				Expect(bodyMap).NotTo(HaveKey("full_name"), "full_name should not exist in v2")
+				Expect(bodyMap).NotTo(HaveKey("phone"), "phone should not exist in v2")
+				Expect(bodyMap["email"]).To(Equal("alice@example.com"), "email should remain")
+
+				// Product fields: should have "desc" instead of "description", no "currency"
+				Expect(bodyMap["desc"]).To(Equal("High-performance laptop"), "description should be renamed to desc")
+				Expect(bodyMap).NotTo(HaveKey("description"), "description should not exist in v2")
+				Expect(bodyMap).NotTo(HaveKey("currency"), "currency should not exist in v2")
+				Expect(bodyMap["price"]).To(Equal(999.99), "price should remain")
+
+				// Order fields: should not have "created_at"
+				Expect(bodyMap).NotTo(HaveKey("created_at"), "created_at should not exist in v2")
+				Expect(bodyMap["quantity"]).To(Equal(2), "quantity should remain")
+			})
+
+			It("should collect multiple changes at the same version level via GetMigrationPath", func() {
+				// GetMigrationPath should return all 3 changes when going from v3 to v2
+				path := multiChain.GetMigrationPath(v3, v2)
+				Expect(path).To(HaveLen(3), "should include all changes from v2->v3")
+
+				// Verify all changes are included by checking their descriptions
+				descriptions := []string{}
+				for _, change := range path {
+					descriptions = append(descriptions, change.Description())
+				}
+
+				Expect(descriptions).To(ContainElement("User v2->v3: Add phone, rename name to full_name"),
+					"User migration should be in the path")
+				Expect(descriptions).To(ContainElement("Product v2->v3: Add currency, rename desc to description"),
+					"Product migration should be in the path")
+				Expect(descriptions).To(ContainElement("Order v2->v3: Add created_at timestamp"),
+					"Order migration should be in the path")
+			})
+		})
 	})
 })

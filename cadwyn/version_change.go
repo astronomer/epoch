@@ -271,44 +271,50 @@ func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *Reque
 
 // MigrateResponse applies all changes in reverse for response migration
 func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *ResponseInfo, from, to *Version, responseType reflect.Type, routeID int) error {
-	// Find the ending point in the version chain
-	end := -1
-	for i, change := range mc.changes {
-		if change.ToVersion().Equal(from) || change.ToVersion().IsNewerThan(from) {
-			end = i
+	// If from and to are the same, no migration needed
+	if from.Equal(to) {
+		return nil
+	}
+
+	// First, validate that 'from' version exists in the migration chain
+	foundFromVersion := false
+	for _, change := range mc.changes {
+		if change.ToVersion().Equal(from) || change.FromVersion().Equal(from) {
+			foundFromVersion = true
 			break
 		}
 	}
-
-	if end == -1 {
-		return fmt.Errorf("no migration path found from version %s (available changes: %d)",
-			from.String(), len(mc.changes))
+	if !foundFromVersion {
+		return fmt.Errorf("no migration path found from version %s (version not in migration chain)",
+			from.String())
 	}
 
-	// Apply changes in reverse until we reach the target version
-	for i := end; i >= 0; i-- {
-		change := mc.changes[i]
+	// Collect ALL changes that need to be applied for this migration
+	// When migrating from 'from' (e.g. HEAD/v3) to 'to' (e.g. v2):
+	// - Apply ALL changes where FromVersion==to (e.g. all v2->v3 changes)
+	// - These are applied in reverse (as v3->v2) to step back one version
+	var changesToApply []*VersionChange
 
-		// Stop if we've reached the target version
-		if change.FromVersion().Equal(to) {
-			if err := change.MigrateResponse(ctx, responseInfo, responseType, routeID); err != nil {
-				return fmt.Errorf("reverse migration failed at %s->%s: %w",
-					change.ToVersion().String(), change.FromVersion().String(), err)
-			}
-			break
+	for _, change := range mc.changes {
+		// Apply change if FromVersion matches target AND ToVersion is in our path
+		// This ensures we apply ALL migrations at the target version level
+		if change.FromVersion().Equal(to) &&
+			(change.ToVersion().Equal(from) || change.ToVersion().IsNewerThan(to)) {
+			changesToApply = append(changesToApply, change)
 		}
+	}
 
-		// Stop if this change would take us past the target (going backwards)
-		if change.FromVersion().IsOlderThan(to) {
-			break
-		}
+	// If no changes found, return error
+	if len(changesToApply) == 0 {
+		return fmt.Errorf("no migration path found from version %s to %s",
+			from.String(), to.String())
+	}
 
-		// Apply this change if it's part of the migration path
-		if change.ToVersion().IsNewerThan(to) || change.ToVersion().Equal(to) {
-			if err := change.MigrateResponse(ctx, responseInfo, responseType, routeID); err != nil {
-				return fmt.Errorf("reverse migration failed at %s->%s: %w",
-					change.ToVersion().String(), change.FromVersion().String(), err)
-			}
+	// Apply all collected changes
+	for _, change := range changesToApply {
+		if err := change.MigrateResponse(ctx, responseInfo, responseType, routeID); err != nil {
+			return fmt.Errorf("reverse migration failed at %s->%s: %w",
+				change.ToVersion().String(), change.FromVersion().String(), err)
 		}
 	}
 

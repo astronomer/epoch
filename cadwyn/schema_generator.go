@@ -12,6 +12,7 @@ import (
 	"sync"
 )
 
+// SchemaGenerator is currently WIP and not used in the project.
 // SchemaGenerator generates version-specific Go structs with advanced AST-like capabilities
 type SchemaGenerator struct {
 	versionBundle  *VersionBundle
