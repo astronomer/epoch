@@ -39,7 +39,7 @@ jobs:
             ${{ runner.os }}-go-mod-
       - run: go mod download
       - run: go mod tidy
-      - run: go build -v .
+      - run: go build -v ./...
       - name: Install Ginkgo CLI (optional)
         run: go install github.com/onsi/ginkgo/v2/ginkgo@latest
       - name: Run unit tests
