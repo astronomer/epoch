@@ -31,19 +31,17 @@ type VersionManager struct {
 
 // NewVersionManager creates a new version manager that checks all locations
 // Priority: Header > Path
+// Supports partial version matching (e.g., "v1" matches latest v1.x.x)
 func NewVersionManager(headerName string, possibleVersions []string) *VersionManager {
 	versionMap := make(map[string]bool)
 	for _, v := range possibleVersions {
 		versionMap[v] = true
 	}
 
-	// Create regex to match any of the possible versions
-	escapedVersions := make([]string, len(possibleVersions))
-	for i, v := range possibleVersions {
-		escapedVersions[i] = regexp.QuoteMeta(v)
-	}
-
-	pattern := fmt.Sprintf("/(%s)/", strings.Join(escapedVersions, "|"))
+	// Create regex to match version-like patterns in the path
+	// Matches: /v1/, /v1.0/, /v1.0.0/, /1/, /1.0/, /1.0.0/, /2024-01-01/, /v1.0-beta/, etc.
+	// The pattern captures version strings that start with optional 'v', followed by numbers/dots/hyphens/alphanumeric
+	pattern := `/([vV]?\d+(?:[\.\-]\w+)*)/`
 	regex := regexp.MustCompile(pattern)
 
 	return &VersionManager{
@@ -142,10 +140,14 @@ func (vm *VersionMiddleware) Middleware() gin.HandlerFunc {
 			// Parse the requested version
 			requestedVersion, err = vm.versionBundle.ParseVersion(versionStr)
 			if err != nil {
-				// Try waterfall logic - find closest older version (only for valid version formats)
-				if vm.isValidVersionFormat(versionStr) {
+				// First, try to match as a partial version (e.g., "v1" matches latest v1.x.x)
+				requestedVersion = vm.findLatestMatchingVersion(versionStr)
+
+				// If no partial match, try waterfall logic - find closest older version
+				if requestedVersion == nil && vm.isValidVersionFormat(versionStr) {
 					requestedVersion = vm.findClosestOlderVersion(versionStr)
 				}
+
 				if requestedVersion == nil {
 					hint := fmt.Sprintf("Specify version using '%s' header or include it in the URL path (e.g., /v1/resource)", vm.parameterName)
 					c.JSON(http.StatusBadRequest, gin.H{
@@ -171,6 +173,52 @@ func (vm *VersionMiddleware) Middleware() gin.HandlerFunc {
 		// Continue with the request
 		c.Next()
 	}
+}
+
+// findLatestMatchingVersion finds the latest version matching a partial version string
+// For example, "v1" or "1" matches the latest v1.x.x version
+func (vm *VersionMiddleware) findLatestMatchingVersion(partialVersionStr string) *Version {
+	// Normalize the partial version string (remove 'v' prefix if present)
+	normalized := strings.TrimPrefix(strings.TrimPrefix(partialVersionStr, "v"), "V")
+
+	var latestMatch *Version
+
+	for _, v := range vm.versionBundle.GetVersions() {
+		versionStr := v.String()
+
+		// Try to match the version string with the partial version
+		// For semver: "1" matches "1.0.0", "1.2.3", etc.
+		// For semver: "1.2" matches "1.2.0", "1.2.3", etc.
+		if vm.versionMatchesPartial(versionStr, partialVersionStr, normalized) {
+			// Keep track of the latest matching version
+			if latestMatch == nil || v.IsNewerThan(latestMatch) {
+				latestMatch = v
+			}
+		}
+	}
+
+	return latestMatch
+}
+
+// versionMatchesPartial checks if a full version matches a partial version string
+func (vm *VersionMiddleware) versionMatchesPartial(fullVersion, partialVersion, normalized string) bool {
+	// Normalize the full version
+	normalizedFull := strings.TrimPrefix(strings.TrimPrefix(fullVersion, "v"), "V")
+
+	// Check if it starts with the normalized partial version
+	// For "1" to match "1.0.0", "1.2.3", etc.
+	// For "1.2" to match "1.2.0", "1.2.3", etc.
+	if strings.HasPrefix(normalizedFull, normalized) {
+		// Ensure it's a proper prefix (followed by a dot or end of string)
+		if len(normalizedFull) == len(normalized) {
+			return true
+		}
+		if len(normalizedFull) > len(normalized) && normalizedFull[len(normalized)] == '.' {
+			return true
+		}
+	}
+
+	return false
 }
 
 // findClosestOlderVersion implements waterfall versioning logic

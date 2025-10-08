@@ -808,4 +808,120 @@ var _ = Describe("Middleware", func() {
 			Expect(version).To(Equal("v1.0-beta"))
 		})
 	})
+
+	Describe("Partial Version Matching", func() {
+		var bundle *VersionBundle
+		var chain *MigrationChain
+		var middleware *VersionMiddleware
+		var router *gin.Engine
+
+		BeforeEach(func() {
+			// Setup multiple minor versions
+			v1_0_0, _ := NewSemverVersion("1.0.0")
+			v1_1_0, _ := NewSemverVersion("1.1.0")
+			v1_2_0, _ := NewSemverVersion("1.2.0")
+			v2_0_0, _ := NewSemverVersion("2.0.0")
+			v2_1_0, _ := NewSemverVersion("2.1.0")
+
+			var err error
+			bundle, err = NewVersionBundle([]*Version{v1_0_0, v1_1_0, v1_2_0, v2_0_0, v2_1_0})
+			Expect(err).NotTo(HaveOccurred())
+
+			chain = NewMigrationChain([]*VersionChange{})
+
+			config := MiddlewareConfig{
+				VersionBundle:  bundle,
+				MigrationChain: chain,
+				ParameterName:  "X-API-Version",
+				Format:         VersionFormatSemver,
+			}
+			middleware = NewVersionMiddleware(config)
+
+			router = gin.New()
+			router.Use(middleware.Middleware())
+			router.GET("/api/v1/users", func(c *gin.Context) {
+				version := GetVersionFromContext(c)
+				c.JSON(200, gin.H{"version": version.String()})
+			})
+			router.GET("/api/1/users", func(c *gin.Context) {
+				version := GetVersionFromContext(c)
+				c.JSON(200, gin.H{"version": version.String()})
+			})
+			router.GET("/api/v2/users", func(c *gin.Context) {
+				version := GetVersionFromContext(c)
+				c.JSON(200, gin.H{"version": version.String()})
+			})
+		})
+
+		It("should resolve v1 to latest v1.x version", func() {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/api/v1/users", nil)
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+			var response map[string]interface{}
+			err := json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(response["version"]).To(Equal("1.2.0")) // Latest v1.x
+		})
+
+		It("should resolve 1 to latest 1.x version", func() {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/api/1/users", nil)
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+			var response map[string]interface{}
+			err := json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(response["version"]).To(Equal("1.2.0")) // Latest 1.x
+		})
+
+		It("should resolve v2 to latest v2.x version", func() {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/api/v2/users", nil)
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+			var response map[string]interface{}
+			err := json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(response["version"]).To(Equal("2.1.0")) // Latest v2.x
+		})
+
+		It("should still work with full version in path", func() {
+			router.GET("/api/1.1.0/users", func(c *gin.Context) {
+				version := GetVersionFromContext(c)
+				c.JSON(200, gin.H{"version": version.String()})
+			})
+
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/api/1.1.0/users", nil)
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+			var response map[string]interface{}
+			err := json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(response["version"]).To(Equal("1.1.0")) // Exact match
+		})
+
+		It("should prioritize header over partial path version", func() {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/api/v1/users", nil)
+			req.Header.Set("X-API-Version", "2.0.0")
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+			var response map[string]interface{}
+			err := json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(response["version"]).To(Equal("2.0.0")) // Header takes priority
+		})
+	})
 })
