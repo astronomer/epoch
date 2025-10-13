@@ -56,10 +56,8 @@ func createV1ToV2Change() *epoch.VersionChange {
 		&epoch.AlterRequestInstruction{
 			Schemas: []interface{}{User{}},
 			Transformer: func(req *epoch.RequestInfo) error {
-				if userMap, ok := req.Body.(map[string]interface{}); ok {
-					if _, hasEmail := userMap["email"]; !hasEmail {
-						userMap["email"] = "default@example.com"
-					}
+				if !req.HasField("email") {
+					req.SetField("email", "default@example.com")
 				}
 				return nil
 			},
@@ -68,9 +66,7 @@ func createV1ToV2Change() *epoch.VersionChange {
 		&epoch.AlterResponseInstruction{
 			Schemas: []interface{}{User{}},
 			Transformer: func(resp *epoch.ResponseInfo) error {
-				if userMap, ok := resp.Body.(map[string]interface{}); ok {
-					delete(userMap, "email")
-				}
+				resp.DeleteField("email")
 				return nil
 			},
 		},

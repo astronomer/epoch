@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 
+	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -76,7 +77,8 @@ var _ = Describe("VersionChange", func() {
 
 		BeforeEach(func() {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			requestInfo = NewRequestInfo(c, map[string]interface{}{"name": "test"})
+			bodyNode, _ := sonic.Get([]byte(`{"name":"test"}`))
+			requestInfo = NewRequestInfo(c, &bodyNode)
 		})
 
 		Context("with schema-based instructions", func() {
@@ -143,7 +145,8 @@ var _ = Describe("VersionChange", func() {
 
 		BeforeEach(func() {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			responseInfo = NewResponseInfo(c, map[string]interface{}{"id": 1})
+			bodyNode, _ := sonic.Get([]byte(`{"id":1}`))
+			responseInfo = NewResponseInfo(c, &bodyNode)
 			responseInfo.StatusCode = 200
 		})
 
@@ -386,13 +389,14 @@ var _ = Describe("MigrationChain", func() {
 					&AlterResponseInstruction{
 						Schemas: []interface{}{User{}},
 						Transformer: func(resp *ResponseInfo) error {
-							if bodyMap, ok := resp.Body.(map[string]interface{}); ok {
+							if resp.Body != nil {
 								// Backward migration: v3 -> v2
-								if fullName, exists := bodyMap["full_name"]; exists {
-									bodyMap["name"] = fullName
-									delete(bodyMap, "full_name")
+								if fullNameNode := resp.GetField("full_name"); fullNameNode != nil && fullNameNode.Exists() {
+									fullNameStr, _ := fullNameNode.String()
+									resp.SetField("name", fullNameStr)
+									resp.DeleteField("full_name")
 								}
-								delete(bodyMap, "phone") // v2 doesn't have phone
+								resp.DeleteField("phone") // v2 doesn't have phone
 								userMigrationApplied = true
 							}
 							return nil
@@ -405,13 +409,14 @@ var _ = Describe("MigrationChain", func() {
 					&AlterResponseInstruction{
 						Schemas: []interface{}{Product{}},
 						Transformer: func(resp *ResponseInfo) error {
-							if bodyMap, ok := resp.Body.(map[string]interface{}); ok {
+							if resp.Body != nil {
 								// Backward migration: v3 -> v2
-								if description, exists := bodyMap["description"]; exists {
-									bodyMap["desc"] = description
-									delete(bodyMap, "description")
+								if descriptionNode := resp.GetField("description"); descriptionNode != nil && descriptionNode.Exists() {
+									descriptionStr, _ := descriptionNode.String()
+									resp.SetField("desc", descriptionStr)
+									resp.DeleteField("description")
 								}
-								delete(bodyMap, "currency") // v2 doesn't have currency
+								resp.DeleteField("currency") // v2 doesn't have currency
 								productMigrationApplied = true
 							}
 							return nil
@@ -424,9 +429,9 @@ var _ = Describe("MigrationChain", func() {
 					&AlterResponseInstruction{
 						Schemas: []interface{}{Order{}},
 						Transformer: func(resp *ResponseInfo) error {
-							if bodyMap, ok := resp.Body.(map[string]interface{}); ok {
+							if resp.Body != nil {
 								// Backward migration: v3 -> v2
-								delete(bodyMap, "created_at") // v2 doesn't have created_at
+								resp.DeleteField("created_at") // v2 doesn't have created_at
 								orderMigrationApplied = true
 							}
 							return nil
@@ -440,25 +445,9 @@ var _ = Describe("MigrationChain", func() {
 			It("should apply ALL changes with the same FromVersion when migrating backward", func() {
 				// Setup response data representing a v3 response with all fields
 				c, _ := gin.CreateTestContext(httptest.NewRecorder())
-				responseData := map[string]interface{}{
-					// User fields (v3)
-					"id":        1,
-					"full_name": "Alice Johnson",
-					"email":     "alice@example.com",
-					"phone":     "+1-555-0100",
-					// Product fields (v3)
-					"product_id":  100,
-					"name":        "Laptop",
-					"price":       999.99,
-					"description": "High-performance laptop",
-					"currency":    "USD",
-					// Order fields (v3)
-					"order_id":   1000,
-					"user_id":    1,
-					"quantity":   2,
-					"created_at": "2024-01-01T00:00:00Z",
-				}
-				responseInfo := NewResponseInfo(c, responseData)
+				responseJSON := `{"id":1,"full_name":"Alice Johnson","email":"alice@example.com","phone":"+1-555-0100","product_id":100,"name":"Laptop","price":999.99,"description":"High-performance laptop","currency":"USD","order_id":1000,"user_id":1,"quantity":2,"created_at":"2024-01-01T00:00:00Z"}`
+				responseNode, _ := sonic.Get([]byte(responseJSON))
+				responseInfo := NewResponseInfo(c, &responseNode)
 
 				// Migrate from v3 to v2 - should apply all three v2->v3 changes in reverse
 				err := multiChain.MigrateResponse(ctx, responseInfo, v3, v2, nil, 0)
@@ -470,23 +459,36 @@ var _ = Describe("MigrationChain", func() {
 				Expect(orderMigrationApplied).To(BeTrue(), "Order migration should be applied")
 
 				// Verify the response body has all v2 transformations
-				bodyMap := responseInfo.Body.(map[string]interface{})
-
 				// User fields: should have "name" instead of "full_name", no "phone"
-				Expect(bodyMap["name"]).To(Equal("Alice Johnson"), "full_name should be renamed to name")
-				Expect(bodyMap).NotTo(HaveKey("full_name"), "full_name should not exist in v2")
-				Expect(bodyMap).NotTo(HaveKey("phone"), "phone should not exist in v2")
-				Expect(bodyMap["email"]).To(Equal("alice@example.com"), "email should remain")
+				Expect(responseInfo.HasField("name")).To(BeTrue())
+				nameStr, err := responseInfo.GetFieldString("name")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(nameStr).To(Equal("Alice Johnson"), "full_name should be renamed to name")
+
+				Expect(responseInfo.HasField("full_name")).To(BeFalse(), "full_name should not exist in v2")
+				Expect(responseInfo.HasField("phone")).To(BeFalse(), "phone should not exist in v2")
+
+				Expect(responseInfo.HasField("email")).To(BeTrue())
+				emailStr, err := responseInfo.GetFieldString("email")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(emailStr).To(Equal("alice@example.com"), "email should remain")
 
 				// Product fields: should have "desc" instead of "description", no "currency"
-				Expect(bodyMap["desc"]).To(Equal("High-performance laptop"), "description should be renamed to desc")
-				Expect(bodyMap).NotTo(HaveKey("description"), "description should not exist in v2")
-				Expect(bodyMap).NotTo(HaveKey("currency"), "currency should not exist in v2")
-				Expect(bodyMap["price"]).To(Equal(999.99), "price should remain")
+				Expect(responseInfo.HasField("desc")).To(BeTrue())
+				descStr, err := responseInfo.GetFieldString("desc")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(descStr).To(Equal("High-performance laptop"), "description should be renamed to desc")
+
+				Expect(responseInfo.HasField("description")).To(BeFalse(), "description should not exist in v2")
+				Expect(responseInfo.HasField("currency")).To(BeFalse(), "currency should not exist in v2")
 
 				// Order fields: should not have "created_at"
-				Expect(bodyMap).NotTo(HaveKey("created_at"), "created_at should not exist in v2")
-				Expect(bodyMap["quantity"]).To(Equal(2), "quantity should remain")
+				Expect(responseInfo.HasField("created_at")).To(BeFalse(), "created_at should not exist in v2")
+
+				Expect(responseInfo.HasField("quantity")).To(BeTrue())
+				quantityInt, err := responseInfo.GetFieldInt("quantity")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(quantityInt).To(Equal(int64(2)), "quantity should remain")
 			})
 
 			It("should collect multiple changes at the same version level via GetMigrationPath", func() {

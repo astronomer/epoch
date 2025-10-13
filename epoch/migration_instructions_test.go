@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
+	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,14 +32,28 @@ var _ = Describe("MigrationTypes", func() {
 			c, _ = gin.CreateTestContext(recorder)
 			c.Request = req
 
-			body := map[string]interface{}{"name": "test", "value": 42}
-			requestInfo = NewRequestInfo(c, body)
+			bodyJSON := `{"name":"test","value":42}`
+			bodyNode, _ := sonic.Get([]byte(bodyJSON))
+			requestInfo = NewRequestInfo(c, &bodyNode)
 		})
 
 		Describe("NewRequestInfo", func() {
 			It("should create RequestInfo with all components", func() {
 				Expect(requestInfo).NotTo(BeNil())
-				Expect(requestInfo.Body).To(Equal(map[string]interface{}{"name": "test", "value": 42}))
+				Expect(requestInfo.Body).NotTo(BeNil())
+				// Check body has expected fields using helper methods
+				Expect(requestInfo.HasField("name")).To(BeTrue())
+				Expect(requestInfo.HasField("value")).To(BeTrue())
+
+				// Get field values using convenience helper methods
+				nameVal, err := requestInfo.GetFieldString("name")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(nameVal).To(Equal("test"))
+
+				valueVal, err := requestInfo.GetFieldInt("value")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(valueVal).To(Equal(int64(42)))
+
 				Expect(requestInfo.GinContext).To(Equal(c))
 			})
 
@@ -93,14 +108,28 @@ var _ = Describe("MigrationTypes", func() {
 			c.Header("Content-Type", "application/json")
 			c.Header("X-Custom-Header", "custom-value")
 
-			body := map[string]interface{}{"id": 1, "name": "test"}
-			responseInfo = NewResponseInfo(c, body)
+			bodyJSON := `{"id":1,"name":"test"}`
+			bodyNode, _ := sonic.Get([]byte(bodyJSON))
+			responseInfo = NewResponseInfo(c, &bodyNode)
 		})
 
 		Describe("NewResponseInfo", func() {
 			It("should create ResponseInfo with all components", func() {
 				Expect(responseInfo).NotTo(BeNil())
-				Expect(responseInfo.Body).To(Equal(map[string]interface{}{"id": 1, "name": "test"}))
+				Expect(responseInfo.Body).NotTo(BeNil())
+				// Check body has expected fields using helper methods
+				Expect(responseInfo.HasField("id")).To(BeTrue())
+				Expect(responseInfo.HasField("name")).To(BeTrue())
+
+				// Get field values using convenience helper methods
+				idVal, err := responseInfo.GetFieldInt("id")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(idVal).To(Equal(int64(1)))
+
+				nameVal, err := responseInfo.GetFieldString("name")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(nameVal).To(Equal("test"))
+
 				Expect(responseInfo.GinContext).To(Equal(c))
 			})
 

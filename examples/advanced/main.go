@@ -6,24 +6,25 @@ import (
 	"time"
 
 	"github.com/astronomer/epoch/epoch"
+	"github.com/bytedance/sonic/ast"
 	"github.com/gin-gonic/gin"
 )
 
 // User model evolution:
-// 2023-01-01: ID, Name
-// 2023-06-01: Added Email, Added Status (only "active" and "inactive")
+// 2025-01-01: ID, Name
+// 2025-06-01: Added Email, Added Status (only "active" and "inactive")
 // 2024-01-01: Added Phone, renamed Name -> FullName, Status gains "pending" and "suspended"
 type User struct {
 	ID       int    `json:"id"`
 	FullName string `json:"full_name"`                                        // Was "name" before 2024-01-01
-	Email    string `json:"email"`                                            // Added in 2023-06-01
+	Email    string `json:"email"`                                            // Added in 2025-06-01
 	Phone    string `json:"phone"`                                            // Added in 2024-01-01
-	Status   string `json:"status" enums:"active,inactive,pending,suspended"` // Added in 2023-06-01, expanded in 2024-01-01
+	Status   string `json:"status" enums:"active,inactive,pending,suspended"` // Added in 2025-06-01, expanded in 2024-01-01
 }
 
 // Product model evolution:
-// 2023-01-01: ID, Name, Price
-// 2023-06-01: No changes
+// 2025-01-01: ID, Name, Price
+// 2025-06-01: No changes
 // 2024-01-01: Added Description, Currency
 type Product struct {
 	ID          int     `json:"id"`
@@ -75,8 +76,8 @@ var (
 
 func main() {
 	// Create date-based versions
-	v1, _ := epoch.NewDateVersion("2023-01-01")
-	v2, _ := epoch.NewDateVersion("2023-06-01")
+	v1, _ := epoch.NewDateVersion("2025-01-01")
+	v2, _ := epoch.NewDateVersion("2025-06-01")
 	v3, _ := epoch.NewDateVersion("2024-01-01")
 
 	// Build Epoch instance with ALL types of migrations
@@ -178,8 +179,8 @@ func main() {
 	fmt.Println("  8. Error Response Migrations (MigrateHTTPErrors)")
 	fmt.Println()
 	fmt.Println("📅 API Versions:")
-	fmt.Println("  • 2023-01-01: Initial release (users with id, name)")
-	fmt.Println("  • 2023-06-01: Added email and status to users")
+	fmt.Println("  • 2025-01-01: Initial release (users with id, name)")
+	fmt.Println("  • 2025-06-01: Added email and status to users")
 	fmt.Println("  • 2024-01-01: Added phone, renamed name->full_name, expanded status enum, orders endpoint")
 	fmt.Println("  •       head: Latest (all features)")
 	fmt.Println()
@@ -216,13 +217,11 @@ func createUserV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
 		&epoch.AlterRequestInstruction{
 			Schemas: []interface{}{User{}},
 			Transformer: func(req *epoch.RequestInfo) error {
-				if userMap, ok := req.Body.(map[string]interface{}); ok {
-					if _, hasEmail := userMap["email"]; !hasEmail {
-						userMap["email"] = "unknown@example.com"
-					}
-					if _, hasStatus := userMap["status"]; !hasStatus {
-						userMap["status"] = StatusActive
-					}
+				if !req.HasField("email") {
+					req.SetField("email", "unknown@example.com")
+				}
+				if !req.HasField("status") {
+					req.SetField("status", StatusActive)
 				}
 				return nil
 			},
@@ -231,21 +230,16 @@ func createUserV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
 		&epoch.AlterResponseInstruction{
 			Schemas: []interface{}{User{}},
 			Transformer: func(resp *epoch.ResponseInfo) error {
-				transformUser := func(userMap map[string]interface{}) {
-					delete(userMap, "email")
-					delete(userMap, "status")
-				}
+				// Handle single user object
+				resp.DeleteField("email")
+				resp.DeleteField("status")
 
-				if userMap, ok := resp.Body.(map[string]interface{}); ok {
-					transformUser(userMap)
-				} else if userList, ok := resp.Body.([]interface{}); ok {
-					for _, item := range userList {
-						if userMap, ok := item.(map[string]interface{}); ok {
-							transformUser(userMap)
-						}
-					}
-				}
-				return nil
+				// Handle array of users
+				return resp.TransformArrayField("", func(userNode *ast.Node) error {
+					epoch.DeleteNodeField(userNode, "email")
+					epoch.DeleteNodeField(userNode, "status")
+					return nil
+				})
 			},
 		},
 	)
@@ -261,16 +255,18 @@ func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 		&epoch.AlterRequestInstruction{
 			Schemas: []interface{}{User{}},
 			Transformer: func(req *epoch.RequestInfo) error {
-				if userMap, ok := req.Body.(map[string]interface{}); ok {
-					// Rename name -> full_name
-					if name, hasName := userMap["name"]; hasName {
-						userMap["full_name"] = name
-						delete(userMap, "name")
+				// Rename name -> full_name
+				if req.HasField("name") {
+					nameNode := req.GetField("name")
+					if nameNode != nil {
+						nameStr, _ := nameNode.String()
+						req.SetField("full_name", nameStr)
+						req.DeleteField("name")
 					}
-					// Add phone if missing
-					if _, hasPhone := userMap["phone"]; !hasPhone {
-						userMap["phone"] = ""
-					}
+				}
+				// Add phone if missing
+				if !req.HasField("phone") {
+					req.SetField("phone", "")
 				}
 				return nil
 			},
@@ -279,26 +275,22 @@ func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 		&epoch.AlterResponseInstruction{
 			Schemas: []interface{}{User{}},
 			Transformer: func(resp *epoch.ResponseInfo) error {
-				transformUser := func(userMap map[string]interface{}) {
-					// Rename full_name -> name
-					if fullName, hasFullName := userMap["full_name"]; hasFullName {
-						userMap["name"] = fullName
-						delete(userMap, "full_name")
+				transformUser := func(userNode *ast.Node) error {
+					// Rename full_name -> name using helper function
+					if err := epoch.RenameNodeField(userNode, "full_name", "name"); err != nil {
+						return err
 					}
 					// Remove phone (status stays - it exists in v2)
-					delete(userMap, "phone")
+					return epoch.DeleteNodeField(userNode, "phone")
 				}
 
-				if userMap, ok := resp.Body.(map[string]interface{}); ok {
-					transformUser(userMap)
-				} else if userList, ok := resp.Body.([]interface{}); ok {
-					for _, item := range userList {
-						if userMap, ok := item.(map[string]interface{}); ok {
-							transformUser(userMap)
-						}
-					}
+				// Handle single user
+				if resp.Body != nil {
+					transformUser(resp.Body)
 				}
-				return nil
+
+				// Handle array of users
+				return resp.TransformArrayField("", transformUser)
 			},
 		},
 	)
@@ -314,13 +306,11 @@ func createProductV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange 
 		&epoch.AlterRequestInstruction{
 			Schemas: []interface{}{Product{}},
 			Transformer: func(req *epoch.RequestInfo) error {
-				if productMap, ok := req.Body.(map[string]interface{}); ok {
-					if _, hasDesc := productMap["description"]; !hasDesc {
-						productMap["description"] = ""
-					}
-					if _, hasCurrency := productMap["currency"]; !hasCurrency {
-						productMap["currency"] = "USD"
-					}
+				if !req.HasField("description") {
+					req.SetField("description", "")
+				}
+				if !req.HasField("currency") {
+					req.SetField("currency", "USD")
 				}
 				return nil
 			},
@@ -329,21 +319,19 @@ func createProductV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange 
 		&epoch.AlterResponseInstruction{
 			Schemas: []interface{}{Product{}},
 			Transformer: func(resp *epoch.ResponseInfo) error {
-				transformProduct := func(productMap map[string]interface{}) {
-					delete(productMap, "description")
-					delete(productMap, "currency")
+				transformProduct := func(productNode *ast.Node) error {
+					productNode.Unset("description")
+					productNode.Unset("currency")
+					return nil
 				}
 
-				if productMap, ok := resp.Body.(map[string]interface{}); ok {
-					transformProduct(productMap)
-				} else if productList, ok := resp.Body.([]interface{}); ok {
-					for _, item := range productList {
-						if productMap, ok := item.(map[string]interface{}); ok {
-							transformProduct(productMap)
-						}
-					}
+				// Handle single product
+				if resp.Body != nil {
+					transformProduct(resp.Body)
 				}
-				return nil
+
+				// Handle array of products
+				return resp.TransformArrayField("", transformProduct)
 			},
 		},
 	)
@@ -365,15 +353,17 @@ func createPathBasedOrderMigration(from, to *epoch.Version) *epoch.VersionChange
 			Methods: []string{"POST"},
 			Transformer: func(req *epoch.RequestInfo) error {
 				// Add created_at timestamp to all order creation requests
-				if orderMap, ok := req.Body.(map[string]interface{}); ok {
-					if _, hasCreatedAt := orderMap["created_at"]; !hasCreatedAt {
-						orderMap["created_at"] = time.Now().Format(time.RFC3339)
-					}
-					// Calculate total if not provided
-					if _, hasTotal := orderMap["total"]; !hasTotal {
-						if quantity, ok := orderMap["quantity"].(float64); ok {
+				if !req.HasField("created_at") {
+					req.SetField("created_at", time.Now().Format(time.RFC3339))
+				}
+				// Calculate total if not provided
+				if !req.HasField("total") {
+					quantityNode := req.GetField("quantity")
+					if quantityNode != nil {
+						quantity, err := quantityNode.Float64()
+						if err == nil {
 							// In a real app, you'd look up the product price
-							orderMap["total"] = quantity * 99.99
+							req.SetField("total", quantity*99.99)
 						}
 					}
 				}
@@ -386,15 +376,11 @@ func createPathBasedOrderMigration(from, to *epoch.Version) *epoch.VersionChange
 			Methods: []string{"GET"},
 			Transformer: func(resp *epoch.ResponseInfo) error {
 				// For older versions, simplify order responses
-				if orderList, ok := resp.Body.([]interface{}); ok {
-					for _, item := range orderList {
-						if orderMap, ok := item.(map[string]interface{}); ok {
-							// Remove created_at for older versions
-							delete(orderMap, "created_at")
-						}
-					}
-				}
-				return nil
+				return resp.TransformArrayField("", func(orderNode *ast.Node) error {
+					// Remove created_at for older versions
+					orderNode.Unset("created_at")
+					return nil
+				})
 			},
 			MigrateHTTPErrors: false, // Don't migrate errors for this path
 		},
@@ -426,31 +412,29 @@ func createEnumMigration(from, to *epoch.Version) *epoch.VersionChange {
 		&epoch.AlterResponseInstruction{
 			Schemas: []interface{}{User{}},
 			Transformer: func(resp *epoch.ResponseInfo) error {
-				normalizeStatus := func(userMap map[string]interface{}) {
-					if status, hasStatus := userMap["status"]; hasStatus {
-						// Map new statuses to old ones for backward compatibility
-						statusStr, ok := status.(string)
-						if !ok {
-							return
-						}
-						switch statusStr {
-						case "pending", "suspended":
-							// Map to "inactive" for older versions
-							userMap["status"] = "inactive"
+				normalizeStatus := func(userNode *ast.Node) error {
+					statusNode := userNode.Get("status")
+					if statusNode != nil && statusNode.Exists() {
+						statusStr, err := statusNode.String()
+						if err == nil {
+							// Map new statuses to old ones for backward compatibility
+							switch statusStr {
+							case "pending", "suspended":
+								// Map to "inactive" for older versions
+								epoch.SetNodeField(userNode, "status", "inactive")
+							}
 						}
 					}
+					return nil
 				}
 
-				if userMap, ok := resp.Body.(map[string]interface{}); ok {
-					normalizeStatus(userMap)
-				} else if userList, ok := resp.Body.([]interface{}); ok {
-					for _, item := range userList {
-						if userMap, ok := item.(map[string]interface{}); ok {
-							normalizeStatus(userMap)
-						}
-					}
+				// Handle single user
+				if resp.Body != nil {
+					normalizeStatus(resp.Body)
 				}
-				return nil
+
+				// Handle array of users
+				return resp.TransformArrayField("", normalizeStatus)
 			},
 		},
 	)
@@ -479,7 +463,7 @@ func createSchemaMigration(from, to *epoch.Version) *epoch.VersionChange {
 				},
 				"status": map[string]interface{}{
 					"type":        "string",
-					"added_in":    "2023-06-01",
+					"added_in":    "2025-06-01",
 					"description": "User status enum",
 					"enums":       "active,inactive,pending,suspended",
 					"note":        "Field added in v2 with active/inactive; pending/suspended added in v3",
@@ -536,16 +520,18 @@ func createErrorMigration(from, to *epoch.Version) *epoch.VersionChange {
 			MigrateHTTPErrors: true, // This will also transform error responses!
 			Transformer: func(resp *epoch.ResponseInfo) error {
 				// v2+ has structured error format, v1 has simple error format
-				if resp.StatusCode >= 400 {
-					if bodyMap, ok := resp.Body.(map[string]interface{}); ok {
-						// Convert v2 structured error to v1 simple error
-						if errMsg, hasError := bodyMap["error"]; hasError {
-							if errDetails, ok := errMsg.(map[string]interface{}); ok {
-								// v2 has {error: {message: "...", code: "..."}}
-								// v1 has {error: "..."}
-								if msg, hasMsg := errDetails["message"]; hasMsg {
-									bodyMap["error"] = msg
-								}
+				if resp.StatusCode >= 400 && resp.Body != nil {
+					// Convert v2 structured error to v1 simple error
+					errorNode := resp.Body.Get("error")
+					if errorNode != nil && errorNode.Exists() {
+						// Check if error is an object (v2 structured format)
+						if errorNode.TypeSafe() == ast.V_OBJECT {
+							// v2 has {error: {message: "...", code: "..."}}
+							// v1 has {error: "..."}
+							messageNode := errorNode.Get("message")
+							if messageNode != nil && messageNode.Exists() {
+								messageStr, _ := messageNode.String()
+								resp.SetField("error", messageStr)
 							}
 						}
 					}
@@ -775,14 +761,14 @@ func corsMiddleware() gin.HandlerFunc {
 # 1. SCHEMA-BASED MIGRATIONS
 # ========================================
 
-# Get user with v1 (2023-01-01) - no email, phone, or status
+# Get user with v1 (2025-01-01) - no email, phone, or status
 curl http://localhost:8080/users/1 \
-  -H "X-API-Version: 2023-01-01"
+  -H "X-API-Version: 2025-01-01"
 # Response: {"id":1,"name":"Alice Johnson"}
 
-# Get user with v2 (2023-06-01) - has email and status, no phone
+# Get user with v2 (2025-06-01) - has email and status, no phone
 curl http://localhost:8080/users/1 \
-  -H "X-API-Version: 2023-06-01"
+  -H "X-API-Version: 2025-06-01"
 # Response: {"id":1,"name":"Alice Johnson","email":"alice@example.com","status":"active"}
 
 # Get user with v3 (2024-01-01) - has email, phone, full_name, and all status values
@@ -803,7 +789,7 @@ curl -X POST http://localhost:8080/orders \
 
 # List orders with v2 (should have all fields - path migrations need route binding)
 curl http://localhost:8080/orders \
-  -H "X-API-Version: 2023-06-01"
+  -H "X-API-Version: 2025-06-01"
 # Note: Path-based migrations require route binding via BindRouteToRequestMigrations/BindRouteToResponseMigrations
 # This example shows the structure; implement route binding in production for path-specific transformations
 # Schema-based migrations work globally; path-based migrations need explicit route registration
@@ -820,7 +806,7 @@ curl -X POST http://localhost:8080/users \
 
 # Get that user with v2 - status "pending" should be mapped to "inactive" by enum migration
 curl http://localhost:8080/users/3 \
-  -H "X-API-Version: 2023-06-01"
+  -H "X-API-Version: 2025-06-01"
 # Response: {"id":3,"name":"Charlie","email":"charlie@example.com","status":"inactive"}
 
 # ========================================
@@ -829,12 +815,12 @@ curl http://localhost:8080/users/3 \
 
 # Get error with v2 (structured error format)
 curl http://localhost:8080/error \
-  -H "X-API-Version: 2023-06-01"
+  -H "X-API-Version: 2025-06-01"
 # Response: {"error":{"message":"This is a test error","code":"TEST_ERROR"}}
 
 # Get error with v1 (simple error format - MigrateHTTPErrors in action!)
 curl http://localhost:8080/error \
-  -H "X-API-Version: 2023-01-01"
+  -H "X-API-Version: 2025-01-01"
 # Response: {"error":"This is a test error"}
 
 # ========================================
@@ -843,7 +829,7 @@ curl http://localhost:8080/error \
 
 # Try accessing /orders with v2 (endpoint didn't exist)
 curl http://localhost:8080/orders \
-  -H "X-API-Version: 2023-06-01"
+  -H "X-API-Version: 2025-06-01"
 # Works! Endpoint instruction documents it, but middleware allows access
 
 # ========================================
@@ -852,7 +838,7 @@ curl http://localhost:8080/orders \
 
 # Create user with v1 format, auto-adds email/phone/status
 curl -X POST http://localhost:8080/users \
-  -H "X-API-Version: 2023-01-01" \
+  -H "X-API-Version: 2025-01-01" \
   -H "Content-Type: application/json" \
   -d '{"name":"Diana Prince"}'
 
