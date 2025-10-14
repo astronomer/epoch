@@ -2,13 +2,14 @@ package epoch
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
 	"strings"
 
+	"github.com/bytedance/sonic"
+	"github.com/bytedance/sonic/ast"
 	"github.com/gin-gonic/gin"
 )
 
@@ -384,16 +385,22 @@ func (vah *VersionAwareHandler) migrateRequest(c *gin.Context, fromVersion *Vers
 		return nil
 	}
 
-	// Parse JSON body
-	var bodyData interface{}
-	if err := json.Unmarshal(bodyBytes, &bodyData); err != nil {
+	// Parse JSON body with Sonic to preserve field order
+	bodyNode, err := sonic.Get(bodyBytes)
+	if err != nil {
 		// If JSON parsing fails, restore original body and let handler deal with it
 		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		return nil
 	}
 
+	// Load the node to parse the entire structure
+	if err := bodyNode.Load(); err != nil {
+		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		return nil
+	}
+
 	// Create RequestInfo for migration
-	requestInfo := NewRequestInfo(c, bodyData)
+	requestInfo := NewRequestInfo(c, &bodyNode)
 
 	// Find migration chain from requested version to head
 	headVersion := vah.versionBundle.GetHeadVersion()
@@ -411,32 +418,44 @@ func (vah *VersionAwareHandler) migrateRequest(c *gin.Context, fromVersion *Vers
 	// Update the request context with migrated data
 	c.Set("migratedRequestBody", requestInfo.Body)
 
-	// Marshal the migrated body and restore it for the handler to read
-	migratedBytes, err := json.Marshal(requestInfo.Body)
+	// Marshal the migrated body using Sonic's Raw() to preserve field order
+	migratedJSON, err := requestInfo.Body.Raw()
 	if err != nil {
-		return fmt.Errorf("failed to marshal migrated request: %w", err)
+		return fmt.Errorf("failed to get raw JSON from migrated request: %w", err)
 	}
-	c.Request.Body = io.NopCloser(bytes.NewReader(migratedBytes))
+	c.Request.Body = io.NopCloser(bytes.NewReader([]byte(migratedJSON)))
 
 	return nil
 }
 
 // migrateResponse migrates response data from head version back to requested version
 func (vah *VersionAwareHandler) migrateResponse(c *gin.Context, toVersion *Version, responseCapture *ResponseCapture) error {
-	// Parse captured response body using the bytes from responseCapture
-	var responseData interface{}
+	// Parse captured response body with Sonic to preserve field order
+	var responseNode *ast.Node
 	if len(responseCapture.body) > 0 {
-		if err := json.Unmarshal(responseCapture.body, &responseData); err != nil {
+		node, err := sonic.Get(responseCapture.body)
+		if err != nil {
 			// If JSON parsing fails, write original response
 			c.Writer = responseCapture.ResponseWriter
 			c.Writer.WriteHeader(responseCapture.statusCode)
 			_, _ = c.Writer.Write(responseCapture.body)
 			return nil
 		}
+
+		// IMPORTANT: sonic.Get() returns a search node that needs to be loaded
+		// We need to call Load() to actually parse the entire structure
+		if err := node.Load(); err != nil {
+			c.Writer = responseCapture.ResponseWriter
+			c.Writer.WriteHeader(responseCapture.statusCode)
+			_, _ = c.Writer.Write(responseCapture.body)
+			return nil
+		}
+
+		responseNode = &node
 	}
 
 	// Create ResponseInfo for migration
-	responseInfo := NewResponseInfo(c, responseData)
+	responseInfo := NewResponseInfo(c, responseNode)
 	responseInfo.StatusCode = responseCapture.statusCode
 
 	// Find migration chain from head version back to requested version
@@ -453,11 +472,16 @@ func (vah *VersionAwareHandler) migrateResponse(c *gin.Context, toVersion *Versi
 		}
 	}
 
-	// Write the migrated response
+	// Write the migrated response with preserved field order
 	c.Writer = responseCapture.ResponseWriter
 
 	if responseInfo.Body != nil {
-		c.JSON(responseInfo.StatusCode, responseInfo.Body)
+		// Use Sonic's Raw() to preserve field order
+		migratedJSON, err := responseInfo.Body.Raw()
+		if err != nil {
+			return fmt.Errorf("failed to get raw JSON from migrated response: %w", err)
+		}
+		c.Data(responseInfo.StatusCode, "application/json", []byte(migratedJSON))
 	} else {
 		c.Writer.WriteHeader(responseInfo.StatusCode)
 	}

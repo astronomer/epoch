@@ -42,18 +42,18 @@ make coverage
 
 ```
 epoch/
-├── version_test.go              # Version creation and comparison
-├── version_bundle_test.go       # Version bundle management
-├── epoch_test.go                # Main API and builder pattern
-├── middleware_test.go           # Version detection middleware
-├── version_change_test.go       # Migration logic
-├── migration_types_test.go      # Request/response migration
-├── schema_generator_test.go     # AST and schema generation
-├── router_test.go               # Versioned routing
-├── route_generator_test.go      # Route transformation
-├── gin_application_test.go      # Application setup
-├── epoch_suite_test.go          # Test suite configuration
-└── ginkgo.config                # Ginkgo configuration
+├── version_test.go               # Version creation and comparison
+├── version_bundle_test.go        # Version bundle management
+├── epoch_test.go                 # Main API and builder pattern
+├── middleware_test.go            # Version detection middleware
+├── version_change_test.go        # Migration logic
+├── request_response_info_test.go # Request/response helper methods
+├── ast_helpers_test.go           # AST helper functions and edge cases
+├── migration_instructions_test.go # Migration instruction types
+├── schema_generator_test.go      # AST and schema generation
+├── integration_test.go           # End-to-end integration and order preservation
+├── epoch_suite_test.go           # Test suite configuration
+└── ginkgo.config                 # Ginkgo configuration
 ```
 
 ## 🎯 Test Categories
@@ -61,20 +61,23 @@ epoch/
 ### Unit Tests
 - **Version Management**: Creation, parsing, comparison of different version types
 - **Builder Pattern**: Fluent API construction and validation
+- **AST Helper Functions**: Field manipulation, type checking, and error handling
+- **Request/Response Info**: Convenience methods for JSON data access
+- **Migration Instructions**: Transformation logic and instruction types
 - **Schema Generation**: AST parsing and Go code generation
-- **Type Registry**: Type introspection and metadata management
 
 ### Integration Tests
 - **Middleware Integration**: Version detection and context handling
-- **Request/Response Migration**: Automatic data transformation
-- **Route Management**: Versioned routing and handler wrapping
-- **Application Setup**: Full application configuration and startup
+- **Request/Response Migration**: Automatic data transformation with Sonic AST
+- **JSON Field Order Preservation**: Verification that Sonic maintains field order
+- **End-to-End Workflows**: Complete API versioning scenarios
+- **Error Response Handling**: Migration behavior with HTTP errors
 
-### HTTP Tests
-- **Gin Middleware**: HTTP request/response handling
-- **Version Detection**: Header, query, and path-based version extraction
-- **Handler Wrapping**: Version-aware request processing
-- **Utility Endpoints**: Health checks, version info, documentation
+### Performance & Edge Case Tests
+- **Sonic vs Standard JSON**: Order preservation comparison tests
+- **Complex Nested Structures**: Deep object and array handling
+- **Edge Cases**: Null values, empty objects, type conversion errors
+- **Memory & Performance**: Large JSON structures and concurrent access
 
 ## 🔧 Make Targets
 
@@ -162,19 +165,65 @@ var _ = Describe("ComponentName", func() {
 })
 ```
 
-### Best Practices
+### Testing Migration Transformers
 
-1. **Descriptive Test Names**: Use clear, behavior-focused descriptions
-2. **Proper Setup/Teardown**: Use `BeforeEach` and `AfterEach` appropriately
-3. **Context Grouping**: Group related test cases with `Context`
-4. **Error Testing**: Always test both success and failure scenarios
-5. **Isolation**: Each test should be independent and not rely on others
+When writing tests for migration transformers, use the helper methods:
+
+```go
+It("should transform user data correctly", func() {
+    // Create test data using Sonic
+    userJSON := `{"name": "John", "age": 30}`
+    userNode, err := sonic.Get([]byte(userJSON))
+    Expect(err).NotTo(HaveOccurred())
+    err = userNode.Load()
+    Expect(err).NotTo(HaveOccurred())
+    
+    requestInfo := epoch.NewRequestInfo(c, &userNode)
+    
+    // Test transformation
+    err = transformer(requestInfo)
+    Expect(err).NotTo(HaveOccurred())
+    
+    // Verify results using helper methods
+    Expect(requestInfo.HasField("email")).To(BeTrue())
+    email, err := requestInfo.GetFieldString("email")
+    Expect(err).NotTo(HaveOccurred())
+    Expect(email).To(Equal("default@example.com"))
+})
+```
+
+### Testing Field Order Preservation
+
+```go
+It("should preserve field order in responses", func() {
+    // Test with non-alphabetical order
+    originalJSON := `{"zebra": 1, "alpha": 2, "middle": 3}`
+    
+    // Process through Epoch middleware
+    // ... (setup middleware and make request)
+    
+    responseBody := recorder.Body.String()
+    
+    // Verify order is preserved
+    zebraPos := strings.Index(responseBody, `"zebra"`)
+    alphaPos := strings.Index(responseBody, `"alpha"`)
+    Expect(zebraPos).To(BeNumerically("<", alphaPos))
+})
+```
 
 ## 📊 Coverage Goals
 
 - **Target**: 80%+ overall coverage
-- **Critical Paths**: 90%+ coverage for core functionality
+- **Critical Paths**: 90%+ coverage for core functionality  
 - **New Features**: 100% coverage required for new code
+- **Current Status**: 282 tests covering all major functionality
+
+### Test Statistics
+- **Total Test Files**: 9 focused test suites
+- **Unit Tests**: ~190 tests covering individual components
+- **Integration Tests**: ~90 tests covering end-to-end scenarios
+- **Edge Case Tests**: Comprehensive error handling and boundary conditions
+- **Order Preservation Tests**: Sonic AST functionality validation
 
 ## 🚀 Local Development
 

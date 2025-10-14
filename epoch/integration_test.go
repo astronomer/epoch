@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 
+	"github.com/bytedance/sonic"
+	"github.com/bytedance/sonic/ast"
 	"github.com/gin-gonic/gin"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -12,8 +15,8 @@ import (
 
 // Test models for integration tests
 // User model evolution (similar to examples/advanced/main.go):
-// 2023-01-01: ID, Name
-// 2023-06-01: Added Email
+// 2025-01-01: ID, Name
+// 2025-06-01: Added Email
 // 2024-01-01: Added Phone, renamed Name -> FullName
 type UserV1 struct {
 	ID   int    `json:"id"`
@@ -34,8 +37,8 @@ type UserV3 struct {
 }
 
 // Product model evolution:
-// 2023-01-01: ID, Name, Price
-// 2023-06-01: No changes
+// 2025-01-01: ID, Name, Price
+// 2025-06-01: No changes
 // 2024-01-01: Added Description, Currency
 type ProductV1 struct {
 	ID    int     `json:"id"`
@@ -59,8 +62,8 @@ var _ = Describe("End-to-End Integration Tests", func() {
 	Describe("Complete API Versioning Flow", func() {
 		It("should handle v1 to v2 migration (add email field)", func() {
 			// Setup date-based versions (similar to examples/advanced)
-			v1, _ := NewDateVersion("2023-01-01")
-			v2, _ := NewDateVersion("2023-06-01")
+			v1, _ := NewDateVersion("2025-01-01")
+			v2, _ := NewDateVersion("2025-06-01")
 
 			// v1 -> v2: Add email field to User
 			change := NewVersionChange(
@@ -71,10 +74,8 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				&AlterRequestInstruction{
 					Schemas: []interface{}{UserV1{}},
 					Transformer: func(req *RequestInfo) error {
-						if userMap, ok := req.Body.(map[string]interface{}); ok {
-							if _, hasEmail := userMap["email"]; !hasEmail {
-								userMap["email"] = "unknown@example.com"
-							}
+						if !req.HasField("email") {
+							req.SetField("email", "unknown@example.com")
 						}
 						return nil
 					},
@@ -83,9 +84,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				&AlterResponseInstruction{
 					Schemas: []interface{}{UserV2{}},
 					Transformer: func(resp *ResponseInfo) error {
-						if userMap, ok := resp.Body.(map[string]interface{}); ok {
-							delete(userMap, "email")
-						}
+						resp.DeleteField("email")
 						return nil
 					},
 				},
@@ -131,7 +130,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			bodyBytes, _ := json.Marshal(reqBody)
 
 			req := httptest.NewRequest("POST", "/users", bytes.NewReader(bodyBytes))
-			req.Header.Set("X-API-Version", "2023-01-01")
+			req.Header.Set("X-API-Version", "2025-01-01")
 			req.Header.Set("Content-Type", "application/json")
 			recorder := httptest.NewRecorder()
 
@@ -151,8 +150,8 @@ var _ = Describe("End-to-End Integration Tests", func() {
 		})
 
 		It("should handle array responses with migrations", func() {
-			v1, _ := NewDateVersion("2023-01-01")
-			v2, _ := NewDateVersion("2023-06-01")
+			v1, _ := NewDateVersion("2025-01-01")
+			v2, _ := NewDateVersion("2025-06-01")
 
 			change := NewVersionChange(
 				"Add email field to User",
@@ -161,15 +160,14 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				&AlterResponseInstruction{
 					Schemas: []interface{}{UserV2{}},
 					Transformer: func(resp *ResponseInfo) error {
-						// Handle array of users
-						if userList, ok := resp.Body.([]interface{}); ok {
-							for _, item := range userList {
-								if userMap, ok := item.(map[string]interface{}); ok {
-									delete(userMap, "email")
-								}
-							}
+						// Handle single user (if body is an object)
+						if resp.Body != nil && resp.Body.TypeSafe() == ast.V_OBJECT {
+							resp.DeleteField("email")
 						}
-						return nil
+						// Handle array of users
+						return resp.TransformArrayField("", func(userNode *ast.Node) error {
+							return DeleteNodeField(userNode, "email")
+						})
 					},
 				},
 			)
@@ -194,7 +192,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			}))
 
 			req := httptest.NewRequest("GET", "/users", nil)
-			req.Header.Set("X-API-Version", "2023-01-01")
+			req.Header.Set("X-API-Version", "2025-01-01")
 			recorder := httptest.NewRecorder()
 
 			router.ServeHTTP(recorder, req)
@@ -217,8 +215,8 @@ var _ = Describe("End-to-End Integration Tests", func() {
 	Describe("Multi-Version Chain Migration", func() {
 		It("should migrate through three versions with field renaming", func() {
 			// Setup three date-based versions
-			v1, _ := NewDateVersion("2023-01-01")
-			v2, _ := NewDateVersion("2023-06-01")
+			v1, _ := NewDateVersion("2025-01-01")
+			v2, _ := NewDateVersion("2025-06-01")
 			v3, _ := NewDateVersion("2024-01-01")
 
 			// Change 1->2: Add email field
@@ -228,10 +226,8 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				&AlterRequestInstruction{
 					Schemas: []interface{}{UserV1{}},
 					Transformer: func(req *RequestInfo) error {
-						if userMap, ok := req.Body.(map[string]interface{}); ok {
-							if _, hasEmail := userMap["email"]; !hasEmail {
-								userMap["email"] = "unknown@example.com"
-							}
+						if !req.HasField("email") {
+							req.SetField("email", "unknown@example.com")
 						}
 						return nil
 					},
@@ -239,9 +235,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				&AlterResponseInstruction{
 					Schemas: []interface{}{UserV2{}},
 					Transformer: func(resp *ResponseInfo) error {
-						if userMap, ok := resp.Body.(map[string]interface{}); ok {
-							delete(userMap, "email")
-						}
+						resp.DeleteField("email")
 						return nil
 					},
 				},
@@ -254,16 +248,18 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				&AlterRequestInstruction{
 					Schemas: []interface{}{UserV2{}},
 					Transformer: func(req *RequestInfo) error {
-						if userMap, ok := req.Body.(map[string]interface{}); ok {
-							// Rename name -> full_name
-							if name, hasName := userMap["name"]; hasName {
-								userMap["full_name"] = name
-								delete(userMap, "name")
+						// Rename name -> full_name
+						if req.HasField("name") {
+							nameNode := req.GetField("name")
+							if nameNode != nil {
+								nameStr, _ := nameNode.String()
+								req.SetField("full_name", nameStr)
+								req.DeleteField("name")
 							}
-							// Add phone if missing
-							if _, hasPhone := userMap["phone"]; !hasPhone {
-								userMap["phone"] = ""
-							}
+						}
+						// Add phone if missing
+						if !req.HasField("phone") {
+							req.SetField("phone", "")
 						}
 						return nil
 					},
@@ -271,15 +267,14 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				&AlterResponseInstruction{
 					Schemas: []interface{}{UserV3{}},
 					Transformer: func(resp *ResponseInfo) error {
-						if userMap, ok := resp.Body.(map[string]interface{}); ok {
-							// Rename full_name -> name
-							if fullName, hasFullName := userMap["full_name"]; hasFullName {
-								userMap["name"] = fullName
-								delete(userMap, "full_name")
-							}
-							// Remove phone
-							delete(userMap, "phone")
+						// Rename full_name -> name
+						if fullNameNode := resp.GetField("full_name"); fullNameNode != nil && fullNameNode.Exists() {
+							fullNameStr, _ := fullNameNode.String()
+							resp.SetField("name", fullNameStr)
+							resp.DeleteField("full_name")
 						}
+						// Remove phone
+						resp.DeleteField("phone")
 						return nil
 					},
 				},
@@ -326,7 +321,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			bodyBytes, _ := json.Marshal(reqBody)
 
 			req := httptest.NewRequest("POST", "/users", bytes.NewReader(bodyBytes))
-			req.Header.Set("X-API-Version", "2023-01-01")
+			req.Header.Set("X-API-Version", "2025-01-01")
 			req.Header.Set("Content-Type", "application/json")
 			recorder := httptest.NewRecorder()
 
@@ -348,8 +343,8 @@ var _ = Describe("End-to-End Integration Tests", func() {
 		})
 
 		It("should handle Product migrations with currency and description", func() {
-			v1, _ := NewDateVersion("2023-01-01")
-			v2, _ := NewDateVersion("2023-06-01")
+			v1, _ := NewDateVersion("2025-01-01")
+			v2, _ := NewDateVersion("2025-06-01")
 			v3, _ := NewDateVersion("2024-01-01")
 
 			// v2 -> v3: Add description and currency to Product
@@ -359,13 +354,11 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				&AlterRequestInstruction{
 					Schemas: []interface{}{ProductV1{}},
 					Transformer: func(req *RequestInfo) error {
-						if productMap, ok := req.Body.(map[string]interface{}); ok {
-							if _, hasDesc := productMap["description"]; !hasDesc {
-								productMap["description"] = ""
-							}
-							if _, hasCurrency := productMap["currency"]; !hasCurrency {
-								productMap["currency"] = "USD"
-							}
+						if !req.HasField("description") {
+							req.SetField("description", "")
+						}
+						if !req.HasField("currency") {
+							req.SetField("currency", "USD")
 						}
 						return nil
 					},
@@ -373,21 +366,19 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				&AlterResponseInstruction{
 					Schemas: []interface{}{ProductV3{}},
 					Transformer: func(resp *ResponseInfo) error {
-						transformProduct := func(productMap map[string]interface{}) {
-							delete(productMap, "description")
-							delete(productMap, "currency")
+						transformProduct := func(productNode *ast.Node) error {
+							productNode.Unset("description")
+							productNode.Unset("currency")
+							return nil
 						}
 
-						if productMap, ok := resp.Body.(map[string]interface{}); ok {
-							transformProduct(productMap)
-						} else if productList, ok := resp.Body.([]interface{}); ok {
-							for _, item := range productList {
-								if productMap, ok := item.(map[string]interface{}); ok {
-									transformProduct(productMap)
-								}
-							}
+						// Handle single product
+						if resp.Body != nil {
+							transformProduct(resp.Body)
 						}
-						return nil
+
+						// Handle array of products
+						return resp.TransformArrayField("", transformProduct)
 					},
 				},
 			)
@@ -431,7 +422,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			bodyBytes, _ := json.Marshal(reqBody)
 
 			req := httptest.NewRequest("POST", "/products", bytes.NewReader(bodyBytes))
-			req.Header.Set("X-API-Version", "2023-06-01")
+			req.Header.Set("X-API-Version", "2025-06-01")
 			req.Header.Set("Content-Type", "application/json")
 			recorder := httptest.NewRecorder()
 
@@ -454,8 +445,8 @@ var _ = Describe("End-to-End Integration Tests", func() {
 
 	Describe("Error Response Handling", func() {
 		It("should not migrate error responses when MigrateHTTPErrors is false", func() {
-			v1, _ := NewDateVersion("2023-01-01")
-			v2, _ := NewDateVersion("2023-06-01")
+			v1, _ := NewDateVersion("2025-01-01")
+			v2, _ := NewDateVersion("2025-06-01")
 
 			change := NewVersionChange(
 				"Transform users",
@@ -465,8 +456,8 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					MigrateHTTPErrors: false, // Don't migrate HTTP errors
 					Transformer: func(resp *ResponseInfo) error {
 						// This should not be called for error responses
-						if userMap, ok := resp.Body.(map[string]interface{}); ok {
-							userMap["migrated"] = true
+						if resp.Body != nil {
+							resp.SetField("migrated", true)
 						}
 						return nil
 					},
@@ -488,7 +479,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			}))
 
 			req := httptest.NewRequest("GET", "/error", nil)
-			req.Header.Set("X-API-Version", "2023-01-01")
+			req.Header.Set("X-API-Version", "2025-01-01")
 			recorder := httptest.NewRecorder()
 
 			router.ServeHTTP(recorder, req)
@@ -505,8 +496,8 @@ var _ = Describe("End-to-End Integration Tests", func() {
 		})
 
 		It("should migrate error responses when MigrateHTTPErrors is true", func() {
-			v1, _ := NewDateVersion("2023-01-01")
-			v2, _ := NewDateVersion("2023-06-01")
+			v1, _ := NewDateVersion("2025-01-01")
+			v2, _ := NewDateVersion("2025-06-01")
 
 			change := NewVersionChange(
 				"Transform all responses",
@@ -515,8 +506,8 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					Schemas:           []interface{}{UserV1{}},
 					MigrateHTTPErrors: true, // Migrate HTTP errors
 					Transformer: func(resp *ResponseInfo) error {
-						if bodyMap, ok := resp.Body.(map[string]interface{}); ok {
-							bodyMap["migrated"] = true
+						if resp.Body != nil {
+							resp.SetField("migrated", true)
 						}
 						return nil
 					},
@@ -538,7 +529,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			}))
 
 			req := httptest.NewRequest("GET", "/error", nil)
-			req.Header.Set("X-API-Version", "2023-01-01")
+			req.Header.Set("X-API-Version", "2025-01-01")
 			recorder := httptest.NewRecorder()
 
 			router.ServeHTTP(recorder, req)
@@ -557,7 +548,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 
 	Describe("Builder Pattern Integration", func() {
 		It("should build complete Cadwyn instance with all features using date versioning", func() {
-			v1, _ := NewDateVersion("2023-01-01")
+			v1, _ := NewDateVersion("2025-01-01")
 			v2, _ := NewDateVersion("2024-01-01")
 
 			change := NewVersionChange("Test change", v1, v2)
@@ -591,7 +582,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(instance).NotTo(BeNil())
 
-			instance2, err2 := QuickStart("2023-01-01", "2024-01-01")
+			instance2, err2 := QuickStart("2025-01-01", "2024-01-01")
 			Expect(err2).NotTo(HaveOccurred())
 			Expect(instance2).NotTo(BeNil())
 
@@ -607,7 +598,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 
 	Describe("Schema Generation Integration", func() {
 		It("should generate struct code for specific version", func() {
-			v1, _ := NewDateVersion("2023-01-01")
+			v1, _ := NewDateVersion("2025-01-01")
 			v2, _ := NewDateVersion("2024-01-01")
 
 			instance, err := NewEpoch().
@@ -618,14 +609,14 @@ var _ = Describe("End-to-End Integration Tests", func() {
 
 			Expect(err).NotTo(HaveOccurred())
 
-			code, err := instance.GenerateStructForVersion(UserV1{}, "2023-01-01")
+			code, err := instance.GenerateStructForVersion(UserV1{}, "2025-01-01")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(code).To(ContainSubstring("UserV1"))
 			Expect(code).To(ContainSubstring("struct"))
 		})
 
 		It("should handle pointer types in schema generation", func() {
-			v1, _ := NewDateVersion("2023-01-01")
+			v1, _ := NewDateVersion("2025-01-01")
 
 			instance, err := NewEpoch().
 				WithVersions(v1).
@@ -636,7 +627,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			user := &UserV1{}
-			code, err := instance.GenerateStructForVersion(user, "2023-01-01")
+			code, err := instance.GenerateStructForVersion(user, "2025-01-01")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(code).NotTo(BeEmpty())
 		})
@@ -645,8 +636,8 @@ var _ = Describe("End-to-End Integration Tests", func() {
 	Describe("Complete Real-World API Scenario", func() {
 		It("should handle full API with multiple endpoints and date-based versions", func() {
 			// Setup date-based versions (similar to examples/advanced)
-			v1, _ := NewDateVersion("2023-01-01")
-			v2, _ := NewDateVersion("2023-06-01")
+			v1, _ := NewDateVersion("2025-01-01")
+			v2, _ := NewDateVersion("2025-06-01")
 			v3, _ := NewDateVersion("2024-01-01")
 
 			// v1 -> v2: Add email to users
@@ -656,16 +647,14 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				&AlterResponseInstruction{
 					Schemas: []interface{}{UserV2{}},
 					Transformer: func(resp *ResponseInfo) error {
-						if userMap, ok := resp.Body.(map[string]interface{}); ok {
-							delete(userMap, "email")
-						} else if userList, ok := resp.Body.([]interface{}); ok {
-							for _, item := range userList {
-								if userMap, ok := item.(map[string]interface{}); ok {
-									delete(userMap, "email")
-								}
-							}
+						// Handle single user (if body is an object)
+						if resp.Body != nil && resp.Body.Type() == ast.V_OBJECT {
+							resp.DeleteField("email")
 						}
-						return nil
+						// Handle array of users
+						return resp.TransformArrayField("", func(userNode *ast.Node) error {
+							return DeleteNodeField(userNode, "email")
+						})
 					},
 				},
 			)
@@ -677,24 +666,22 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				&AlterResponseInstruction{
 					Schemas: []interface{}{UserV3{}},
 					Transformer: func(resp *ResponseInfo) error {
-						transformUser := func(userMap map[string]interface{}) {
-							if fullName, hasFullName := userMap["full_name"]; hasFullName {
-								userMap["name"] = fullName
-								delete(userMap, "full_name")
+						transformUser := func(userNode *ast.Node) error {
+							// Rename full_name -> name using helper function
+							if err := RenameNodeField(userNode, "full_name", "name"); err != nil {
+								return err
 							}
-							delete(userMap, "phone")
+							// Remove phone field using helper function
+							return DeleteNodeField(userNode, "phone")
 						}
 
-						if userMap, ok := resp.Body.(map[string]interface{}); ok {
-							transformUser(userMap)
-						} else if userList, ok := resp.Body.([]interface{}); ok {
-							for _, item := range userList {
-								if userMap, ok := item.(map[string]interface{}); ok {
-									transformUser(userMap)
-								}
-							}
+						// Handle single user (if body is an object)
+						if resp.Body != nil && resp.Body.Type() == ast.V_OBJECT {
+							transformUser(resp.Body)
 						}
-						return nil
+
+						// Handle array of users
+						return resp.TransformArrayField("", transformUser)
 					},
 				},
 			)
@@ -706,21 +693,19 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				&AlterResponseInstruction{
 					Schemas: []interface{}{ProductV3{}},
 					Transformer: func(resp *ResponseInfo) error {
-						transformProduct := func(productMap map[string]interface{}) {
-							delete(productMap, "currency")
-							delete(productMap, "description")
+						transformProduct := func(productNode *ast.Node) error {
+							productNode.Unset("currency")
+							productNode.Unset("description")
+							return nil
 						}
 
-						if productMap, ok := resp.Body.(map[string]interface{}); ok {
-							transformProduct(productMap)
-						} else if productList, ok := resp.Body.([]interface{}); ok {
-							for _, item := range productList {
-								if productMap, ok := item.(map[string]interface{}); ok {
-									transformProduct(productMap)
-								}
-							}
+						// Handle single product
+						if resp.Body != nil {
+							transformProduct(resp.Body)
 						}
-						return nil
+
+						// Handle array of products
+						return resp.TransformArrayField("", transformProduct)
 					},
 				},
 			)
@@ -755,9 +740,9 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				})
 			}))
 
-			// Test users with v1 (2023-01-01) - only id and name
+			// Test users with v1 (2025-01-01) - only id and name
 			req1 := httptest.NewRequest("GET", "/users", nil)
-			req1.Header.Set("X-API-Version", "2023-01-01")
+			req1.Header.Set("X-API-Version", "2025-01-01")
 			rec1 := httptest.NewRecorder()
 			router.ServeHTTP(rec1, req1)
 			Expect(rec1.Code).To(Equal(200))
@@ -769,9 +754,9 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(users1[0]).NotTo(HaveKey("phone"))
 			Expect(users1[0]).NotTo(HaveKey("full_name"))
 
-			// Test users with v2 (2023-06-01) - has name and email, no phone or full_name
+			// Test users with v2 (2025-06-01) - has name and email, no phone or full_name
 			req2 := httptest.NewRequest("GET", "/users", nil)
-			req2.Header.Set("X-API-Version", "2023-06-01")
+			req2.Header.Set("X-API-Version", "2025-06-01")
 			rec2 := httptest.NewRecorder()
 			router.ServeHTTP(rec2, req2)
 			Expect(rec2.Code).To(Equal(200))
@@ -783,9 +768,9 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(users2[0]).NotTo(HaveKey("phone"))
 			Expect(users2[0]).NotTo(HaveKey("full_name"))
 
-			// Test products with v2 (2023-06-01) - no currency/description
+			// Test products with v2 (2025-06-01) - no currency/description
 			req3 := httptest.NewRequest("GET", "/products", nil)
-			req3.Header.Set("X-API-Version", "2023-06-01")
+			req3.Header.Set("X-API-Version", "2025-06-01")
 			rec3 := httptest.NewRecorder()
 			router.ServeHTTP(rec3, req3)
 			Expect(rec3.Code).To(Equal(200))
@@ -809,6 +794,150 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(usersHead[0]).To(HaveKey("full_name"))
 			Expect(usersHead[0]).To(HaveKey("email"))
 			Expect(usersHead[0]).To(HaveKey("phone"))
+		})
+	})
+
+	Describe("JSON Field Order Preservation", func() {
+		It("should preserve field order in API responses", func() {
+			v1, _ := NewDateVersion("2025-01-01")
+			v2, _ := NewDateVersion("2024-01-01")
+
+			// Migration that adds fields - they should appear at the end
+			change := NewVersionChange(
+				"Add fields to response",
+				v1, v2,
+				&AlterResponseInstruction{
+					Schemas: []interface{}{UserV1{}},
+					Transformer: func(resp *ResponseInfo) error {
+						// Remove fields for v1 (going backwards)
+						resp.DeleteField("email")
+						resp.DeleteField("phone")
+						return nil
+					},
+				},
+			)
+
+			instance, err := NewEpoch().
+				WithVersions(v1, v2).
+				WithChanges(change).
+				WithVersionFormat(VersionFormatDate).
+				Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			router := gin.New()
+			router.Use(instance.Middleware())
+
+			// Handler returns v2 format with specific field order
+			router.GET("/user", instance.WrapHandler(func(c *gin.Context) {
+				// Return JSON with non-alphabetical field order
+				c.Data(200, "application/json", []byte(`{"zebra": "first", "alpha": "second", "name": "John", "email": "john@example.com", "phone": "555-1234"}`))
+			}))
+
+			// Test with v1 - should preserve original order of remaining fields
+			req := httptest.NewRequest("GET", "/user", nil)
+			req.Header.Set("X-API-Version", "2025-01-01")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+			responseBody := recorder.Body.String()
+
+			// Verify field order is preserved (zebra comes before alpha)
+			zebraPos := strings.Index(responseBody, `"zebra"`)
+			alphaPos := strings.Index(responseBody, `"alpha"`)
+			namePos := strings.Index(responseBody, `"name"`)
+
+			Expect(zebraPos).To(BeNumerically("<", alphaPos))
+			Expect(alphaPos).To(BeNumerically("<", namePos))
+
+			// Verify removed fields are not present
+			Expect(responseBody).NotTo(ContainSubstring(`"email"`))
+			Expect(responseBody).NotTo(ContainSubstring(`"phone"`))
+		})
+
+		It("should demonstrate Sonic vs standard JSON order preservation", func() {
+			// Test data with intentionally non-alphabetical order
+			testJSON := `{"zebra": 1, "alpha": 2, "middle": 3}`
+
+			// Test with Sonic (should preserve order)
+			sonicNode, err := sonic.Get([]byte(testJSON))
+			Expect(err).NotTo(HaveOccurred())
+			err = sonicNode.Load()
+			Expect(err).NotTo(HaveOccurred())
+
+			sonicResult, err := sonicNode.Raw()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Test with standard JSON (will NOT preserve order)
+			var stdMap map[string]interface{}
+			err = json.Unmarshal([]byte(testJSON), &stdMap)
+			Expect(err).NotTo(HaveOccurred())
+
+			stdResult, err := json.Marshal(stdMap)
+			Expect(err).NotTo(HaveOccurred())
+
+			sonicStr := string(sonicResult)
+			stdStr := string(stdResult)
+
+			// Sonic should preserve original order
+			sonicZebraPos := strings.Index(sonicStr, `"zebra"`)
+			sonicAlphaPos := strings.Index(sonicStr, `"alpha"`)
+			Expect(sonicZebraPos).To(BeNumerically("<", sonicAlphaPos),
+				"Sonic should preserve zebra before alpha")
+
+			// This demonstrates why we use Sonic for order preservation
+			GinkgoWriter.Printf("Original: %s\n", testJSON)
+			GinkgoWriter.Printf("Sonic:    %s\n", sonicStr)
+			GinkgoWriter.Printf("Standard: %s\n", stdStr)
+		})
+
+		It("should preserve order in nested objects and arrays", func() {
+			v1, _ := NewDateVersion("2025-01-01")
+
+			instance, err := NewEpoch().
+				WithVersions(v1).
+				WithVersionFormat(VersionFormatDate).
+				Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			router := gin.New()
+			router.Use(instance.Middleware())
+
+			router.GET("/complex", instance.WrapHandler(func(c *gin.Context) {
+				// Complex nested structure with non-alphabetical order
+				complexJSON := `{
+					"users": [
+						{
+							"z_last_name": "Smith",
+							"a_first_name": "John",
+							"profile": {
+								"zebra_field": "first",
+								"alpha_field": "second"
+							}
+						}
+					],
+					"zebra_metadata": {"version": "1.0"}
+				}`
+				c.Data(200, "application/json", []byte(complexJSON))
+			}))
+
+			req := httptest.NewRequest("GET", "/complex", nil)
+			req.Header.Set("X-API-Version", "2025-01-01")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+			responseBody := recorder.Body.String()
+
+			// Verify nested object field order is preserved
+			zLastNamePos := strings.Index(responseBody, `"z_last_name"`)
+			aFirstNamePos := strings.Index(responseBody, `"a_first_name"`)
+			Expect(zLastNamePos).To(BeNumerically("<", aFirstNamePos))
+
+			// Verify deeply nested field order is preserved
+			zebraFieldPos := strings.Index(responseBody, `"zebra_field"`)
+			alphaFieldPos := strings.Index(responseBody, `"alpha_field"`)
+			Expect(zebraFieldPos).To(BeNumerically("<", alphaFieldPos))
 		})
 	})
 })
