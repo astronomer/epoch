@@ -11,9 +11,11 @@ Epoch lets you version your Go APIs the way Stripe does - write your handlers on
 
 - **Write once** - Implement handlers for your latest API version only
 - **Automatic migrations** - Define transformations between versions declaratively
+- **Field order preservation** - JSON responses maintain original field order
 - **No duplication** - No need to maintain multiple versions of the same endpoint
 - **Flexible versioning** - Support date-based (`2024-01-01`), semantic (`v1.0.0`), or string versions
 - **Gin integration** - Drop into existing Gin applications with minimal changes
+- **High performance** - Utilizes ByteDance Sonic for fast JSON processing
 
 ## Installation
 
@@ -49,10 +51,8 @@ func main() {
         &epoch.AlterRequestInstruction{
             Schemas: []interface{}{User{}},
             Transformer: func(req *epoch.RequestInfo) error {
-                if user, ok := req.Body.(map[string]interface{}); ok {
-                    if _, hasEmail := user["email"]; !hasEmail {
-                        user["email"] = "user@example.com"
-                    }
+                if !req.HasField("email") {
+                    req.SetField("email", "user@example.com")
                 }
                 return nil
             },
@@ -61,9 +61,7 @@ func main() {
         &epoch.AlterResponseInstruction{
             Schemas: []interface{}{User{}},
             Transformer: func(resp *epoch.ResponseInfo) error {
-                if user, ok := resp.Body.(map[string]interface{}); ok {
-                    delete(user, "email")
-                }
+                resp.DeleteField("email")
                 return nil
             },
         },
@@ -155,7 +153,10 @@ change := epoch.NewVersionChange(
 &epoch.AlterRequestInstruction{
     Schemas: []interface{}{User{}},
     Transformer: func(req *epoch.RequestInfo) error {
-        // Modify req.Body to add missing fields, rename fields, etc.
+        // Use helper methods to modify request body
+        if !req.HasField("email") {
+            req.SetField("email", "default@example.com")
+        }
         return nil
     },
 }
@@ -166,13 +167,53 @@ change := epoch.NewVersionChange(
 &epoch.AlterResponseInstruction{
     Schemas: []interface{}{User{}},
     Transformer: func(resp *epoch.ResponseInfo) error {
-        // Modify resp.Body to remove new fields, rename fields, etc.
+        // Use helper methods to modify response body
+        resp.DeleteField("new_field")
         return nil
     },
 }
 ```
 
-### 4. Version Detection
+### 4. Helper Methods
+
+**RequestInfo and ResponseInfo** provide convenient methods for working with JSON data:
+
+```go
+// Field access
+hasEmail := req.HasField("email")
+email, err := req.GetFieldString("email")
+age, err := req.GetFieldInt("age") 
+price, err := req.GetFieldFloat("price")
+
+// Field modification
+req.SetField("email", "new@example.com")
+req.DeleteField("old_field")
+
+// Array transformation
+err := resp.TransformArrayField("users", func(user *ast.Node) error {
+    return epoch.DeleteNodeField(user, "internal_field")
+})
+```
+
+**Global AST Helper Functions** for working with individual nodes:
+
+```go
+// Direct node manipulation (useful in TransformArrayField callbacks)
+epoch.SetNodeField(node, "key", "value")
+epoch.DeleteNodeField(node, "key")
+epoch.RenameNodeField(node, "old_key", "new_key")
+epoch.CopyNodeField(sourceNode, destNode, "key")
+
+// Field access
+value, err := epoch.GetNodeFieldString(node, "key")
+exists := epoch.HasNodeField(node, "key")
+
+// Type checking
+if epoch.IsNodeArray(node) { /* handle array */ }
+if epoch.IsNodeObject(node) { /* handle object */ }
+```
+
+### 5. Version Detection
 
 Epoch automatically detects versions from **all locations** simultaneously:
 - **Headers**: `X-API-Version: 2024-01-01` (checked first, highest priority)
@@ -304,9 +345,7 @@ userChange := epoch.NewVersionChange(
         Schemas: []interface{}{User{}},
         Transformer: func(resp *epoch.ResponseInfo) error {
             // Only transforms User responses
-            if userMap, ok := resp.Body.(map[string]interface{}); ok {
-                delete(userMap, "email")
-            }
+            resp.DeleteField("email")
             return nil
         },
     },
@@ -319,9 +358,7 @@ productChange := epoch.NewVersionChange(
         Schemas: []interface{}{Product{}},
         Transformer: func(resp *epoch.ResponseInfo) error {
             // Only transforms Product responses
-            if productMap, ok := resp.Body.(map[string]interface{}); ok {
-                delete(productMap, "sku")
-            }
+            resp.DeleteField("sku")
             return nil
         },
     },
@@ -360,6 +397,33 @@ Epoch uses a **middleware approach** for Go API versioning:
 - Simpler mental model
 
 The approach achieves **transparent API versioning with automatic migrations** following Go idioms and best practices.
+
+## JSON Field Order Preservation
+
+Epoch preserves the original field order in JSON responses, unlike Go's standard `encoding/json` which sorts fields alphabetically. This is powered by [ByteDance Sonic](https://github.com/bytedance/sonic)'s AST capabilities:
+
+```go
+// Original JSON (from your handler)
+{"zebra": 1, "alpha": 2, "middle": 3}
+
+// Standard Go json.Marshal output (alphabetical)
+{"alpha": 2, "middle": 3, "zebra": 1}
+
+// Epoch with Sonic output (preserves order)
+{"zebra": 1, "alpha": 2, "middle": 3}
+```
+
+**Benefits:**
+- **API consistency** - Field order matches your documentation and examples
+- **Client compatibility** - Existing clients won't see unexpected field reordering
+- **Debugging** - Responses match your handler's JSON structure exactly
+- **Performance** - Sonic provides faster JSON processing than standard library
+
+**How it works:**
+1. Epoch uses Sonic's AST to parse JSON while preserving structure
+2. Migrations operate on the AST nodes directly
+3. Final JSON output maintains original field ordering
+4. New fields are added at the end
 
 ## Testing
 
