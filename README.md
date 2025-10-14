@@ -398,33 +398,6 @@ Epoch uses a **middleware approach** for Go API versioning:
 
 The approach achieves **transparent API versioning with automatic migrations** following Go idioms and best practices.
 
-## JSON Field Order Preservation
-
-Epoch preserves the original field order in JSON responses, unlike Go's standard `encoding/json` which sorts fields alphabetically. This is powered by [ByteDance Sonic](https://github.com/bytedance/sonic)'s AST capabilities:
-
-```go
-// Original JSON (from your handler)
-{"zebra": 1, "alpha": 2, "middle": 3}
-
-// Standard Go json.Marshal output (alphabetical)
-{"alpha": 2, "middle": 3, "zebra": 1}
-
-// Epoch with Sonic output (preserves order)
-{"zebra": 1, "alpha": 2, "middle": 3}
-```
-
-**Benefits:**
-- **API consistency** - Field order matches your documentation and examples
-- **Client compatibility** - Existing clients won't see unexpected field reordering
-- **Debugging** - Responses match your handler's JSON structure exactly
-- **Performance** - Sonic provides faster JSON processing than standard library
-
-**How it works:**
-1. Epoch uses Sonic's AST to parse JSON while preserving structure
-2. Migrations operate on the AST nodes directly
-3. Final JSON output maintains original field ordering
-4. New fields are added at the end
-
 ## Testing
 
 ```bash
