@@ -168,6 +168,12 @@ func (vm *VersionMiddleware) Middleware() gin.HandlerFunc {
 			c.Set(defaultVersionContextKey, true)
 		}
 
+		// Add Epoch metadata to context for user's logging middleware
+		c.Set("epoch.version", requestedVersion.String())
+		c.Set("epoch.is_head", requestedVersion.IsHead)
+		c.Set("epoch.default_used", defaultUsed)
+		c.Set("epoch.parameter_name", vm.parameterName)
+
 		// Add version to response header
 		c.Header(vm.parameterName, requestedVersion.String())
 
@@ -423,6 +429,7 @@ func (vah *VersionAwareHandler) migrateRequest(c *gin.Context, fromVersion *Vers
 	if err != nil {
 		return fmt.Errorf("failed to get raw JSON from migrated request: %w", err)
 	}
+
 	c.Request.Body = io.NopCloser(bytes.NewReader([]byte(migratedJSON)))
 
 	return nil
@@ -481,6 +488,7 @@ func (vah *VersionAwareHandler) migrateResponse(c *gin.Context, toVersion *Versi
 		if err != nil {
 			return fmt.Errorf("failed to get raw JSON from migrated response: %w", err)
 		}
+
 		c.Data(responseInfo.StatusCode, "application/json", []byte(migratedJSON))
 	} else {
 		c.Writer.WriteHeader(responseInfo.StatusCode)

@@ -93,7 +93,7 @@ func (vc *VersionChange) MigrateRequest(ctx context.Context, requestInfo *Reques
 	for _, instructions := range vc.alterRequestBySchemaInstructions {
 		for _, instruction := range instructions {
 			if err := instruction.Transformer(requestInfo); err != nil {
-				return fmt.Errorf("request schema migration failed: %w", err)
+				return fmt.Errorf("request schema migration failed for change '%s': %w", vc.description, err)
 			}
 		}
 	}
@@ -102,7 +102,7 @@ func (vc *VersionChange) MigrateRequest(ctx context.Context, requestInfo *Reques
 	if instructions, exists := vc.routeToRequestMigrationMapping[routeID]; exists {
 		for _, instruction := range instructions {
 			if err := instruction.Transformer(requestInfo); err != nil {
-				return fmt.Errorf("request path migration failed: %w", err)
+				return fmt.Errorf("request path migration failed for change '%s': %w", vc.description, err)
 			}
 		}
 	}
@@ -122,7 +122,7 @@ func (vc *VersionChange) MigrateResponse(ctx context.Context, responseInfo *Resp
 				continue
 			}
 			if err := instruction.Transformer(responseInfo); err != nil {
-				return fmt.Errorf("response schema migration failed: %w", err)
+				return fmt.Errorf("response schema migration failed for change '%s': %w", vc.description, err)
 			}
 		}
 	}
@@ -135,7 +135,7 @@ func (vc *VersionChange) MigrateResponse(ctx context.Context, responseInfo *Resp
 				continue
 			}
 			if err := instruction.Transformer(responseInfo); err != nil {
-				return fmt.Errorf("response path migration failed: %w", err)
+				return fmt.Errorf("response path migration failed for change '%s': %w", vc.description, err)
 			}
 		}
 	}
@@ -235,8 +235,8 @@ func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *Reque
 	}
 
 	if start == -1 {
-		return fmt.Errorf("no migration path found from version %s (available changes: %d)",
-			from.String(), len(mc.changes))
+		return fmt.Errorf("no migration path found from version %s to %s (available changes: %d)",
+			from.String(), to.String(), len(mc.changes))
 	}
 
 	// Apply changes in sequence until we reach the target version
@@ -306,7 +306,7 @@ func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *Res
 
 	// If no changes found, return error
 	if len(changesToApply) == 0 {
-		return fmt.Errorf("no migration path found from version %s to %s",
+		return fmt.Errorf("no migration path found from version %s to %s (no applicable changes found)",
 			from.String(), to.String())
 	}
 

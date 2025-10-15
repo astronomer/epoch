@@ -125,7 +125,7 @@ func (vb *VersionBundle) ParseVersion(versionStr string) (*Version, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("unknown version: %s", versionStr)
+	return nil, fmt.Errorf("unknown version '%s': available versions are %v", versionStr, vb.versionValues)
 }
 
 // GetVersionedSchemas returns a map of versioned schemas
