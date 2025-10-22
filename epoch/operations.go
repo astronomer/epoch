@@ -146,10 +146,11 @@ func (op *FieldRemoveOp) GetFieldMapping() map[string]string {
 // EnumValueMapOp maps enum values
 type EnumValueMapOp struct {
 	Field   string
-	Mapping map[string]string // old value -> new value (for forward migration)
+	Mapping map[string]string // new value -> old value (for backward compatibility)
 }
 
 // ApplyToRequest maps enum values forward (v1 -> v2)
+// If a request contains new enum values that the older version can't handle, map them to old equivalents
 func (op *EnumValueMapOp) ApplyToRequest(node *ast.Node) error {
 	if node == nil {
 		return nil
@@ -166,15 +167,17 @@ func (op *EnumValueMapOp) ApplyToRequest(node *ast.Node) error {
 		return nil // Not a string, skip
 	}
 
-	// Map to new value if mapping exists
-	if newValue, exists := op.Mapping[currentValue]; exists {
-		return SetNodeField(node, op.Field, newValue)
+	// The mapping is newValue -> oldValue
+	// In requests: If we see a new value, normalize it to the old equivalent
+	if oldValue, exists := op.Mapping[currentValue]; exists {
+		return SetNodeField(node, op.Field, oldValue)
 	}
 
 	return nil
 }
 
 // ApplyToResponse maps enum values backward (v2 -> v1)
+// Reverses the mapping for responses
 func (op *EnumValueMapOp) ApplyToResponse(node *ast.Node) error {
 	if node == nil {
 		return nil
@@ -191,15 +194,20 @@ func (op *EnumValueMapOp) ApplyToResponse(node *ast.Node) error {
 		return nil // Not a string, skip
 	}
 
-	// Create reverse mapping
+	// The mapping is newValue -> oldValue
+	// In responses: We do the reverse - if we see an oldValue, map it back to a newValue
+	// Create reverse mapping: oldValue -> newValue
+	// Note: Multiple new values can map to one old value, so we just pick one (non-deterministic)
 	reverseMapping := make(map[string]string)
-	for old, new := range op.Mapping {
-		reverseMapping[new] = old
+	for newVal, oldVal := range op.Mapping {
+		if _, exists := reverseMapping[oldVal]; !exists {
+			reverseMapping[oldVal] = newVal
+		}
 	}
 
-	// Map to old value if mapping exists
-	if oldValue, exists := reverseMapping[currentValue]; exists {
-		return SetNodeField(node, op.Field, oldValue)
+	// If we have an old value, map it to a new value
+	if newValue, exists := reverseMapping[currentValue]; exists {
+		return SetNodeField(node, op.Field, newValue)
 	}
 
 	return nil

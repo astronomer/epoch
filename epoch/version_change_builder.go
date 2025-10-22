@@ -1,7 +1,7 @@
 package epoch
 
 import (
-	"reflect"
+	"strings"
 
 	"github.com/bytedance/sonic/ast"
 )
@@ -11,7 +11,7 @@ type versionChangeBuilder struct {
 	description    string
 	fromVersion    *Version
 	toVersion      *Version
-	schemaOps      map[reflect.Type]*schemaBuilder
+	pathOps        map[string]*pathBuilder
 	customRequest  func(*RequestInfo) error
 	customResponse func(*ResponseInfo) error
 }
@@ -21,7 +21,7 @@ func NewVersionChangeBuilder(fromVersion, toVersion *Version) *versionChangeBuil
 	return &versionChangeBuilder{
 		fromVersion: fromVersion,
 		toVersion:   toVersion,
-		schemaOps:   make(map[reflect.Type]*schemaBuilder),
+		pathOps:     make(map[string]*pathBuilder),
 	}
 }
 
@@ -31,24 +31,21 @@ func (b *versionChangeBuilder) Description(desc string) *versionChangeBuilder {
 	return b
 }
 
-// Schema starts building operations for a specific schema
-func (b *versionChangeBuilder) Schema(schema interface{}) *schemaBuilder {
-	schemaType := reflect.TypeOf(schema)
-
-	// Check if we already have a builder for this schema
-	if sb, exists := b.schemaOps[schemaType]; exists {
-		return sb
-	}
-
-	// Create new schema builder
-	sb := &schemaBuilder{
+// ForPath starts building operations for specific paths (runtime routing)
+// Multiple paths can be specified to apply the same operations to all of them.
+func (b *versionChangeBuilder) ForPath(paths ...string) *pathBuilder {
+	pb := &pathBuilder{
 		parent:     b,
-		schemaType: schemaType,
+		paths:      paths,
 		operations: make([]Operation, 0),
 	}
 
-	b.schemaOps[schemaType] = sb
-	return sb
+	// Store by first path for retrieval
+	if len(paths) > 0 {
+		b.pathOps[paths[0]] = pb
+	}
+
+	return pb
 }
 
 // CustomRequest adds a global custom request transformer
@@ -69,63 +66,72 @@ func (b *versionChangeBuilder) Build() *VersionChange {
 		b.description = "Migration from " + b.fromVersion.String() + " to " + b.toVersion.String()
 	}
 
+	// Validate: require at least one path or custom transformer
+	if len(b.pathOps) == 0 && b.customRequest == nil && b.customResponse == nil {
+		panic("epoch: VersionChange must specify at least one path using ForPath() or custom transformers")
+	}
+
 	var instructions []interface{}
 
-	// Compile schema operations into instructions
-	for schemaType, sb := range b.schemaOps {
-		if len(sb.operations) == 0 {
+	// Compile path-based operations into instructions (RUNTIME ROUTING)
+	for _, pb := range b.pathOps {
+		if len(pb.operations) == 0 {
 			continue
 		}
 
 		// Get field mappings for error transformation
-		fieldMappings := sb.operations.GetFieldMappings()
+		fieldMappings := pb.operations.GetFieldMappings()
 
-		// Create request instruction
-		requestInst := &AlterRequestInstruction{
-			Schemas: []interface{}{reflect.New(schemaType).Elem().Interface()},
-			Transformer: func(req *RequestInfo) error {
-				if req.Body == nil {
-					return nil
-				}
-
-				// Apply operations to request body
-				if err := sb.operations.ApplyToRequest(req.Body); err != nil {
-					return err
-				}
-
-				return nil
-			},
-		}
-		instructions = append(instructions, requestInst)
-
-		// Create response instruction
-		responseInst := &AlterResponseInstruction{
-			Schemas:           []interface{}{reflect.New(schemaType).Elem().Interface()},
-			MigrateHTTPErrors: true,
-			Transformer: func(resp *ResponseInfo) error {
-				// For non-error responses, apply operations
-				if resp.StatusCode < 400 {
-					if resp.Body != nil {
-						if err := sb.operations.ApplyToResponse(resp.Body); err != nil {
-							return err
-						}
+		// Create request instruction for each path
+		for _, path := range pb.paths {
+			requestInst := &AlterRequestInstruction{
+				Path:    path,
+				Methods: []string{}, // Empty means all methods
+				Transformer: func(req *RequestInfo) error {
+					if req.Body == nil {
+						return nil
 					}
 
-					// Handle arrays
-					return resp.TransformArrayField("", func(node *ast.Node) error {
-						return sb.operations.ApplyToResponse(node)
-					})
-				}
+					// Apply operations to request body
+					if err := pb.operations.ApplyToRequest(req.Body); err != nil {
+						return err
+					}
 
-				// For error responses, transform field names
-				if len(fieldMappings) > 0 {
-					return transformErrorFieldNames(resp, fieldMappings)
-				}
+					return nil
+				},
+			}
+			instructions = append(instructions, requestInst)
 
-				return nil
-			},
+			// Create response instruction
+			responseInst := &AlterResponseInstruction{
+				Path:              path,
+				Methods:           []string{}, // Empty means all methods
+				MigrateHTTPErrors: true,
+				Transformer: func(resp *ResponseInfo) error {
+					// For non-error responses, apply operations
+					if resp.StatusCode < 400 {
+						if resp.Body != nil {
+							if err := pb.operations.ApplyToResponse(resp.Body); err != nil {
+								return err
+							}
+						}
+
+						// Handle arrays
+						return resp.TransformArrayField("", func(node *ast.Node) error {
+							return pb.operations.ApplyToResponse(node)
+						})
+					}
+
+					// For error responses, transform field names
+					if len(fieldMappings) > 0 {
+						return transformErrorFieldNames(resp, fieldMappings)
+					}
+
+					return nil
+				},
+			}
+			instructions = append(instructions, responseInst)
 		}
-		instructions = append(instructions, responseInst)
 	}
 
 	// Add custom transformers if provided
@@ -148,75 +154,58 @@ func (b *versionChangeBuilder) Build() *VersionChange {
 	return NewVersionChange(b.description, b.fromVersion, b.toVersion, instructions...)
 }
 
-// schemaBuilder builds operations for a specific schema
-type schemaBuilder struct {
-	parent         *versionChangeBuilder
-	schemaType     reflect.Type
-	operations     OperationList
-	customRequest  func(*RequestInfo) error
-	customResponse func(*ResponseInfo) error
+// pathBuilder builds operations for specific paths (runtime routing)
+type pathBuilder struct {
+	parent     *versionChangeBuilder
+	paths      []string
+	operations OperationList
 }
 
+// pathBuilder methods
+
 // AddField adds a field with a default value
-func (sb *schemaBuilder) AddField(name string, defaultValue interface{}) *schemaBuilder {
-	sb.operations = append(sb.operations, &FieldAddOp{
+func (pb *pathBuilder) AddField(name string, defaultValue interface{}) *pathBuilder {
+	pb.operations = append(pb.operations, &FieldAddOp{
 		Name:    name,
 		Default: defaultValue,
 	})
-	return sb
+	return pb
 }
 
 // RemoveField removes a field
-func (sb *schemaBuilder) RemoveField(name string) *schemaBuilder {
-	sb.operations = append(sb.operations, &FieldRemoveOp{
+func (pb *pathBuilder) RemoveField(name string) *pathBuilder {
+	pb.operations = append(pb.operations, &FieldRemoveOp{
 		Name: name,
 	})
-	return sb
+	return pb
 }
 
 // RenameField renames a field
-func (sb *schemaBuilder) RenameField(from, to string) *schemaBuilder {
-	sb.operations = append(sb.operations, &FieldRenameOp{
+func (pb *pathBuilder) RenameField(from, to string) *pathBuilder {
+	pb.operations = append(pb.operations, &FieldRenameOp{
 		From: from,
 		To:   to,
 	})
-	return sb
+	return pb
 }
 
 // MapEnumValues maps enum values
-func (sb *schemaBuilder) MapEnumValues(field string, mapping map[string]string) *schemaBuilder {
-	sb.operations = append(sb.operations, &EnumValueMapOp{
+func (pb *pathBuilder) MapEnumValues(field string, mapping map[string]string) *pathBuilder {
+	pb.operations = append(pb.operations, &EnumValueMapOp{
 		Field:   field,
 		Mapping: mapping,
 	})
-	return sb
+	return pb
 }
 
-// OnRequest adds a custom request transformer for this schema only
-func (sb *schemaBuilder) OnRequest(fn func(*RequestInfo) error) *schemaBuilder {
-	sb.customRequest = fn
-	return sb
-}
-
-// OnResponse adds a custom response transformer for this schema only
-func (sb *schemaBuilder) OnResponse(fn func(*ResponseInfo) error) *schemaBuilder {
-	sb.customResponse = fn
-	return sb
-}
-
-// Done returns to the parent builder (allows chaining multiple schemas)
-func (sb *schemaBuilder) Done() *versionChangeBuilder {
-	return sb.parent
+// ForPath returns to the parent and starts a new path builder
+func (pb *pathBuilder) ForPath(paths ...string) *pathBuilder {
+	return pb.parent.ForPath(paths...)
 }
 
 // Build is a convenience method that calls the parent's Build()
-func (sb *schemaBuilder) Build() *VersionChange {
-	return sb.parent.Build()
-}
-
-// Schema returns to the parent and starts a new schema builder
-func (sb *schemaBuilder) Schema(schema interface{}) *schemaBuilder {
-	return sb.parent.Schema(schema)
+func (pb *pathBuilder) Build() *VersionChange {
+	return pb.parent.Build()
 }
 
 // transformErrorFieldNames transforms field names in error messages
@@ -282,7 +271,7 @@ func replaceFieldNamesInString(errorMsg string, fieldMapping map[string]string) 
 		}
 
 		for _, p := range patterns {
-			result = stringReplaceAll(result, p.old, p.new)
+			result = strings.ReplaceAll(result, p.old, p.new)
 		}
 	}
 
@@ -291,61 +280,36 @@ func replaceFieldNamesInString(errorMsg string, fieldMapping map[string]string) 
 
 // toPascalCase converts snake_case to PascalCase
 func toPascalCase(s string) string {
-	result := ""
-	capitalize := true
+	if s == "" {
+		return ""
+	}
 
-	for _, ch := range s {
-		if ch == '_' {
-			capitalize = true
+	// Handle common API naming conventions
+	s = strings.Replace(s, "ID", "Id", -1)
+	s = strings.Replace(s, "URL", "Url", -1)
+	s = strings.Replace(s, "HTTP", "Http", -1)
+	s = strings.Replace(s, "API", "Api", -1)
+
+	// Split by underscores for snake_case
+	parts := strings.Split(s, "_")
+
+	var result strings.Builder
+	result.Grow(len(s))
+
+	for _, part := range parts {
+		if part == "" {
 			continue
 		}
 
-		if capitalize {
-			result += string(ch - 32) // Convert to uppercase
-			capitalize = false
-		} else {
-			result += string(ch)
-		}
-	}
-
-	return result
-}
-
-// stringReplaceAll replaces all occurrences of old with new in s
-func stringReplaceAll(s, old, new string) string {
-	result := ""
-	for {
-		idx := stringIndex(s, old)
-		if idx == -1 {
-			result += s
-			break
-		}
-		result += s[:idx] + new
-		s = s[idx+len(old):]
-	}
-	return result
-}
-
-// stringIndex returns the index of the first occurrence of substr in s, or -1
-func stringIndex(s, substr string) int {
-	if len(substr) == 0 {
-		return 0
-	}
-	if len(substr) > len(s) {
-		return -1
-	}
-
-	for i := 0; i <= len(s)-len(substr); i++ {
-		match := true
-		for j := 0; j < len(substr); j++ {
-			if s[i+j] != substr[j] {
-				match = false
-				break
+		// Capitalize first character properly using strings.ToUpper
+		runes := []rune(part)
+		if len(runes) > 0 {
+			result.WriteString(strings.ToUpper(string(runes[0])))
+			if len(runes) > 1 {
+				result.WriteString(string(runes[1:]))
 			}
 		}
-		if match {
-			return i
-		}
 	}
-	return -1
+
+	return result.String()
 }

@@ -10,15 +10,15 @@ import (
 )
 
 // User model evolution:
-// v1 (2025-01-01): ID, Name
-// v2 (2025-06-01): Added Email, Added Status (only "active" and "inactive")
-// v3 (2024-01-01): Renamed Name->FullName, Added Phone, Status gains "pending" and "suspended"
+// v1 (2024-01-01): ID, Name
+// v2 (2024-06-01): Added Email, Added Status (only "active" and "inactive")
+// v3 (2025-01-01): Renamed Name->FullName, Added Phone, Status gains "pending" and "suspended"
 type User struct {
 	ID       int    `json:"id"`
-	FullName string `json:"full_name"`                                        // Was "name" before v3 (2024-01-01)
-	Email    string `json:"email"`                                            // Added in v2 (2025-06-01)
-	Phone    string `json:"phone"`                                            // Added in v3 (2024-01-01)
-	Status   string `json:"status" enums:"active,inactive,pending,suspended"` // Added in v2, expanded in v3
+	FullName string `json:"full_name" binding:"required"`                                        // Was "name" before v3 (2025-01-01)
+	Email    string `json:"email" binding:"required"`                                            // Added in v2 (2024-06-01)
+	Phone    string `json:"phone"`                                                               // Added in v3 (2025-01-01)
+	Status   string `json:"status" binding:"required" enums:"active,inactive,pending,suspended"` // Added in v2, expanded in v3
 }
 
 // Product model evolution:
@@ -26,10 +26,10 @@ type User struct {
 // v3: Added Description, Currency
 type Product struct {
 	ID          int     `json:"id"`
-	Name        string  `json:"name"`
-	Price       float64 `json:"price"`
-	Description string  `json:"description"` // Added in v3 (2024-01-01)
-	Currency    string  `json:"currency"`    // Added in v3 (2024-01-01)
+	Name        string  `json:"name" binding:"required"`
+	Price       float64 `json:"price" binding:"required"`
+	Description string  `json:"description"` // Added in v3 (2025-01-01)
+	Currency    string  `json:"currency"`    // Added in v3 (2025-01-01)
 }
 
 // Order model (demonstrating endpoint additions)
@@ -62,10 +62,10 @@ var (
 )
 
 func main() {
-	// Create date-based versions
-	v1, _ := epoch.NewDateVersion("2025-01-01")
-	v2, _ := epoch.NewDateVersion("2025-06-01")
-	v3, _ := epoch.NewDateVersion("2024-01-01")
+	// Create date-based versions (chronologically ordered)
+	v1, _ := epoch.NewDateVersion("2024-01-01")
+	v2, _ := epoch.NewDateVersion("2024-06-01")
+	v3, _ := epoch.NewDateVersion("2025-01-01")
 
 	// Build Epoch instance
 	epochInstance, err := epoch.NewEpoch().
@@ -143,9 +143,9 @@ func main() {
 	fmt.Println("  • 90% less code for common operations!")
 	fmt.Println()
 	fmt.Println("📅 API Versions:")
-	fmt.Println("  • 2025-01-01 (v1): Initial release (users with id, name)")
-	fmt.Println("  • 2025-06-01 (v2): Added email and status to users")
-	fmt.Println("  • 2024-01-01 (v3): Renamed name->full_name, added phone, expanded status enum, added products fields")
+	fmt.Println("  • 2024-01-01 (v1): Initial release (users with id, name, temp_field)")
+	fmt.Println("  • 2024-06-01 (v2): Added email and status, removed temp_field")
+	fmt.Println("  • 2025-01-01 (v3): Renamed name->full_name, added phone, expanded status enum, added products fields")
 	fmt.Println("  •       head: Latest (all features)")
 	fmt.Println()
 	fmt.Println("🔗 Endpoints:")
@@ -161,9 +161,9 @@ func main() {
 	fmt.Println("  POST   /orders         - Create order")
 	fmt.Println()
 	fmt.Println("💡 Try it:")
-	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8080/users/1")
-	fmt.Println("  curl -H 'X-API-Version: 2025-06-01' http://localhost:8080/users/1")
 	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8080/users/1")
+	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8080/users/1")
+	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8080/users/1")
 	fmt.Println()
 	fmt.Println("Server running on http://localhost:8080")
 	fmt.Println("Use X-API-Version header to specify version")
@@ -175,13 +175,15 @@ func main() {
 // DECLARATIVE MIGRATIONS - Simple & Clean! ✨
 // ============================================================================
 
-// v1 -> v2: Add email and status fields to User
+// v1 -> v2: Add email and status fields, remove deprecated temp_field
 func createUserV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
 	return epoch.NewVersionChangeBuilder(from, to).
-		Description("Add email and status fields to User").
-		Schema(User{}).
+		Description("Add email and status fields, remove deprecated temp_field").
+		// PATH-BASED ROUTING: Explicit and clear which endpoints are affected
+		ForPath("/users", "/users/:id").
 		AddField("email", "unknown@example.com").
 		AddField("status", "active").
+		RemoveField("temp_field").
 		Build()
 }
 
@@ -189,13 +191,18 @@ func createUserV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
 func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Rename name to full_name, add phone, and expand status enum").
-		Schema(User{}).
+		// PATH-BASED ROUTING: Explicit and clear which endpoints are affected
+		ForPath("/users", "/users/:id").
 		RenameField("name", "full_name"). // Automatic bidirectional + error transformation!
 		AddField("phone", "").
-		MapEnumValues("status", map[string]string{
-			"pending":   "active", // Map new values to old equivalents
-			"suspended": "inactive",
-		}).
+		// Note: MapEnumValues normalizes new values in requests, expands in responses
+		// This is useful when the database stores canonical values
+		// For this example, we don't use it since v2 and v3 both understand active/inactive
+		// Uncomment to test enum mapping behavior:
+		// MapEnumValues("status", map[string]string{
+		// 	"pending":   "inactive", // In requests: pending→inactive, in responses: inactive→pending
+		// 	"suspended": "inactive", // In requests: suspended→inactive, in responses: inactive→suspended
+		// }).
 		Build()
 }
 
@@ -203,7 +210,8 @@ func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 func createProductV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Add description and currency to Product").
-		Schema(Product{}).
+		// PATH-BASED ROUTING: Explicit and clear which endpoints are affected
+		ForPath("/products", "/products/:id").
 		AddField("description", "").
 		AddField("currency", "USD").
 		Build()

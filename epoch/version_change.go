@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 // AlterRequestInstruction defines how to modify a request during migration
@@ -38,10 +39,6 @@ type VersionChange struct {
 	// Version information
 	fromVersion *Version
 	toVersion   *Version
-
-	// Route mappings
-	routeToRequestMigrationMapping  map[int][]*AlterRequestInstruction
-	routeToResponseMigrationMapping map[int][]*AlterResponseInstruction
 }
 
 // NewVersionChange creates a new version change with the given description and instructions
@@ -55,8 +52,6 @@ func NewVersionChange(description string, fromVersion, toVersion *Version, instr
 		alterRequestByPathInstructions:         make(map[string][]*AlterRequestInstruction),
 		alterResponseBySchemaInstructions:      make(map[reflect.Type][]*AlterResponseInstruction),
 		alterResponseByPathInstructions:        make(map[string][]*AlterResponseInstruction),
-		routeToRequestMigrationMapping:         make(map[int][]*AlterRequestInstruction),
-		routeToResponseMigrationMapping:        make(map[int][]*AlterResponseInstruction),
 	}
 
 	vc.extractInstructionsIntoContainers()
@@ -94,10 +89,39 @@ func (vc *VersionChange) extractInstructionsIntoContainers() {
 }
 
 // MigrateRequest applies request migrations for this version change
-func (vc *VersionChange) MigrateRequest(ctx context.Context, requestInfo *RequestInfo, bodyType reflect.Type, routeID int) error {
-	// Apply all schema-based request migrations
-	// IMPORTANT: All migrations in this VersionChange are applied together.
-	// Best practice: Use one VersionChange per schema/route to avoid unwanted side effects.
+func (vc *VersionChange) MigrateRequest(ctx context.Context, requestInfo *RequestInfo) error {
+	// Priority 1: Check path-based instructions first (RUNTIME ROUTING)
+	var requestPath, requestMethod string
+	if requestInfo.GinContext != nil && requestInfo.GinContext.Request != nil {
+		requestPath = requestInfo.GinContext.Request.URL.Path
+		requestMethod = requestInfo.GinContext.Request.Method
+	}
+
+	// Check if any path-based instructions match this request
+	pathMatched := false
+	for _, instructions := range vc.alterRequestByPathInstructions {
+		for _, instruction := range instructions {
+			// Check if this instruction applies to this path
+			if instruction.Path != "" && matchesPath(requestPath, instruction.Path) {
+				// Check if method matches (empty Methods means all methods)
+				if len(instruction.Methods) == 0 || contains(instruction.Methods, requestMethod) {
+					if err := instruction.Transformer(requestInfo); err != nil {
+						return fmt.Errorf("request path migration failed for change '%s': %w", vc.description, err)
+					}
+					pathMatched = true
+				}
+			}
+		}
+	}
+
+	// If path-based migration was applied, we're done (no schema-based fallback)
+	if pathMatched {
+		return nil
+	}
+
+	// Priority 2: Schema-based instructions (FALLBACK - only if no path matched)
+	// Note: In the new design, Schema() is primarily for metadata/documentation
+	// These will only be applied if no path-based routing matched
 	for _, instructions := range vc.alterRequestBySchemaInstructions {
 		for _, instruction := range instructions {
 			if err := instruction.Transformer(requestInfo); err != nil {
@@ -106,23 +130,47 @@ func (vc *VersionChange) MigrateRequest(ctx context.Context, requestInfo *Reques
 		}
 	}
 
-	// Apply path-based request migrations
-	if instructions, exists := vc.routeToRequestMigrationMapping[routeID]; exists {
-		for _, instruction := range instructions {
-			if err := instruction.Transformer(requestInfo); err != nil {
-				return fmt.Errorf("request path migration failed for change '%s': %w", vc.description, err)
-			}
-		}
-	}
-
 	return nil
 }
 
 // MigrateResponse applies response migrations for this version change
-func (vc *VersionChange) MigrateResponse(ctx context.Context, responseInfo *ResponseInfo, responseType reflect.Type, routeID int) error {
-	// Apply all schema-based response migrations
-	// IMPORTANT: All migrations in this VersionChange are applied together.
-	// Best practice: Use one VersionChange per schema/route to avoid unwanted side effects.
+func (vc *VersionChange) MigrateResponse(ctx context.Context, responseInfo *ResponseInfo) error {
+	// Priority 1: Check path-based instructions first (RUNTIME ROUTING)
+	var responsePath, responseMethod string
+	if responseInfo.GinContext != nil && responseInfo.GinContext.Request != nil {
+		responsePath = responseInfo.GinContext.Request.URL.Path
+		responseMethod = responseInfo.GinContext.Request.Method
+	}
+
+	// Check if any path-based instructions match this response
+	pathMatched := false
+	for _, instructions := range vc.alterResponseByPathInstructions {
+		for _, instruction := range instructions {
+			// Check if this instruction applies to this path
+			if instruction.Path != "" && matchesPath(responsePath, instruction.Path) {
+				// Check if method matches (empty Methods means all methods)
+				if len(instruction.Methods) == 0 || contains(instruction.Methods, responseMethod) {
+					// Check if we should migrate error responses
+					if responseInfo.StatusCode >= 300 && !instruction.MigrateHTTPErrors {
+						continue
+					}
+					if err := instruction.Transformer(responseInfo); err != nil {
+						return fmt.Errorf("response path migration failed for change '%s': %w", vc.description, err)
+					}
+					pathMatched = true
+				}
+			}
+		}
+	}
+
+	// If path-based migration was applied, we're done (no schema-based fallback)
+	if pathMatched {
+		return nil
+	}
+
+	// Priority 2: Schema-based instructions (FALLBACK - only if no path matched)
+	// Note: In the new design, Schema() is primarily for metadata/documentation
+	// These will only be applied if no path-based routing matched
 	for _, instructions := range vc.alterResponseBySchemaInstructions {
 		for _, instruction := range instructions {
 			// Check if we should migrate error responses
@@ -135,20 +183,48 @@ func (vc *VersionChange) MigrateResponse(ctx context.Context, responseInfo *Resp
 		}
 	}
 
-	// Apply path-based response migrations
-	if instructions, exists := vc.routeToResponseMigrationMapping[routeID]; exists {
-		for _, instruction := range instructions {
-			// Check if we should migrate error responses
-			if responseInfo.StatusCode >= 300 && !instruction.MigrateHTTPErrors {
-				continue
-			}
-			if err := instruction.Transformer(responseInfo); err != nil {
-				return fmt.Errorf("response path migration failed for change '%s': %w", vc.description, err)
-			}
+	return nil
+}
+
+// matchesPath checks if a request path matches a pattern
+// Supports exact matches and Gin-style path parameters (e.g., /users/:id)
+func matchesPath(requestPath, pattern string) bool {
+	// Exact match
+	if requestPath == pattern {
+		return true
+	}
+
+	// Gin-style parameter matching (e.g., /users/:id matches /users/123)
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	requestParts := strings.Split(strings.Trim(requestPath, "/"), "/")
+
+	if len(patternParts) != len(requestParts) {
+		return false
+	}
+
+	for i := range patternParts {
+		// Check for parameter (starts with :)
+		if strings.HasPrefix(patternParts[i], ":") {
+			continue // Parameters match any value
+		}
+
+		// Must be exact match
+		if patternParts[i] != requestParts[i] {
+			return false
 		}
 	}
 
-	return nil
+	return true
+}
+
+// contains checks if a string slice contains a specific value
+func contains(slice []string, value string) bool {
+	for _, item := range slice {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 // FromVersion returns the version this change migrates from
@@ -176,20 +252,6 @@ func (vc *VersionChange) SetHiddenFromChangelog(hidden bool) {
 	vc.isHiddenFromChangelog = hidden
 }
 
-// BindRouteToRequestMigrations binds path-based request migrations to a specific route ID
-func (vc *VersionChange) BindRouteToRequestMigrations(routeID int, path string) {
-	if instructions, exists := vc.alterRequestByPathInstructions[path]; exists {
-		vc.routeToRequestMigrationMapping[routeID] = instructions
-	}
-}
-
-// BindRouteToResponseMigrations binds path-based response migrations to a specific route ID
-func (vc *VersionChange) BindRouteToResponseMigrations(routeID int, path string) {
-	if instructions, exists := vc.alterResponseByPathInstructions[path]; exists {
-		vc.routeToResponseMigrationMapping[routeID] = instructions
-	}
-}
-
 // MigrationChain manages a sequence of version changes
 type MigrationChain struct {
 	changes []*VersionChange
@@ -203,7 +265,7 @@ func NewMigrationChain(changes []*VersionChange) *MigrationChain {
 }
 
 // MigrateRequest applies all changes in the chain for request migration
-func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *RequestInfo, from, to *Version, bodyType reflect.Type, routeID int) error {
+func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *RequestInfo, from, to *Version) error {
 	// Find the starting point in the version chain
 	start := -1
 	for i, change := range mc.changes {
@@ -224,7 +286,7 @@ func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *Reque
 
 		// Stop if we've reached the target version
 		if change.ToVersion().Equal(to) {
-			if err := change.MigrateRequest(ctx, requestInfo, bodyType, routeID); err != nil {
+			if err := change.MigrateRequest(ctx, requestInfo); err != nil {
 				return fmt.Errorf("migration failed at %s->%s: %w",
 					change.FromVersion().String(), change.ToVersion().String(), err)
 			}
@@ -238,7 +300,7 @@ func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *Reque
 
 		// Apply this change if it's part of the migration path
 		if change.FromVersion().IsOlderThan(to) || change.FromVersion().Equal(to) {
-			if err := change.MigrateRequest(ctx, requestInfo, bodyType, routeID); err != nil {
+			if err := change.MigrateRequest(ctx, requestInfo); err != nil {
 				return fmt.Errorf("migration failed at %s->%s: %w",
 					change.FromVersion().String(), change.ToVersion().String(), err)
 			}
@@ -249,7 +311,7 @@ func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *Reque
 }
 
 // MigrateResponse applies all changes in reverse for response migration
-func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *ResponseInfo, from, to *Version, responseType reflect.Type, routeID int) error {
+func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *ResponseInfo, from, to *Version) error {
 	// If from and to are the same, no migration needed
 	if from.Equal(to) {
 		return nil
@@ -291,7 +353,7 @@ func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *Res
 
 	// Apply all collected changes
 	for _, change := range changesToApply {
-		if err := change.MigrateResponse(ctx, responseInfo, responseType, routeID); err != nil {
+		if err := change.MigrateResponse(ctx, responseInfo); err != nil {
 			return fmt.Errorf("reverse migration failed at %s->%s: %w",
 				change.ToVersion().String(), change.FromVersion().String(), err)
 		}

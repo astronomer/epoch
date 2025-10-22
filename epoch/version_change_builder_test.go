@@ -2,8 +2,10 @@ package epoch
 
 import (
 	"context"
+	"net/http/httptest"
 
 	"github.com/bytedance/sonic"
+	"github.com/gin-gonic/gin"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -31,7 +33,7 @@ var _ = Describe("Declarative Builder API", func() {
 			// Create migration: v1 has "name", v2 has "full_name"
 			migration := NewVersionChangeBuilder(v1, v2).
 				Description("Rename name to full_name").
-				Schema(User{}).
+				ForPath("/test").
 				RenameField("name", "full_name").
 				Build()
 
@@ -39,7 +41,7 @@ var _ = Describe("Declarative Builder API", func() {
 			requestJSON := `{"name": "John Doe"}`
 			reqInfo := createRequestInfo(requestJSON)
 
-			err := migration.MigrateRequest(context.Background(), reqInfo, nil, 0)
+			err := migration.MigrateRequest(context.Background(), reqInfo)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Should have "full_name" now
@@ -55,7 +57,7 @@ var _ = Describe("Declarative Builder API", func() {
 			// Create migration: v1 has "name", v2 has "full_name"
 			migration := NewVersionChangeBuilder(v1, v2).
 				Description("Rename name to full_name").
-				Schema(User{}).
+				ForPath("/test").
 				RenameField("name", "full_name").
 				Build()
 
@@ -63,7 +65,7 @@ var _ = Describe("Declarative Builder API", func() {
 			responseJSON := `{"full_name": "Jane Smith"}`
 			respInfo := createResponseInfo(responseJSON, 200)
 
-			err := migration.MigrateResponse(context.Background(), respInfo, nil, 0)
+			err := migration.MigrateResponse(context.Background(), respInfo)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Should have "name" now
@@ -79,7 +81,7 @@ var _ = Describe("Declarative Builder API", func() {
 			// Create migration: v1 has "name", v2 has "full_name"
 			migration := NewVersionChangeBuilder(v1, v2).
 				Description("Rename name to full_name").
-				Schema(User{}).
+				ForPath("/test").
 				RenameField("name", "full_name").
 				Build()
 
@@ -87,7 +89,7 @@ var _ = Describe("Declarative Builder API", func() {
 			errorJSON := `{"error": "Field 'full_name' is required"}`
 			respInfo := createResponseInfo(errorJSON, 400)
 
-			err := migration.MigrateResponse(context.Background(), respInfo, nil, 0)
+			err := migration.MigrateResponse(context.Background(), respInfo)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Error message should have "name" instead of "full_name"
@@ -106,7 +108,7 @@ var _ = Describe("Declarative Builder API", func() {
 		It("should add field with default in request", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
 				Description("Add email field").
-				Schema(User{}).
+				ForPath("/test").
 				AddField("email", "unknown@example.com").
 				Build()
 
@@ -114,7 +116,7 @@ var _ = Describe("Declarative Builder API", func() {
 			requestJSON := `{"id": 1}`
 			reqInfo := createRequestInfo(requestJSON)
 
-			err := migration.MigrateRequest(context.Background(), reqInfo, nil, 0)
+			err := migration.MigrateRequest(context.Background(), reqInfo)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Should have email now
@@ -125,7 +127,7 @@ var _ = Describe("Declarative Builder API", func() {
 		It("should not override existing field value", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
 				Description("Add email field").
-				Schema(User{}).
+				ForPath("/test").
 				AddField("email", "default@example.com").
 				Build()
 
@@ -133,7 +135,7 @@ var _ = Describe("Declarative Builder API", func() {
 			requestJSON := `{"id": 1, "email": "user@example.com"}`
 			reqInfo := createRequestInfo(requestJSON)
 
-			err := migration.MigrateRequest(context.Background(), reqInfo, nil, 0)
+			err := migration.MigrateRequest(context.Background(), reqInfo)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Should keep original email
@@ -144,7 +146,7 @@ var _ = Describe("Declarative Builder API", func() {
 		It("should remove field in response (backward migration)", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
 				Description("Add email field").
-				Schema(User{}).
+				ForPath("/test").
 				AddField("email", "unknown@example.com").
 				Build()
 
@@ -152,7 +154,7 @@ var _ = Describe("Declarative Builder API", func() {
 			responseJSON := `{"id": 1, "email": "test@example.com"}`
 			respInfo := createResponseInfo(responseJSON, 200)
 
-			err := migration.MigrateResponse(context.Background(), respInfo, nil, 0)
+			err := migration.MigrateResponse(context.Background(), respInfo)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Email should be removed
@@ -169,7 +171,7 @@ var _ = Describe("Declarative Builder API", func() {
 		It("should map enum values in request", func() {
 			migration := NewVersionChangeBuilder(v2, v3).
 				Description("Map status values").
-				Schema(User{}).
+				ForPath("/test").
 				MapEnumValues("status", map[string]string{
 					"pending":   "inactive",
 					"suspended": "inactive",
@@ -180,7 +182,7 @@ var _ = Describe("Declarative Builder API", func() {
 			requestJSON := `{"id": 1, "status": "pending"}`
 			reqInfo := createRequestInfo(requestJSON)
 
-			err := migration.MigrateRequest(context.Background(), reqInfo, nil, 0)
+			err := migration.MigrateRequest(context.Background(), reqInfo)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Should be mapped to "inactive"
@@ -191,7 +193,7 @@ var _ = Describe("Declarative Builder API", func() {
 		It("should reverse map enum values in response", func() {
 			migration := NewVersionChangeBuilder(v2, v3).
 				Description("Map status values").
-				Schema(User{}).
+				ForPath("/test").
 				MapEnumValues("status", map[string]string{
 					"pending":   "inactive",
 					"suspended": "inactive",
@@ -202,7 +204,7 @@ var _ = Describe("Declarative Builder API", func() {
 			responseJSON := `{"id": 1, "status": "inactive"}`
 			respInfo := createResponseInfo(responseJSON, 200)
 
-			err := migration.MigrateResponse(context.Background(), respInfo, nil, 0)
+			err := migration.MigrateResponse(context.Background(), respInfo)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Should be reverse mapped to one of "pending" or "suspended"
@@ -222,7 +224,7 @@ var _ = Describe("Declarative Builder API", func() {
 		It("should apply multiple operations in sequence", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
 				Description("Multiple field operations").
-				Schema(User{}).
+				ForPath("/test").
 				RenameField("name", "full_name").
 				AddField("email", "unknown@example.com").
 				RemoveField("temp_field").
@@ -232,7 +234,7 @@ var _ = Describe("Declarative Builder API", func() {
 			requestJSON := `{"id": 1, "name": "John", "temp_field": "old"}`
 			reqInfo := createRequestInfo(requestJSON)
 
-			err := migration.MigrateRequest(context.Background(), reqInfo, nil, 0)
+			err := migration.MigrateRequest(context.Background(), reqInfo)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Check results
@@ -259,9 +261,9 @@ var _ = Describe("Declarative Builder API", func() {
 		It("should apply operations to multiple schemas", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
 				Description("Update multiple schemas").
-				Schema(User{}).
+				ForPath("/users").
 				RenameField("name", "full_name").
-				Schema(Product{}).
+				ForPath("/products").
 				RenameField("title", "product_name").
 				Build()
 
@@ -276,15 +278,25 @@ var _ = Describe("Declarative Builder API", func() {
 
 func createRequestInfo(jsonStr string) *RequestInfo {
 	root, _ := sonic.GetFromString(jsonStr)
+	// Create a Gin context with /test path to match ForPath("/test") in migrations
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/test", nil)
 	return &RequestInfo{
-		Body: &root,
+		Body:       &root,
+		GinContext: c,
 	}
 }
 
 func createResponseInfo(jsonStr string, statusCode int) *ResponseInfo {
 	root, _ := sonic.GetFromString(jsonStr)
+	// Create a Gin context with /test path to match ForPath("/test") in migrations
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/test", nil)
 	return &ResponseInfo{
 		Body:       &root,
 		StatusCode: statusCode,
+		GinContext: c,
 	}
 }

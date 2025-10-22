@@ -50,7 +50,8 @@ func createV1ToV2Change() *epoch.VersionChange {
 
 	return epoch.NewVersionChangeBuilder(v1, v2).
 		Description("Add email field to User").
-		Schema(User{}).
+		// PATH-BASED ROUTING: Explicit which endpoints are affected
+		ForPath("/users", "/users/:id").
 		AddField("email", "default@example.com"). // Automatic bidirectional migration!
 		Build()
 }

@@ -54,7 +54,8 @@ func main() {
     // ✨ One line instead of 20+ lines!
     migration := epoch.NewVersionChangeBuilder(v1, v2).
         Description("Add email to User").
-        Schema(User{}).
+        // PATH-BASED ROUTING: Explicit which endpoints are affected
+        ForPath("/users", "/users/:id").
             AddField("email", "user@example.com").  // Automatic bidirectional!
         Build()
 
@@ -90,6 +91,7 @@ func createUser(c *gin.Context) {
 ```
 
 **What just happened?**
+- ✅ `ForPath()` explicitly defines which endpoints this migration applies to (path-based routing)
 - ✅ `AddField("email", "user@example.com")` automatically creates BOTH migrations:
   - Request migration (v1→v2): adds `email` field if missing
   - Response migration (v2→v1): removes `email` field
@@ -148,7 +150,8 @@ The new declarative API makes common migrations incredibly simple. Here are all 
 ```go
 migration := epoch.NewVersionChangeBuilder(v1, v2).
     Description("Multiple field operations").
-    Schema(User{}).
+    // PATH-BASED ROUTING: Explicit which endpoints are affected
+    ForPath("/users", "/users/:id").
         AddField("email", "default@example.com").      // Add field with default
         RemoveField("temp_field").                     // Remove field
         RenameField("name", "full_name").              // Rename field (+ auto error transform!)
@@ -158,6 +161,8 @@ migration := epoch.NewVersionChangeBuilder(v1, v2).
         }).
     Build()
 ```
+
+> **Note:** Use `ForPath()` for runtime routing. Optionally add `Schema(User{})` for metadata/documentation.
 
 ### What Happens Automatically
 
@@ -170,17 +175,17 @@ Each declarative operation generates **three transformations**:
 | `RenameField("name", "full_name")` | Renames `name` → `full_name` | Renames `full_name` → `name` | Transforms "full_name" → "name" |
 | `MapEnumValues("status", {...})` | Maps values forward | Maps values backward | N/A |
 
-### Multiple Schemas
+### Multiple Paths
 
-Chain multiple schemas in one migration:
+Apply migrations to multiple paths in one change:
 
 ```go
 migration := epoch.NewVersionChangeBuilder(v2, v3).
-    Description("Update User and Product").
-    Schema(User{}).
+    Description("Update User endpoints").
+    ForPath("/users", "/users/:id").
         RenameField("name", "full_name").
         AddField("phone", "").
-    Schema(Product{}).
+    ForPath("/products", "/products/:id").
         AddField("currency", "USD").
         AddField("description", "").
     Build()
@@ -193,7 +198,7 @@ For complex transformations, mix declarative + custom:
 ```go
 migration := epoch.NewVersionChangeBuilder(v1, v2).
     Description("Complex migration").
-    Schema(User{}).
+    ForPath("/users", "/users/:id").
         AddField("email", "default@example.com").
         // Schema-specific custom logic
         OnRequest(func(req *epoch.RequestInfo) error {
