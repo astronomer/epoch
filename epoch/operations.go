@@ -19,14 +19,14 @@ type Operation interface {
 	GetFieldMapping() map[string]string
 }
 
-// FieldRenameOp renames a field
-type FieldRenameOp struct {
+// RenameFieldOp renames a field
+type RenameFieldOp struct {
 	From string // Old field name (in v1)
 	To   string // New field name (in v2)
 }
 
 // ApplyToRequest converts from old name to new name (v1 -> v2)
-func (op *FieldRenameOp) ApplyToRequest(node *ast.Node) error {
+func (op *RenameFieldOp) ApplyToRequest(node *ast.Node) error {
 	if node == nil {
 		return nil
 	}
@@ -52,7 +52,7 @@ func (op *FieldRenameOp) ApplyToRequest(node *ast.Node) error {
 }
 
 // ApplyToResponse converts from new name to old name (v2 -> v1)
-func (op *FieldRenameOp) ApplyToResponse(node *ast.Node) error {
+func (op *RenameFieldOp) ApplyToResponse(node *ast.Node) error {
 	if node == nil {
 		return nil
 	}
@@ -78,19 +78,19 @@ func (op *FieldRenameOp) ApplyToResponse(node *ast.Node) error {
 }
 
 // GetFieldMapping returns the field mapping for error transformation
-func (op *FieldRenameOp) GetFieldMapping() map[string]string {
+func (op *RenameFieldOp) GetFieldMapping() map[string]string {
 	// In v2->v1 migration, we need to transform "To" -> "From" in error messages
 	return map[string]string{op.To: op.From}
 }
 
-// FieldAddOp adds a field with a default value
-type FieldAddOp struct {
+// AddFieldOp adds a field with a default value
+type AddFieldOp struct {
 	Name    string
 	Default interface{}
 }
 
 // ApplyToRequest adds field if missing (v1 -> v2)
-func (op *FieldAddOp) ApplyToRequest(node *ast.Node) error {
+func (op *AddFieldOp) ApplyToRequest(node *ast.Node) error {
 	if node == nil {
 		return nil
 	}
@@ -104,7 +104,7 @@ func (op *FieldAddOp) ApplyToRequest(node *ast.Node) error {
 }
 
 // ApplyToResponse removes the field (v2 -> v1)
-func (op *FieldAddOp) ApplyToResponse(node *ast.Node) error {
+func (op *AddFieldOp) ApplyToResponse(node *ast.Node) error {
 	if node == nil {
 		return nil
 	}
@@ -113,17 +113,17 @@ func (op *FieldAddOp) ApplyToResponse(node *ast.Node) error {
 }
 
 // GetFieldMapping returns empty map (no field rename)
-func (op *FieldAddOp) GetFieldMapping() map[string]string {
+func (op *AddFieldOp) GetFieldMapping() map[string]string {
 	return nil
 }
 
-// FieldRemoveOp removes a field
-type FieldRemoveOp struct {
+// RemoveFieldOp removes a field
+type RemoveFieldOp struct {
 	Name string
 }
 
 // ApplyToRequest removes the field (v1 -> v2)
-func (op *FieldRemoveOp) ApplyToRequest(node *ast.Node) error {
+func (op *RemoveFieldOp) ApplyToRequest(node *ast.Node) error {
 	if node == nil {
 		return nil
 	}
@@ -132,26 +132,26 @@ func (op *FieldRemoveOp) ApplyToRequest(node *ast.Node) error {
 }
 
 // ApplyToResponse adds the field back (v2 -> v1, but we don't have the value)
-func (op *FieldRemoveOp) ApplyToResponse(node *ast.Node) error {
+func (op *RemoveFieldOp) ApplyToResponse(node *ast.Node) error {
 	// When migrating back, we can't restore a removed field without knowing its value
 	// This is a limitation - users should use custom transformers if they need this
 	return nil
 }
 
 // GetFieldMapping returns empty map (no field rename)
-func (op *FieldRemoveOp) GetFieldMapping() map[string]string {
+func (op *RemoveFieldOp) GetFieldMapping() map[string]string {
 	return nil
 }
 
-// EnumValueMapOp maps enum values
-type EnumValueMapOp struct {
+// MapEnumValuesOp maps enum values
+type MapEnumValuesOp struct {
 	Field   string
 	Mapping map[string]string // new value -> old value (for backward compatibility)
 }
 
 // ApplyToRequest maps enum values forward (v1 -> v2)
 // If a request contains new enum values that the older version can't handle, map them to old equivalents
-func (op *EnumValueMapOp) ApplyToRequest(node *ast.Node) error {
+func (op *MapEnumValuesOp) ApplyToRequest(node *ast.Node) error {
 	if node == nil {
 		return nil
 	}
@@ -178,7 +178,7 @@ func (op *EnumValueMapOp) ApplyToRequest(node *ast.Node) error {
 
 // ApplyToResponse maps enum values backward (v2 -> v1)
 // Reverses the mapping for responses
-func (op *EnumValueMapOp) ApplyToResponse(node *ast.Node) error {
+func (op *MapEnumValuesOp) ApplyToResponse(node *ast.Node) error {
 	if node == nil {
 		return nil
 	}
@@ -214,7 +214,7 @@ func (op *EnumValueMapOp) ApplyToResponse(node *ast.Node) error {
 }
 
 // GetFieldMapping returns empty map (enum values, not field names)
-func (op *EnumValueMapOp) GetFieldMapping() map[string]string {
+func (op *MapEnumValuesOp) GetFieldMapping() map[string]string {
 	return nil
 }
 

@@ -164,7 +164,7 @@ type pathBuilder struct {
 
 // AddField adds a field with a default value
 func (pb *pathBuilder) AddField(name string, defaultValue interface{}) *pathBuilder {
-	pb.operations = append(pb.operations, &FieldAddOp{
+	pb.operations = append(pb.operations, &AddFieldOp{
 		Name:    name,
 		Default: defaultValue,
 	})
@@ -173,7 +173,7 @@ func (pb *pathBuilder) AddField(name string, defaultValue interface{}) *pathBuil
 
 // RemoveField removes a field
 func (pb *pathBuilder) RemoveField(name string) *pathBuilder {
-	pb.operations = append(pb.operations, &FieldRemoveOp{
+	pb.operations = append(pb.operations, &RemoveFieldOp{
 		Name: name,
 	})
 	return pb
@@ -181,7 +181,7 @@ func (pb *pathBuilder) RemoveField(name string) *pathBuilder {
 
 // RenameField renames a field
 func (pb *pathBuilder) RenameField(from, to string) *pathBuilder {
-	pb.operations = append(pb.operations, &FieldRenameOp{
+	pb.operations = append(pb.operations, &RenameFieldOp{
 		From: from,
 		To:   to,
 	})
@@ -190,7 +190,7 @@ func (pb *pathBuilder) RenameField(from, to string) *pathBuilder {
 
 // MapEnumValues maps enum values
 func (pb *pathBuilder) MapEnumValues(field string, mapping map[string]string) *pathBuilder {
-	pb.operations = append(pb.operations, &EnumValueMapOp{
+	pb.operations = append(pb.operations, &MapEnumValuesOp{
 		Field:   field,
 		Mapping: mapping,
 	})
