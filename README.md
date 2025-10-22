@@ -49,15 +49,13 @@ func main() {
     v1, _ := epoch.NewSemverVersion("1.0.0")
     v2, _ := epoch.NewSemverVersion("2.0.0")
     
-    // ✨ One line instead of 20+ lines!
     migration := epoch.NewVersionChangeBuilder(v1, v2).
         Description("Add email to User").
-        // PATH-BASED ROUTING: Explicit which endpoints are affected
         ForPath("/users", "/users/:id").
-            AddField("email", "user@example.com").  // Automatic bidirectional!
+            AddField("email", "user@example.com").
         Build()
 
-    // Setup Epoch (with automatic cycle detection)
+    // Setup Epoch
     epochInstance, err := epoch.NewEpoch().
         WithVersions(v1, v2).
         WithHeadVersion().
@@ -65,7 +63,7 @@ func main() {
         Build()
     
     if err != nil {
-        panic(err)  // Will catch cycles: "cycle detected in version chain: ..."
+        panic(err) 
     }
 
     // Add to Gin
@@ -98,39 +96,6 @@ func createUser(c *gin.Context) {
   - Request migration (v1→v2): adds `email` field if missing
   - Response migration (v2→v1): removes `email` field
 - ✅ Error messages automatically transform field names for each version
-- ✅ **91% less code** for common operations!
-
-### Old API (Still Supported)
-
-The imperative API still works for complex custom logic:
-
-<details>
-<summary>Click to see old API example</summary>
-
-```go
-// Old way - still supported for complex cases
-migration := epoch.NewVersionChange(
-    "Add email to User",
-    v1, v2,
-    &epoch.AlterRequestInstruction{
-        Path: "/users",  // Path-based routing required
-        Transformer: func(req *epoch.RequestInfo) error {
-            if !req.HasField("email") {
-                req.SetField("email", "user@example.com")
-            }
-            return nil
-        },
-    },
-    &epoch.AlterResponseInstruction{
-        Path: "/users",  // Path-based routing required
-        Transformer: func(resp *epoch.ResponseInfo) error {
-            resp.DeleteField("email")
-            return nil
-        },
-    },
-)
-```
-</details>
 
 **Test it:**
 ```bash
@@ -152,7 +117,6 @@ The new declarative API makes common migrations incredibly simple. Here are all 
 ```go
 migration := epoch.NewVersionChangeBuilder(v1, v2).
     Description("Multiple field operations").
-    // PATH-BASED ROUTING: Explicit which endpoints are affected
     ForPath("/users", "/users/:id").
         AddField("email", "default@example.com").      // Add field with default
         RemoveField("temp_field").                     // Remove field
