@@ -44,33 +44,18 @@ func main() {
 }
 
 // createV1ToV2Change defines the migration between v1.0.0 and v2.0.0
+// ✨ Using the NEW declarative API - simple and clean!
 func createV1ToV2Change() *epoch.VersionChange {
 	v1, _ := epoch.NewSemverVersion("1.0.0")
 	v2, _ := epoch.NewSemverVersion("2.0.0")
 
-	return epoch.NewVersionChange(
-		"Add email field to User",
-		v1,
-		v2,
-		// Request migration: v1 -> v2 (add email if missing)
-		&epoch.AlterRequestInstruction{
-			Schemas: []interface{}{User{}},
-			Transformer: func(req *epoch.RequestInfo) error {
-				if !req.HasField("email") {
-					req.SetField("email", "default@example.com")
-				}
-				return nil
-			},
-		},
-		// Response migration: v2 -> v1 (remove email)
-		&epoch.AlterResponseInstruction{
-			Schemas: []interface{}{User{}},
-			Transformer: func(resp *epoch.ResponseInfo) error {
-				resp.DeleteField("email")
-				return nil
-			},
-		},
-	)
+	// BEFORE: 20+ lines of imperative code
+	// AFTER: 4 lines of declarative operations!
+	return epoch.NewVersionChangeBuilder(v1, v2).
+		Description("Add email field to User").
+		Schema(User{}).
+		AddField("email", "default@example.com"). // Automatic bidirectional migration!
+		Build()
 }
 
 // getUser returns a user (HEAD version)
