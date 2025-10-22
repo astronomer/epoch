@@ -204,8 +204,11 @@ func (cb *EpochBuilder) Build() (*Epoch, error) {
 		return nil, fmt.Errorf("failed to create version bundle: %w", err)
 	}
 
-	// Create migration chain
-	migrationChain := NewMigrationChain(cb.changes)
+	// Create migration chain with cycle detection
+	migrationChain, err := NewMigrationChain(cb.changes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create migration chain: %w", err)
+	}
 
 	return &Epoch{
 		versionBundle:  versionBundle,

@@ -28,8 +28,6 @@ type VersionChangeInterface interface {
 	Description() string
 	FromVersion() *Version
 	ToVersion() *Version
-	GetSchemaInstructions() interface{} // Returns schema instructions
-	GetEnumInstructions() interface{}   // Returns enum instructions
 }
 
 // VersionType represents the format of a version

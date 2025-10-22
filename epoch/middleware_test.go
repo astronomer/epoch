@@ -23,7 +23,7 @@ var _ = Describe("Middleware", func() {
 		var err error
 		bundle, err = NewVersionBundle([]*Version{v1, v2})
 		Expect(err).NotTo(HaveOccurred())
-		chain = NewMigrationChain([]*VersionChange{})
+		chain, _ = NewMigrationChain([]*VersionChange{})
 		gin.SetMode(gin.TestMode)
 	})
 
@@ -367,7 +367,7 @@ var _ = Describe("Middleware", func() {
 			var err error
 			bundle, err = NewVersionBundle([]*Version{v1, v2, v3})
 			Expect(err).NotTo(HaveOccurred())
-			chain = NewMigrationChain([]*VersionChange{})
+			chain, _ = NewMigrationChain([]*VersionChange{})
 		})
 
 		Context("with semver versions", func() {
@@ -491,7 +491,7 @@ var _ = Describe("Middleware", func() {
 			var err error
 			bundle, err = NewVersionBundle([]*Version{v1, v2})
 			Expect(err).NotTo(HaveOccurred())
-			chain = NewMigrationChain([]*VersionChange{})
+			chain, _ = NewMigrationChain([]*VersionChange{})
 
 			config := MiddlewareConfig{
 				VersionBundle:  bundle,
@@ -560,7 +560,7 @@ var _ = Describe("Middleware", func() {
 			var err error
 			bundle, err = NewVersionBundle([]*Version{v1, v2})
 			Expect(err).NotTo(HaveOccurred())
-			chain = NewMigrationChain([]*VersionChange{})
+			chain, _ = NewMigrationChain([]*VersionChange{})
 
 			config := MiddlewareConfig{
 				VersionBundle:  bundle,
@@ -626,7 +626,7 @@ var _ = Describe("Middleware", func() {
 			var err error
 			bundle, err = NewVersionBundle([]*Version{v1, v2})
 			Expect(err).NotTo(HaveOccurred())
-			chain = NewMigrationChain([]*VersionChange{})
+			chain, _ = NewMigrationChain([]*VersionChange{})
 
 			config := MiddlewareConfig{
 				VersionBundle:  bundle,
@@ -686,7 +686,7 @@ var _ = Describe("Middleware", func() {
 			var err error
 			bundle, err = NewVersionBundle([]*Version{v1, v2})
 			Expect(err).NotTo(HaveOccurred())
-			chain = NewMigrationChain([]*VersionChange{})
+			chain, _ = NewMigrationChain([]*VersionChange{})
 		})
 
 		It("should use custom default version when provided", func() {
@@ -827,7 +827,7 @@ var _ = Describe("Middleware", func() {
 			bundle, err = NewVersionBundle([]*Version{v1_0_0, v1_1_0, v1_2_0, v2_0_0, v2_1_0})
 			Expect(err).NotTo(HaveOccurred())
 
-			chain = NewMigrationChain([]*VersionChange{})
+			chain, _ = NewMigrationChain([]*VersionChange{})
 
 			config := MiddlewareConfig{
 				VersionBundle:  bundle,

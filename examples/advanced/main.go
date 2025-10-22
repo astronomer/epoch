@@ -132,22 +132,19 @@ func main() {
 		})
 	})
 
-	fmt.Println("🚀 Advanced Epoch Example - Declarative API")
+	fmt.Println("🚀 Advanced Epoch Example")
 	fmt.Println("==============================================")
-	fmt.Println("This example demonstrates the NEW declarative API!")
-	fmt.Println()
-	fmt.Println("✨ What's New:")
-	fmt.Println("  • Declarative field operations (AddField, RenameField, etc.)")
+	fmt.Println("This example demonstrates:")
+	fmt.Println("  • Declarative field operations (AddField, RenameField, RemoveField, MapEnumValues)")
 	fmt.Println("  • Automatic bidirectional migrations")
-	fmt.Println("  • Automatic error message field name transformation")
-	fmt.Println("  • 90% less code for common operations!")
-	fmt.Println()
+	fmt.Println("  • Automatic error message field name transformation (validation errors only)")
+	fmt.Println("")
 	fmt.Println("📅 API Versions:")
 	fmt.Println("  • 2024-01-01 (v1): Initial release (users with id, name, temp_field)")
 	fmt.Println("  • 2024-06-01 (v2): Added email and status, removed temp_field")
-	fmt.Println("  • 2025-01-01 (v3): Renamed name->full_name, added phone, expanded status enum, added products fields")
-	fmt.Println("  •       head: Latest (all features)")
-	fmt.Println()
+	fmt.Println("  • 2025-01-01 (v3): Renamed name→full_name, added phone, expanded status enum, added product fields")
+	fmt.Println("  •       HEAD: Latest (all features)")
+	fmt.Println("")
 	fmt.Println("🔗 Endpoints:")
 	fmt.Println("  GET    /users          - List all users")
 	fmt.Println("  GET    /users/:id      - Get user by ID")
@@ -159,14 +156,21 @@ func main() {
 	fmt.Println("  POST   /products       - Create product")
 	fmt.Println("  GET    /orders         - List all orders")
 	fmt.Println("  POST   /orders         - Create order")
-	fmt.Println()
+	fmt.Println("")
 	fmt.Println("💡 Try it:")
+	fmt.Println("  # Get user (different versions)")
 	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8080/users/1")
 	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8080/users/1")
 	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8080/users/1")
-	fmt.Println()
-	fmt.Println("Server running on http://localhost:8080")
-	fmt.Println("Use X-API-Version header to specify version")
+	fmt.Println("")
+	fmt.Println("  # Create user (v2 - uses 'name' not 'full_name')")
+	fmt.Println("  curl -X POST -H 'X-API-Version: 2024-06-01' -H 'Content-Type: application/json' \\")
+	fmt.Println("    -d '{\"name\":\"Jane\",\"email\":\"jane@example.com\",\"status\":\"active\"}' \\")
+	fmt.Println("    http://localhost:8080/users")
+	fmt.Println("")
+	fmt.Println("🌐 Server listening on http://localhost:8080")
+	fmt.Println("   Use X-API-Version header to specify version")
+	fmt.Println("")
 
 	r.Run(":8080")
 }
@@ -175,26 +179,36 @@ func main() {
 // DECLARATIVE MIGRATIONS - Simple & Clean! ✨
 // ============================================================================
 
-// v1 -> v2: Add email and status fields, remove deprecated temp_field
+// createUserV1ToV2Migration defines the migration from v1 to v2
+// This uses the NEW declarative API which automatically generates:
+//  1. Request migration (v1 → v2): adds "email" and "status" fields if missing, removes "temp_field"
+//  2. Response migration (v2 → v1): removes "email" and "status" fields
+//  3. Error transformation: updates field names in validation errors (400 status only)
 func createUserV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Add email and status fields, remove deprecated temp_field").
-		// PATH-BASED ROUTING: Explicit and clear which endpoints are affected
+		// PATH-BASED ROUTING: Explicitly specify which endpoints this migration affects
 		ForPath("/users", "/users/:id").
-		AddField("email", "unknown@example.com").
-		AddField("status", "active").
-		RemoveField("temp_field").
+		// ✨ Automatic bidirectional migrations!
+		AddField("email", "unknown@example.com"). // Adds in requests, removes in responses
+		AddField("status", "active").             // Adds in requests, removes in responses
+		RemoveField("temp_field").                // Removes from requests (can't restore in responses)
 		Build()
 }
 
-// v2 -> v3: Rename name to full_name, add phone, expand status enum
+// createUserV2ToV3Migration defines the migration from v2 to v3
+// This uses the NEW declarative API which automatically generates:
+//  1. Request migration (v2 → v3): renames "name" to "full_name", adds "phone" field if missing
+//  2. Response migration (v3 → v2): renames "full_name" to "name", removes "phone" field
+//  3. Error transformation: updates "full_name" to "name" in validation errors (400 status only)
 func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Rename name to full_name, add phone, and expand status enum").
-		// PATH-BASED ROUTING: Explicit and clear which endpoints are affected
+		// PATH-BASED ROUTING: Explicitly specify which endpoints this migration affects
 		ForPath("/users", "/users/:id").
-		RenameField("name", "full_name"). // Automatic bidirectional + error transformation!
-		AddField("phone", "").
+		// ✨ Automatic bidirectional migrations + error transformation!
+		RenameField("name", "full_name"). // Renames in both directions + transforms validation errors
+		AddField("phone", "").            // Adds in requests, removes in responses
 		// Note: MapEnumValues normalizes new values in requests, expands in responses
 		// This is useful when the database stores canonical values
 		// For this example, we don't use it since v2 and v3 both understand active/inactive
@@ -206,14 +220,19 @@ func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 		Build()
 }
 
-// v2 -> v3: Add description and currency to Product
+// createProductV2ToV3Migration defines the migration from v2 to v3 for products
+// This uses the NEW declarative API which automatically generates:
+//  1. Request migration (v2 → v3): adds "description" and "currency" fields if missing
+//  2. Response migration (v3 → v2): removes "description" and "currency" fields
+//  3. Error transformation: updates field names in validation errors (400 status only)
 func createProductV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Add description and currency to Product").
-		// PATH-BASED ROUTING: Explicit and clear which endpoints are affected
+		// PATH-BASED ROUTING: Explicitly specify which endpoints this migration affects
 		ForPath("/products", "/products/:id").
-		AddField("description", "").
-		AddField("currency", "USD").
+		// ✨ Automatic bidirectional migrations!
+		AddField("description", ""). // Adds in requests, removes in responses
+		AddField("currency", "USD"). // Adds in requests, removes in responses
 		Build()
 }
 

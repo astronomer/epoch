@@ -8,11 +8,10 @@ Epoch lets you version your Go APIs the way Stripe does - write your handlers on
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Why Epoch?
-
-### ✨ NEW: Declarative API (v2.0)
 - **One operation, multiple transformations** - `RenameField("old", "new")` generates request, response, AND error transformations
 - **Type-safe** - Compile-time checking with Go's type system
 - **Automatic error field transformation** - Field names in error messages automatically update for each version
+- **Path-based routing** - Explicit control over which endpoints each migration affects
 
 ### Core Features
 - **Write once** - Implement handlers for your latest API version only
@@ -22,7 +21,6 @@ Epoch lets you version your Go APIs the way Stripe does - write your handlers on
 - **Flexible versioning** - Support date-based (`2024-01-01`), semantic (`v1.0.0`), or string versions
 - **Gin integration** - Drop into existing Gin applications with minimal changes
 - **High performance** - Utilizes ByteDance Sonic for fast JSON processing
-- **Backward compatible** - Old imperative API still works for complex cases
 
 ## Installation
 
@@ -59,12 +57,16 @@ func main() {
             AddField("email", "user@example.com").  // Automatic bidirectional!
         Build()
 
-    // Setup Epoch
-    epochInstance, _ := epoch.NewEpoch().
+    // Setup Epoch (with automatic cycle detection)
+    epochInstance, err := epoch.NewEpoch().
         WithVersions(v1, v2).
         WithHeadVersion().
         WithChanges(migration).
         Build()
+    
+    if err != nil {
+        panic(err)  // Will catch cycles: "cycle detected in version chain: ..."
+    }
 
     // Add to Gin
     r := gin.Default()
@@ -111,7 +113,7 @@ migration := epoch.NewVersionChange(
     "Add email to User",
     v1, v2,
     &epoch.AlterRequestInstruction{
-        Schemas: []interface{}{User{}},
+        Path: "/users",  // Path-based routing required
         Transformer: func(req *epoch.RequestInfo) error {
             if !req.HasField("email") {
                 req.SetField("email", "user@example.com")
@@ -120,7 +122,7 @@ migration := epoch.NewVersionChange(
         },
     },
     &epoch.AlterResponseInstruction{
-        Schemas: []interface{}{User{}},
+        Path: "/users",  // Path-based routing required
         Transformer: func(resp *epoch.ResponseInfo) error {
             resp.DeleteField("email")
             return nil
@@ -162,7 +164,7 @@ migration := epoch.NewVersionChangeBuilder(v1, v2).
     Build()
 ```
 
-> **Note:** Use `ForPath()` for runtime routing. Optionally add `Schema(User{})` for metadata/documentation.
+> **Note:** `ForPath()` is required - it specifies which endpoints the migration applies to at runtime.
 
 ### What Happens Automatically
 
@@ -505,14 +507,19 @@ The approach achieves **transparent API versioning with automatic migrations** f
 ## Testing
 
 ```bash
-# Run all tests
+# Run all tests 
 go test ./epoch/...
 
 # Run with coverage
 go test ./epoch/... -coverprofile=coverage.out
 go tool cover -html=coverage.out
 
-# Verify examples compile
+# Run specific test suites
+go test ./epoch -run TestMigrationChain  # Cycle detection tests
+go test ./epoch -run TestIntegration     # Integration tests
+go test ./epoch -run TestBuilderAPI      # Declarative API tests
+
+# Verify examples compile and run
 cd examples/basic && go build
 cd examples/advanced && go build
 ```

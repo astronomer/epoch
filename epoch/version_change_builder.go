@@ -122,7 +122,6 @@ func (b *versionChangeBuilder) Build() *VersionChange {
 						})
 					}
 
-					// For error responses, transform field names
 					if len(fieldMappings) > 0 {
 						return transformErrorFieldNames(resp, fieldMappings)
 					}
@@ -210,13 +209,14 @@ func (pb *pathBuilder) Build() *VersionChange {
 
 // transformErrorFieldNames transforms field names in error messages
 func transformErrorFieldNames(resp *ResponseInfo, fieldMapping map[string]string) error {
-	if resp.StatusCode < 400 || resp.Body == nil {
-		return nil // Not an error response
+	// Only transform validation errors (400 Bad Request)
+	if resp.StatusCode != 400 || resp.Body == nil {
+		return nil
 	}
 
 	errorNode := resp.Body.Get("error")
 	if errorNode == nil || !errorNode.Exists() {
-		return nil // No error field found
+		return nil
 	}
 
 	// Handle simple string errors

@@ -36,7 +36,7 @@ var _ = Describe("VersionChange", func() {
 
 		It("should create a version change with instructions", func() {
 			requestInst := &AlterRequestInstruction{
-				Schemas: []interface{}{TestUser{}},
+				Path: "/test",
 			}
 
 			change := NewVersionChange("Test change", v1, v2, requestInst)
@@ -67,11 +67,11 @@ var _ = Describe("VersionChange", func() {
 			requestInfo = NewRequestInfo(c, &bodyNode)
 		})
 
-		Context("with schema-based instructions", func() {
+		Context("with path-based instructions", func() {
 			It("should apply request transformations", func() {
 				transformCalled := false
 				requestInst := &AlterRequestInstruction{
-					Schemas: []interface{}{TestUser{}},
+					Path: "/test",
 					Transformer: func(req *RequestInfo) error {
 						transformCalled = true
 						return nil
@@ -80,6 +80,12 @@ var _ = Describe("VersionChange", func() {
 
 				change = NewVersionChange("Test change", v1, v2, requestInst)
 
+				// Create context with proper path
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest("GET", "/test", nil)
+				bodyNode, _ := sonic.Get([]byte(`{}`))
+				requestInfo = NewRequestInfo(c, &bodyNode)
+
 				err := change.MigrateRequest(ctx, requestInfo)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(transformCalled).To(BeTrue())
@@ -87,7 +93,7 @@ var _ = Describe("VersionChange", func() {
 
 			It("should handle transformation errors", func() {
 				requestInst := &AlterRequestInstruction{
-					Schemas: []interface{}{TestUser{}},
+					Path: "/test",
 					Transformer: func(req *RequestInfo) error {
 						return fmt.Errorf("transformation failed")
 					},
@@ -95,9 +101,15 @@ var _ = Describe("VersionChange", func() {
 
 				change = NewVersionChange("Test change", v1, v2, requestInst)
 
+				// Create context with proper path
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest("GET", "/test", nil)
+				bodyNode, _ := sonic.Get([]byte(`{}`))
+				requestInfo = NewRequestInfo(c, &bodyNode)
+
 				err := change.MigrateRequest(ctx, requestInfo)
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("request schema migration failed"))
+				Expect(err.Error()).To(ContainSubstring("request path migration failed"))
 			})
 		})
 
@@ -141,11 +153,11 @@ var _ = Describe("VersionChange", func() {
 			responseInfo.StatusCode = 200
 		})
 
-		Context("with schema-based instructions", func() {
+		Context("with path-based instructions", func() {
 			It("should apply response transformations", func() {
 				transformCalled := false
 				responseInst := &AlterResponseInstruction{
-					Schemas: []interface{}{TestUser{}},
+					Path: "/test",
 					Transformer: func(resp *ResponseInfo) error {
 						transformCalled = true
 						return nil
@@ -154,6 +166,13 @@ var _ = Describe("VersionChange", func() {
 
 				change = NewVersionChange("Test change", v1, v2, responseInst)
 
+				// Create context with proper path
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest("GET", "/test", nil)
+				bodyNode, _ := sonic.Get([]byte(`{"id":1}`))
+				responseInfo = NewResponseInfo(c, &bodyNode)
+				responseInfo.StatusCode = 200
+
 				err := change.MigrateResponse(ctx, responseInfo)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(transformCalled).To(BeTrue())
@@ -161,10 +180,9 @@ var _ = Describe("VersionChange", func() {
 
 			It("should skip error responses when MigrateHTTPErrors is false", func() {
 				transformCalled := false
-				responseInfo.StatusCode = 400 // Error status
 
 				responseInst := &AlterResponseInstruction{
-					Schemas:           []interface{}{TestUser{}},
+					Path:              "/test",
 					MigrateHTTPErrors: false,
 					Transformer: func(resp *ResponseInfo) error {
 						transformCalled = true
@@ -174,6 +192,13 @@ var _ = Describe("VersionChange", func() {
 
 				change = NewVersionChange("Test change", v1, v2, responseInst)
 
+				// Create context with proper path and error status
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest("GET", "/test", nil)
+				bodyNode, _ := sonic.Get([]byte(`{"id":1}`))
+				responseInfo = NewResponseInfo(c, &bodyNode)
+				responseInfo.StatusCode = 400 // Error status
+
 				err := change.MigrateResponse(ctx, responseInfo)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(transformCalled).To(BeFalse())
@@ -181,10 +206,9 @@ var _ = Describe("VersionChange", func() {
 
 			It("should migrate error responses when MigrateHTTPErrors is true", func() {
 				transformCalled := false
-				responseInfo.StatusCode = 400 // Error status
 
 				responseInst := &AlterResponseInstruction{
-					Schemas:           []interface{}{TestUser{}},
+					Path:              "/test",
 					MigrateHTTPErrors: true,
 					Transformer: func(resp *ResponseInfo) error {
 						transformCalled = true
@@ -193,6 +217,13 @@ var _ = Describe("VersionChange", func() {
 				}
 
 				change = NewVersionChange("Test change", v1, v2, responseInst)
+
+				// Create context with proper path and error status
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest("GET", "/test", nil)
+				bodyNode, _ := sonic.Get([]byte(`{"id":1}`))
+				responseInfo = NewResponseInfo(c, &bodyNode)
+				responseInfo.StatusCode = 400 // Error status
 
 				err := change.MigrateResponse(ctx, responseInfo)
 				Expect(err).NotTo(HaveOccurred())
@@ -223,7 +254,7 @@ var _ = Describe("MigrationChain", func() {
 		change1 = NewVersionChange("Change 1->2", v1, v2)
 		change2 = NewVersionChange("Change 2->3", v2, v3)
 
-		chain = NewMigrationChain([]*VersionChange{change1, change2})
+		chain, _ = NewMigrationChain([]*VersionChange{change1, change2})
 		ctx = context.Background()
 		gin.SetMode(gin.TestMode)
 	})
@@ -232,6 +263,88 @@ var _ = Describe("MigrationChain", func() {
 		It("should create a migration chain", func() {
 			Expect(chain).NotTo(BeNil())
 			Expect(chain.GetChanges()).To(HaveLen(2))
+		})
+
+		It("should detect simple cycles", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			// Create a cycle: v1 -> v2 -> v1
+			changes := []*VersionChange{
+				NewVersionChange("v1 to v2", v1, v2),
+				NewVersionChange("v2 to v1", v2, v1), // Cycle!
+			}
+
+			_, err := NewMigrationChain(changes)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cycle detected"))
+		})
+
+		It("should detect complex cycles", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+			v3, _ := NewDateVersion("2025-01-01")
+			v4, _ := NewDateVersion("2025-06-01")
+
+			// Create a cycle: v2 -> v3 -> v4 -> v2
+			changes := []*VersionChange{
+				NewVersionChange("v1 to v2", v1, v2),
+				NewVersionChange("v2 to v3", v2, v3),
+				NewVersionChange("v3 to v4", v3, v4),
+				NewVersionChange("v4 to v2", v4, v2), // Cycle back to v2!
+			}
+
+			_, err := NewMigrationChain(changes)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cycle detected"))
+		})
+
+		It("should allow acyclic graphs", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+			v3, _ := NewDateVersion("2025-01-01")
+
+			// No cycles - linear chain
+			changes := []*VersionChange{
+				NewVersionChange("v1 to v2", v1, v2),
+				NewVersionChange("v2 to v3", v2, v3),
+			}
+
+			chain, err := NewMigrationChain(changes)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(chain).NotTo(BeNil())
+			Expect(chain.GetChanges()).To(HaveLen(2))
+		})
+
+		It("should allow multiple disconnected chains", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+			v3, _ := NewDateVersion("2025-01-01")
+			v4, _ := NewDateVersion("2025-06-01")
+
+			// Two separate chains: v1 -> v2 and v3 -> v4
+			changes := []*VersionChange{
+				NewVersionChange("v1 to v2", v1, v2),
+				NewVersionChange("v3 to v4", v3, v4),
+			}
+
+			chain, err := NewMigrationChain(changes)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(chain).NotTo(BeNil())
+			Expect(chain.GetChanges()).To(HaveLen(2))
+		})
+
+		It("should detect self-loops", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+
+			// Self-loop: v1 -> v1
+			changes := []*VersionChange{
+				NewVersionChange("v1 to v1", v1, v1), // Self-loop!
+			}
+
+			_, err := NewMigrationChain(changes)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cycle detected"))
 		})
 	})
 
@@ -342,7 +455,7 @@ var _ = Describe("MigrationChain", func() {
 				// User migration: v3 has "full_name" and "phone", v2 has "name" without phone
 				userChange := NewVersionChange("User v2->v3: Add phone, rename name to full_name", v2, v3,
 					&AlterResponseInstruction{
-						Schemas: []interface{}{User{}},
+						Path: "/test",
 						Transformer: func(resp *ResponseInfo) error {
 							if resp.Body != nil {
 								// Backward migration: v3 -> v2
@@ -362,7 +475,7 @@ var _ = Describe("MigrationChain", func() {
 				// Product migration: v3 has "description" and "currency", v2 has "desc" without currency
 				productChange := NewVersionChange("Product v2->v3: Add currency, rename desc to description", v2, v3,
 					&AlterResponseInstruction{
-						Schemas: []interface{}{Product{}},
+						Path: "/test",
 						Transformer: func(resp *ResponseInfo) error {
 							if resp.Body != nil {
 								// Backward migration: v3 -> v2
@@ -382,7 +495,7 @@ var _ = Describe("MigrationChain", func() {
 				// Order migration: v3 has "created_at", v2 doesn't
 				orderChange := NewVersionChange("Order v2->v3: Add created_at timestamp", v2, v3,
 					&AlterResponseInstruction{
-						Schemas: []interface{}{Order{}},
+						Path: "/test",
 						Transformer: func(resp *ResponseInfo) error {
 							if resp.Body != nil {
 								// Backward migration: v3 -> v2
@@ -394,12 +507,13 @@ var _ = Describe("MigrationChain", func() {
 					},
 				)
 
-				multiChain = NewMigrationChain([]*VersionChange{userChange, productChange, orderChange})
+				multiChain, _ = NewMigrationChain([]*VersionChange{userChange, productChange, orderChange})
 			})
 
 			It("should apply ALL changes with the same FromVersion when migrating backward", func() {
 				// Setup response data representing a v3 response with all fields
 				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest("GET", "/test", nil) // Add proper request with path
 				responseJSON := `{"id":1,"full_name":"Alice Johnson","email":"alice@example.com","phone":"+1-555-0100","product_id":100,"name":"Laptop","price":999.99,"description":"High-performance laptop","currency":"USD","order_id":1000,"user_id":1,"quantity":2,"created_at":"2024-01-01T00:00:00Z"}`
 				responseNode, _ := sonic.Get([]byte(responseJSON))
 				responseInfo := NewResponseInfo(c, &responseNode)
