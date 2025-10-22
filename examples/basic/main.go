@@ -44,13 +44,10 @@ func main() {
 }
 
 // createV1ToV2Change defines the migration between v1.0.0 and v2.0.0
-// ✨ Using the NEW declarative API - simple and clean!
 func createV1ToV2Change() *epoch.VersionChange {
 	v1, _ := epoch.NewSemverVersion("1.0.0")
 	v2, _ := epoch.NewSemverVersion("2.0.0")
 
-	// BEFORE: 20+ lines of imperative code
-	// AFTER: 4 lines of declarative operations!
 	return epoch.NewVersionChangeBuilder(v1, v2).
 		Description("Add email field to User").
 		Schema(User{}).

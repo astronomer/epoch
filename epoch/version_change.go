@@ -6,6 +6,23 @@ import (
 	"reflect"
 )
 
+// AlterRequestInstruction defines how to modify a request during migration
+type AlterRequestInstruction struct {
+	Schemas     []interface{} // Types this instruction applies to
+	Path        string        // Path this instruction applies to (if path-based)
+	Methods     []string      // HTTP methods this applies to (if path-based)
+	Transformer func(*RequestInfo) error
+}
+
+// AlterResponseInstruction defines how to modify a response during migration
+type AlterResponseInstruction struct {
+	Schemas           []interface{} // Types this instruction applies to
+	Path              string        // Path this instruction applies to (if path-based)
+	Methods           []string      // HTTP methods this applies to (if path-based)
+	MigrateHTTPErrors bool          // Whether to migrate error responses
+	Transformer       func(*ResponseInfo) error
+}
+
 // VersionChange defines a set of instructions for migrating between two API versions
 type VersionChange struct {
 	description                            string
@@ -13,9 +30,6 @@ type VersionChange struct {
 	instructionsToMigrateToPreviousVersion []interface{}
 
 	// Organized instruction containers
-	alterSchemaInstructions           []*SchemaInstruction
-	alterEnumInstructions             []*EnumInstruction
-	alterEndpointInstructions         []*EndpointInstruction
 	alterRequestBySchemaInstructions  map[reflect.Type][]*AlterRequestInstruction
 	alterRequestByPathInstructions    map[string][]*AlterRequestInstruction
 	alterResponseBySchemaInstructions map[reflect.Type][]*AlterResponseInstruction
@@ -53,12 +67,6 @@ func NewVersionChange(description string, fromVersion, toVersion *Version, instr
 func (vc *VersionChange) extractInstructionsIntoContainers() {
 	for _, instruction := range vc.instructionsToMigrateToPreviousVersion {
 		switch inst := instruction.(type) {
-		case *SchemaInstruction:
-			vc.alterSchemaInstructions = append(vc.alterSchemaInstructions, inst)
-		case *EnumInstruction:
-			vc.alterEnumInstructions = append(vc.alterEnumInstructions, inst)
-		case *EndpointInstruction:
-			vc.alterEndpointInstructions = append(vc.alterEndpointInstructions, inst)
 		case *AlterRequestInstruction:
 			if inst.Path != "" {
 				vc.alterRequestByPathInstructions[inst.Path] = append(
@@ -180,35 +188,6 @@ func (vc *VersionChange) BindRouteToResponseMigrations(routeID int, path string)
 	if instructions, exists := vc.alterResponseByPathInstructions[path]; exists {
 		vc.routeToResponseMigrationMapping[routeID] = instructions
 	}
-}
-
-// GetSchemaInstructions returns all schema instructions
-func (vc *VersionChange) GetSchemaInstructions() []*SchemaInstruction {
-	return vc.alterSchemaInstructions
-}
-
-// GetEndpointInstructions returns all endpoint instructions
-func (vc *VersionChange) GetEndpointInstructions() []*EndpointInstruction {
-	return vc.alterEndpointInstructions
-}
-
-// GetEnumInstructions returns all enum instructions
-func (vc *VersionChange) GetEnumInstructions() []*EnumInstruction {
-	return vc.alterEnumInstructions
-}
-
-// FieldChange represents a change to a specific field (kept for backward compatibility)
-type FieldChange struct {
-	// Field name to modify
-	FieldName string
-	// Operation type: "add", "remove", "rename", "transform"
-	Operation string
-	// New field name (for rename operations)
-	NewFieldName string
-	// Default value (for add operations)
-	DefaultValue interface{}
-	// Transform function (for transform operations)
-	TransformFunc func(interface{}) interface{}
 }
 
 // MigrationChain manages a sequence of version changes

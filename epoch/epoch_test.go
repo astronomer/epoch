@@ -193,13 +193,6 @@ var _ = Describe("Cadwyn", func() {
 			})
 		})
 
-		Describe("GetSchemaGenerator", func() {
-			It("should return the schema generator", func() {
-				generator := cadwynInstance.GetSchemaGenerator()
-				Expect(generator).NotTo(BeNil())
-			})
-		})
-
 		Describe("GetVersions", func() {
 			It("should return all versions", func() {
 				versions := cadwynInstance.GetVersions()
@@ -223,20 +216,6 @@ var _ = Describe("Cadwyn", func() {
 			})
 		})
 
-		Describe("GenerateStructForVersion", func() {
-			It("should generate Go code for a struct", func() {
-				code, err := cadwynInstance.GenerateStructForVersion(TestUser{}, "1.0.0")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(code).To(ContainSubstring("TestUser"))
-			})
-
-			It("should handle pointer types", func() {
-				user := &TestUser{}
-				code, err := cadwynInstance.GenerateStructForVersion(user, "1.0.0")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(code).To(ContainSubstring("TestUser"))
-			})
-		})
 	})
 
 	Describe("Convenience functions", func() {

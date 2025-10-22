@@ -9,10 +9,9 @@ import (
 
 // Epoch provides API versioning capabilities for existing Gin applications
 type Epoch struct {
-	versionBundle   *VersionBundle
-	migrationChain  *MigrationChain
-	schemaGenerator *SchemaGenerator
-	versionConfig   VersionConfig
+	versionBundle  *VersionBundle
+	migrationChain *MigrationChain
+	versionConfig  VersionConfig
 }
 
 // VersionConfig holds configuration for version detection and handling
@@ -63,11 +62,6 @@ func (c *Epoch) GetMigrationChain() *MigrationChain {
 	return c.migrationChain
 }
 
-// GetSchemaGenerator returns the schema generator
-func (c *Epoch) GetSchemaGenerator() *SchemaGenerator {
-	return c.schemaGenerator
-}
-
 // GetVersions returns all configured versions
 func (c *Epoch) GetVersions() []*Version {
 	return c.versionBundle.GetVersions()
@@ -84,15 +78,11 @@ func (c *Epoch) ParseVersion(versionStr string) (*Version, error) {
 }
 
 // GenerateStructForVersion generates Go code for a struct at a specific version
+// Note: Schema generation has been removed and will be rebuilt in the future
+// using the new declarative operation framework. This function is kept for
+// backward compatibility but will return an error.
 func (c *Epoch) GenerateStructForVersion(structType interface{}, targetVersion string) (string, error) {
-	if c.schemaGenerator == nil {
-		return "", fmt.Errorf("schema generation is not enabled")
-	}
-	reflectType := reflect.TypeOf(structType)
-	if reflectType.Kind() == reflect.Ptr {
-		reflectType = reflectType.Elem()
-	}
-	return c.schemaGenerator.GenerateStruct(reflectType, targetVersion)
+	return "", fmt.Errorf("schema generation has been temporarily removed and will be rebuilt using the new declarative API")
 }
 
 // EpochBuilder provides a fluent API for building Epoch instances
@@ -217,24 +207,10 @@ func (cb *EpochBuilder) Build() (*Epoch, error) {
 	// Create migration chain
 	migrationChain := NewMigrationChain(cb.changes)
 
-	// Create schema generator
-	schemaGenerator := NewSchemaGenerator(versionBundle, migrationChain)
-
-	// Register types with schema generator
-	registeredTypes := make([]string, 0)
-	for _, t := range cb.types {
-		if err := schemaGenerator.RegisterType(t); err != nil {
-			return nil, fmt.Errorf("failed to register type '%s': %w (already registered types: %v)",
-				t.Name(), err, registeredTypes)
-		}
-		registeredTypes = append(registeredTypes, t.Name())
-	}
-
 	return &Epoch{
-		versionBundle:   versionBundle,
-		migrationChain:  migrationChain,
-		schemaGenerator: schemaGenerator,
-		versionConfig:   cb.versionConfig,
+		versionBundle:  versionBundle,
+		migrationChain: migrationChain,
+		versionConfig:  cb.versionConfig,
 	}, nil
 }
 

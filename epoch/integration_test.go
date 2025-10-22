@@ -565,7 +565,6 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(instance).NotTo(BeNil())
 			Expect(instance.GetVersions()).To(HaveLen(2))
-			Expect(instance.GetSchemaGenerator()).NotTo(BeNil())
 		})
 
 		It("should accumulate errors during building", func() {
@@ -593,43 +592,6 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			instance4, err4 := Simple()
 			Expect(err4).NotTo(HaveOccurred())
 			Expect(instance4).NotTo(BeNil())
-		})
-	})
-
-	Describe("Schema Generation Integration", func() {
-		It("should generate struct code for specific version", func() {
-			v1, _ := NewDateVersion("2025-01-01")
-			v2, _ := NewDateVersion("2024-01-01")
-
-			instance, err := NewEpoch().
-				WithVersions(v1, v2).
-				WithTypes(UserV1{}).
-				WithVersionFormat(VersionFormatDate).
-				Build()
-
-			Expect(err).NotTo(HaveOccurred())
-
-			code, err := instance.GenerateStructForVersion(UserV1{}, "2025-01-01")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(code).To(ContainSubstring("UserV1"))
-			Expect(code).To(ContainSubstring("struct"))
-		})
-
-		It("should handle pointer types in schema generation", func() {
-			v1, _ := NewDateVersion("2025-01-01")
-
-			instance, err := NewEpoch().
-				WithVersions(v1).
-				WithTypes(&UserV1{}).
-				WithVersionFormat(VersionFormatDate).
-				Build()
-
-			Expect(err).NotTo(HaveOccurred())
-
-			user := &UserV1{}
-			code, err := instance.GenerateStructForVersion(user, "2025-01-01")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(code).NotTo(BeEmpty())
 		})
 	})
 

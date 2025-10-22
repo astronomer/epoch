@@ -145,7 +145,7 @@ func (b *versionChangeBuilder) Build() *VersionChange {
 	}
 
 	// Use the old NewVersionChange function to create the actual VersionChange
-	return newVersionChangeFromBuilder(b.description, b.fromVersion, b.toVersion, instructions...)
+	return NewVersionChange(b.description, b.fromVersion, b.toVersion, instructions...)
 }
 
 // schemaBuilder builds operations for a specific schema

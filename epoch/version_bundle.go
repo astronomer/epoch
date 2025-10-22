@@ -19,9 +19,8 @@ type VersionBundle struct {
 	// Set of version values for quick lookup
 	versionValuesSet map[string]bool
 
-	// Versioned schemas and enums tracking
-	versionedSchemas map[string]interface{}
-	versionedEnums   map[string]interface{}
+	// Note: Versioned schemas and enums tracking has been removed
+	// Will be rebuilt using the new declarative operation framework
 }
 
 // NewVersionBundle creates a new version bundle
@@ -89,8 +88,6 @@ func NewVersionBundle(versions []*Version) (*VersionBundle, error) {
 		allVersions:                    allVersions,
 		versionChangesToVersionMapping: versionChangesToVersionMapping,
 		versionValuesSet:               versionValuesSet,
-		versionedSchemas:               make(map[string]interface{}),
-		versionedEnums:                 make(map[string]interface{}),
 	}
 
 	return vb, nil
@@ -129,89 +126,17 @@ func (vb *VersionBundle) ParseVersion(versionStr string) (*Version, error) {
 }
 
 // GetVersionedSchemas returns a map of versioned schemas
+// Note: Schema tracking has been removed and will be rebuilt in the future
+// using the new declarative operation framework. Returns empty map for now.
 func (vb *VersionBundle) GetVersionedSchemas() map[string]interface{} {
-	if len(vb.versionedSchemas) == 0 {
-		vb.buildVersionedSchemas()
-	}
-	return vb.versionedSchemas
+	return make(map[string]interface{})
 }
 
 // GetVersionedEnums returns a map of versioned enums
+// Note: Enum tracking has been removed and will be rebuilt in the future
+// using the new declarative operation framework. Returns empty map for now.
 func (vb *VersionBundle) GetVersionedEnums() map[string]interface{} {
-	if len(vb.versionedEnums) == 0 {
-		vb.buildVersionedEnums()
-	}
-	return vb.versionedEnums
-}
-
-// buildVersionedSchemas builds the map of versioned schemas from all version changes
-func (vb *VersionBundle) buildVersionedSchemas() {
-	vb.versionedSchemas = make(map[string]interface{})
-
-	for _, v := range vb.allVersions {
-		versionKey := v.String()
-		schemaMap := make(map[string]interface{})
-
-		for _, change := range v.Changes {
-			// Extract schemas from schema instructions
-			schemaInstructions := change.GetSchemaInstructions()
-			if schemaInstructions == nil {
-				continue
-			}
-
-			// Type assert to slice of SchemaInstruction
-			if instructions, ok := schemaInstructions.([]*SchemaInstruction); ok {
-				for _, instruction := range instructions {
-					// Store schema information for this version
-					schemaMap[instruction.Name] = map[string]interface{}{
-						"type":       instruction.Type,
-						"attributes": instruction.Attributes,
-						"version":    versionKey,
-					}
-				}
-			}
-		}
-
-		if len(schemaMap) > 0 {
-			vb.versionedSchemas[versionKey] = schemaMap
-		}
-	}
-}
-
-// buildVersionedEnums builds the map of versioned enums from all version changes
-func (vb *VersionBundle) buildVersionedEnums() {
-	vb.versionedEnums = make(map[string]interface{})
-
-	for _, v := range vb.allVersions {
-		versionKey := v.String()
-		enumMap := make(map[string]interface{})
-
-		for _, change := range v.Changes {
-			// Extract enums from enum instructions
-			enumInstructions := change.GetEnumInstructions()
-			if enumInstructions == nil {
-				continue
-			}
-
-			// Type assert to slice of EnumInstruction
-			if instructions, ok := enumInstructions.([]*EnumInstruction); ok {
-				for _, instruction := range instructions {
-					// Store enum information for this version
-					enumKey := fmt.Sprintf("%v", instruction.Enum)
-					enumMap[enumKey] = map[string]interface{}{
-						"type":      instruction.Type,
-						"members":   instruction.Members,
-						"is_hidden": instruction.IsHidden,
-						"version":   versionKey,
-					}
-				}
-			}
-		}
-
-		if len(enumMap) > 0 {
-			vb.versionedEnums[versionKey] = enumMap
-		}
-	}
+	return make(map[string]interface{})
 }
 
 // IsVersionDefined checks if a version is defined in this bundle

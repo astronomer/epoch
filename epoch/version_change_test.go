@@ -36,26 +36,13 @@ var _ = Describe("VersionChange", func() {
 		})
 
 		It("should create a version change with instructions", func() {
-			schemaInst := &SchemaInstruction{
-				Name: "test_field",
-				Type: "field_added",
+			requestInst := &AlterRequestInstruction{
+				Schemas: []interface{}{TestUser{}},
 			}
 
-			change := NewVersionChange("Test change", v1, v2, schemaInst)
+			change := NewVersionChange("Test change", v1, v2, requestInst)
 			Expect(change).NotTo(BeNil())
-			Expect(change.GetSchemaInstructions()).To(HaveLen(1))
-		})
-
-		It("should organize different instruction types", func() {
-			schemaInst := &SchemaInstruction{Name: "field1", Type: "field_added"}
-			enumInst := &EnumInstruction{Type: "had_members"}
-			endpointInst := &EndpointInstruction{Path: "/test", Type: "endpoint_added"}
-
-			change := NewVersionChange("Test change", v1, v2, schemaInst, enumInst, endpointInst)
-
-			Expect(change.GetSchemaInstructions()).To(HaveLen(1))
-			Expect(change.GetEnumInstructions()).To(HaveLen(1))
-			Expect(change.GetEndpointInstructions()).To(HaveLen(1))
+			Expect(change.Description()).To(Equal("Test change"))
 		})
 	})
 

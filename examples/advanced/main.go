@@ -67,12 +67,11 @@ func main() {
 	v2, _ := epoch.NewDateVersion("2025-06-01")
 	v3, _ := epoch.NewDateVersion("2024-01-01")
 
-	// Build Epoch instance with DECLARATIVE migrations
+	// Build Epoch instance
 	epochInstance, err := epoch.NewEpoch().
 		WithVersions(v1, v2, v3).
 		WithHeadVersion().
 		WithChanges(
-			// ✨ NEW DECLARATIVE API - Simple field operations are one-liners!
 			createUserV1ToV2Migration(v1, v2),
 			createUserV2ToV3Migration(v2, v3),
 			createProductV2ToV3Migration(v2, v3),
@@ -177,8 +176,6 @@ func main() {
 // ============================================================================
 
 // v1 -> v2: Add email and status fields to User
-// BEFORE: 30+ lines of code with manual AST manipulation
-// AFTER: 6 lines of declarative operations!
 func createUserV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Add email and status fields to User").
@@ -189,8 +186,6 @@ func createUserV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
 }
 
 // v2 -> v3: Rename name to full_name, add phone, expand status enum
-// BEFORE: 60+ lines of nested conditionals and AST manipulation
-// AFTER: 8 lines of declarative operations!
 func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Rename name to full_name, add phone, and expand status enum").
@@ -205,8 +200,6 @@ func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 }
 
 // v2 -> v3: Add description and currency to Product
-// BEFORE: 40+ lines of code
-// AFTER: 6 lines!
 func createProductV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Add description and currency to Product").
@@ -217,7 +210,7 @@ func createProductV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange 
 }
 
 // ============================================================================
-// HTTP Handlers (unchanged from old API)
+// HTTP Handlers
 // ============================================================================
 
 func listUsers(c *gin.Context) {
