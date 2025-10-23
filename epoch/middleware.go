@@ -413,10 +413,8 @@ func (vah *VersionAwareHandler) migrateRequest(c *gin.Context, fromVersion *Vers
 	migrationChain := vah.migrationChain.GetMigrationPath(fromVersion, headVersion)
 
 	// Apply migrations in forward direction
-	// Note: We pass nil for bodyType since JSON unmarshaling creates map[string]interface{}
-	// which doesn't match the original struct types. Schema-based matching doesn't work with JSON.
 	for _, change := range migrationChain {
-		if err := change.MigrateRequest(c.Request.Context(), requestInfo, nil, 0); err != nil {
+		if err := change.MigrateRequest(c.Request.Context(), requestInfo); err != nil {
 			return fmt.Errorf("failed to migrate request with change %s: %w", change.Description(), err)
 		}
 	}
@@ -470,11 +468,9 @@ func (vah *VersionAwareHandler) migrateResponse(c *gin.Context, toVersion *Versi
 	migrationChain := vah.migrationChain.GetMigrationPath(headVersion, toVersion)
 
 	// Apply migrations in reverse direction
-	// Note: We pass nil for responseType since JSON unmarshaling creates map[string]interface{}
-	// which doesn't match the original struct types. Schema-based matching doesn't work with JSON.
 	for i := len(migrationChain) - 1; i >= 0; i-- {
 		change := migrationChain[i]
-		if err := change.MigrateResponse(c.Request.Context(), responseInfo, nil, 0); err != nil {
+		if err := change.MigrateResponse(c.Request.Context(), responseInfo); err != nil {
 			return fmt.Errorf("failed to migrate response with change %s: %w", change.Description(), err)
 		}
 	}

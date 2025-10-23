@@ -3,8 +3,25 @@ package epoch
 import (
 	"context"
 	"fmt"
-	"reflect"
+	"strings"
 )
+
+// AlterRequestInstruction defines how to modify a request during migration
+type AlterRequestInstruction struct {
+	Schemas     []interface{} // Types this instruction applies to
+	Path        string        // Path this instruction applies to (if path-based)
+	Methods     []string      // HTTP methods this applies to (if path-based)
+	Transformer func(*RequestInfo) error
+}
+
+// AlterResponseInstruction defines how to modify a response during migration
+type AlterResponseInstruction struct {
+	Schemas           []interface{} // Types this instruction applies to
+	Path              string        // Path this instruction applies to (if path-based)
+	Methods           []string      // HTTP methods this applies to (if path-based)
+	MigrateHTTPErrors bool          // Whether to migrate error responses
+	Transformer       func(*ResponseInfo) error
+}
 
 // VersionChange defines a set of instructions for migrating between two API versions
 type VersionChange struct {
@@ -12,22 +29,13 @@ type VersionChange struct {
 	isHiddenFromChangelog                  bool
 	instructionsToMigrateToPreviousVersion []interface{}
 
-	// Organized instruction containers
-	alterSchemaInstructions           []*SchemaInstruction
-	alterEnumInstructions             []*EnumInstruction
-	alterEndpointInstructions         []*EndpointInstruction
-	alterRequestBySchemaInstructions  map[reflect.Type][]*AlterRequestInstruction
-	alterRequestByPathInstructions    map[string][]*AlterRequestInstruction
-	alterResponseBySchemaInstructions map[reflect.Type][]*AlterResponseInstruction
-	alterResponseByPathInstructions   map[string][]*AlterResponseInstruction
+	// Path-based instruction containers (primary routing mechanism)
+	alterRequestByPathInstructions  map[string][]*AlterRequestInstruction
+	alterResponseByPathInstructions map[string][]*AlterResponseInstruction
 
 	// Version information
 	fromVersion *Version
 	toVersion   *Version
-
-	// Route mappings
-	routeToRequestMigrationMapping  map[int][]*AlterRequestInstruction
-	routeToResponseMigrationMapping map[int][]*AlterResponseInstruction
 }
 
 // NewVersionChange creates a new version change with the given description and instructions
@@ -37,12 +45,8 @@ func NewVersionChange(description string, fromVersion, toVersion *Version, instr
 		fromVersion:                            fromVersion,
 		toVersion:                              toVersion,
 		instructionsToMigrateToPreviousVersion: instructions,
-		alterRequestBySchemaInstructions:       make(map[reflect.Type][]*AlterRequestInstruction),
 		alterRequestByPathInstructions:         make(map[string][]*AlterRequestInstruction),
-		alterResponseBySchemaInstructions:      make(map[reflect.Type][]*AlterResponseInstruction),
 		alterResponseByPathInstructions:        make(map[string][]*AlterResponseInstruction),
-		routeToRequestMigrationMapping:         make(map[int][]*AlterRequestInstruction),
-		routeToResponseMigrationMapping:        make(map[int][]*AlterResponseInstruction),
 	}
 
 	vc.extractInstructionsIntoContainers()
@@ -53,56 +57,42 @@ func NewVersionChange(description string, fromVersion, toVersion *Version, instr
 func (vc *VersionChange) extractInstructionsIntoContainers() {
 	for _, instruction := range vc.instructionsToMigrateToPreviousVersion {
 		switch inst := instruction.(type) {
-		case *SchemaInstruction:
-			vc.alterSchemaInstructions = append(vc.alterSchemaInstructions, inst)
-		case *EnumInstruction:
-			vc.alterEnumInstructions = append(vc.alterEnumInstructions, inst)
-		case *EndpointInstruction:
-			vc.alterEndpointInstructions = append(vc.alterEndpointInstructions, inst)
 		case *AlterRequestInstruction:
 			if inst.Path != "" {
 				vc.alterRequestByPathInstructions[inst.Path] = append(
 					vc.alterRequestByPathInstructions[inst.Path], inst)
-			} else {
-				for _, schema := range inst.Schemas {
-					schemaType := reflect.TypeOf(schema)
-					vc.alterRequestBySchemaInstructions[schemaType] = append(
-						vc.alterRequestBySchemaInstructions[schemaType], inst)
-				}
 			}
+
 		case *AlterResponseInstruction:
 			if inst.Path != "" {
 				vc.alterResponseByPathInstructions[inst.Path] = append(
 					vc.alterResponseByPathInstructions[inst.Path], inst)
-			} else {
-				for _, schema := range inst.Schemas {
-					schemaType := reflect.TypeOf(schema)
-					vc.alterResponseBySchemaInstructions[schemaType] = append(
-						vc.alterResponseBySchemaInstructions[schemaType], inst)
-				}
 			}
 		}
 	}
 }
 
 // MigrateRequest applies request migrations for this version change
-func (vc *VersionChange) MigrateRequest(ctx context.Context, requestInfo *RequestInfo, bodyType reflect.Type, routeID int) error {
-	// Apply all schema-based request migrations
-	// IMPORTANT: All migrations in this VersionChange are applied together.
-	// Best practice: Use one VersionChange per schema/route to avoid unwanted side effects.
-	for _, instructions := range vc.alterRequestBySchemaInstructions {
-		for _, instruction := range instructions {
-			if err := instruction.Transformer(requestInfo); err != nil {
-				return fmt.Errorf("request schema migration failed for change '%s': %w", vc.description, err)
-			}
-		}
+// Note: ctx parameter is currently unused but reserved for future use (timeouts, cancellation, tracing)
+func (vc *VersionChange) MigrateRequest(ctx context.Context, requestInfo *RequestInfo) error {
+	// Extract path and method from request context
+	var requestPath, requestMethod string
+	if requestInfo.GinContext != nil && requestInfo.GinContext.Request != nil {
+		requestPath = requestInfo.GinContext.Request.URL.Path
+		requestMethod = requestInfo.GinContext.Request.Method
 	}
 
-	// Apply path-based request migrations
-	if instructions, exists := vc.routeToRequestMigrationMapping[routeID]; exists {
+	// Apply path-based instructions that match this request
+	for _, instructions := range vc.alterRequestByPathInstructions {
 		for _, instruction := range instructions {
-			if err := instruction.Transformer(requestInfo); err != nil {
-				return fmt.Errorf("request path migration failed for change '%s': %w", vc.description, err)
+			// Check if this instruction applies to this path
+			if instruction.Path != "" && matchesPath(requestPath, instruction.Path) {
+				// Check if method matches (empty Methods means all methods)
+				if len(instruction.Methods) == 0 || contains(instruction.Methods, requestMethod) {
+					if err := instruction.Transformer(requestInfo); err != nil {
+						return fmt.Errorf("request path migration failed for change '%s': %w", vc.description, err)
+					}
+				}
 			}
 		}
 	}
@@ -111,36 +101,76 @@ func (vc *VersionChange) MigrateRequest(ctx context.Context, requestInfo *Reques
 }
 
 // MigrateResponse applies response migrations for this version change
-func (vc *VersionChange) MigrateResponse(ctx context.Context, responseInfo *ResponseInfo, responseType reflect.Type, routeID int) error {
-	// Apply all schema-based response migrations
-	// IMPORTANT: All migrations in this VersionChange are applied together.
-	// Best practice: Use one VersionChange per schema/route to avoid unwanted side effects.
-	for _, instructions := range vc.alterResponseBySchemaInstructions {
-		for _, instruction := range instructions {
-			// Check if we should migrate error responses
-			if responseInfo.StatusCode >= 300 && !instruction.MigrateHTTPErrors {
-				continue
-			}
-			if err := instruction.Transformer(responseInfo); err != nil {
-				return fmt.Errorf("response schema migration failed for change '%s': %w", vc.description, err)
-			}
-		}
+// Note: ctx parameter is currently unused but reserved for future use (timeouts, cancellation, tracing)
+func (vc *VersionChange) MigrateResponse(ctx context.Context, responseInfo *ResponseInfo) error {
+	// Extract path and method from response context
+	var responsePath, responseMethod string
+	if responseInfo.GinContext != nil && responseInfo.GinContext.Request != nil {
+		responsePath = responseInfo.GinContext.Request.URL.Path
+		responseMethod = responseInfo.GinContext.Request.Method
 	}
 
-	// Apply path-based response migrations
-	if instructions, exists := vc.routeToResponseMigrationMapping[routeID]; exists {
+	// Apply path-based instructions that match this response
+	for _, instructions := range vc.alterResponseByPathInstructions {
 		for _, instruction := range instructions {
-			// Check if we should migrate error responses
-			if responseInfo.StatusCode >= 300 && !instruction.MigrateHTTPErrors {
-				continue
-			}
-			if err := instruction.Transformer(responseInfo); err != nil {
-				return fmt.Errorf("response path migration failed for change '%s': %w", vc.description, err)
+			// Check if this instruction applies to this path
+			if instruction.Path != "" && matchesPath(responsePath, instruction.Path) {
+				// Check if method matches (empty Methods means all methods)
+				if len(instruction.Methods) == 0 || contains(instruction.Methods, responseMethod) {
+					// Check if we should migrate error responses
+					if responseInfo.StatusCode >= 400 && !instruction.MigrateHTTPErrors {
+						continue
+					}
+					if err := instruction.Transformer(responseInfo); err != nil {
+						return fmt.Errorf("response path migration failed for change '%s': %w", vc.description, err)
+					}
+				}
 			}
 		}
 	}
 
 	return nil
+}
+
+// matchesPath checks if a request path matches a pattern
+// Supports exact matches and Gin-style path parameters (e.g., /users/:id)
+func matchesPath(requestPath, pattern string) bool {
+	// Exact match
+	if requestPath == pattern {
+		return true
+	}
+
+	// Gin-style parameter matching (e.g., /users/:id matches /users/123)
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	requestParts := strings.Split(strings.Trim(requestPath, "/"), "/")
+
+	if len(patternParts) != len(requestParts) {
+		return false
+	}
+
+	for i := range patternParts {
+		// Check for parameter (starts with :)
+		if strings.HasPrefix(patternParts[i], ":") {
+			continue // Parameters match any value
+		}
+
+		// Must be exact match
+		if patternParts[i] != requestParts[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// contains checks if a string slice contains a specific value
+func contains(slice []string, value string) bool {
+	for _, item := range slice {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 // FromVersion returns the version this change migrates from
@@ -168,63 +198,27 @@ func (vc *VersionChange) SetHiddenFromChangelog(hidden bool) {
 	vc.isHiddenFromChangelog = hidden
 }
 
-// BindRouteToRequestMigrations binds path-based request migrations to a specific route ID
-func (vc *VersionChange) BindRouteToRequestMigrations(routeID int, path string) {
-	if instructions, exists := vc.alterRequestByPathInstructions[path]; exists {
-		vc.routeToRequestMigrationMapping[routeID] = instructions
-	}
-}
-
-// BindRouteToResponseMigrations binds path-based response migrations to a specific route ID
-func (vc *VersionChange) BindRouteToResponseMigrations(routeID int, path string) {
-	if instructions, exists := vc.alterResponseByPathInstructions[path]; exists {
-		vc.routeToResponseMigrationMapping[routeID] = instructions
-	}
-}
-
-// GetSchemaInstructions returns all schema instructions
-func (vc *VersionChange) GetSchemaInstructions() []*SchemaInstruction {
-	return vc.alterSchemaInstructions
-}
-
-// GetEndpointInstructions returns all endpoint instructions
-func (vc *VersionChange) GetEndpointInstructions() []*EndpointInstruction {
-	return vc.alterEndpointInstructions
-}
-
-// GetEnumInstructions returns all enum instructions
-func (vc *VersionChange) GetEnumInstructions() []*EnumInstruction {
-	return vc.alterEnumInstructions
-}
-
-// FieldChange represents a change to a specific field (kept for backward compatibility)
-type FieldChange struct {
-	// Field name to modify
-	FieldName string
-	// Operation type: "add", "remove", "rename", "transform"
-	Operation string
-	// New field name (for rename operations)
-	NewFieldName string
-	// Default value (for add operations)
-	DefaultValue interface{}
-	// Transform function (for transform operations)
-	TransformFunc func(interface{}) interface{}
-}
-
 // MigrationChain manages a sequence of version changes
 type MigrationChain struct {
 	changes []*VersionChange
 }
 
-// NewMigrationChain creates a new migration chain
-func NewMigrationChain(changes []*VersionChange) *MigrationChain {
-	return &MigrationChain{
+// NewMigrationChain creates a new migration chain with cycle detection
+func NewMigrationChain(changes []*VersionChange) (*MigrationChain, error) {
+	mc := &MigrationChain{
 		changes: changes,
 	}
+
+	// Detect cycles in the version graph
+	if err := mc.detectCycles(); err != nil {
+		return nil, err
+	}
+
+	return mc, nil
 }
 
 // MigrateRequest applies all changes in the chain for request migration
-func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *RequestInfo, from, to *Version, bodyType reflect.Type, routeID int) error {
+func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *RequestInfo, from, to *Version) error {
 	// Find the starting point in the version chain
 	start := -1
 	for i, change := range mc.changes {
@@ -245,7 +239,7 @@ func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *Reque
 
 		// Stop if we've reached the target version
 		if change.ToVersion().Equal(to) {
-			if err := change.MigrateRequest(ctx, requestInfo, bodyType, routeID); err != nil {
+			if err := change.MigrateRequest(ctx, requestInfo); err != nil {
 				return fmt.Errorf("migration failed at %s->%s: %w",
 					change.FromVersion().String(), change.ToVersion().String(), err)
 			}
@@ -259,7 +253,7 @@ func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *Reque
 
 		// Apply this change if it's part of the migration path
 		if change.FromVersion().IsOlderThan(to) || change.FromVersion().Equal(to) {
-			if err := change.MigrateRequest(ctx, requestInfo, bodyType, routeID); err != nil {
+			if err := change.MigrateRequest(ctx, requestInfo); err != nil {
 				return fmt.Errorf("migration failed at %s->%s: %w",
 					change.FromVersion().String(), change.ToVersion().String(), err)
 			}
@@ -270,7 +264,7 @@ func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *Reque
 }
 
 // MigrateResponse applies all changes in reverse for response migration
-func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *ResponseInfo, from, to *Version, responseType reflect.Type, routeID int) error {
+func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *ResponseInfo, from, to *Version) error {
 	// If from and to are the same, no migration needed
 	if from.Equal(to) {
 		return nil
@@ -312,7 +306,7 @@ func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *Res
 
 	// Apply all collected changes
 	for _, change := range changesToApply {
-		if err := change.MigrateResponse(ctx, responseInfo, responseType, routeID); err != nil {
+		if err := change.MigrateResponse(ctx, responseInfo); err != nil {
 			return fmt.Errorf("reverse migration failed at %s->%s: %w",
 				change.ToVersion().String(), change.FromVersion().String(), err)
 		}
@@ -324,6 +318,75 @@ func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *Res
 // AddChange adds a new version change to the chain
 func (mc *MigrationChain) AddChange(change *VersionChange) {
 	mc.changes = append(mc.changes, change)
+}
+
+// detectCycles uses depth-first search to find cycles in the version graph
+func (mc *MigrationChain) detectCycles() error {
+	// Build adjacency list: version string -> list of target versions
+	graph := make(map[string][]string)
+	versionSet := make(map[string]bool)
+
+	for _, change := range mc.changes {
+		from := change.FromVersion().String()
+		to := change.ToVersion().String()
+
+		graph[from] = append(graph[from], to)
+		versionSet[from] = true
+		versionSet[to] = true
+	}
+
+	// Track visit states: 0=unvisited, 1=visiting, 2=visited
+	visited := make(map[string]int)
+
+	// Check each version for cycles
+	for version := range versionSet {
+		if visited[version] == 0 {
+			if err := dfs(version, graph, visited, []string{}); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// dfs performs depth-first search to detect cycles
+func dfs(node string, graph map[string][]string, visited map[string]int, path []string) error {
+	// Mark as visiting
+	visited[node] = 1
+	path = append(path, node)
+
+	// Visit all neighbors
+	for _, neighbor := range graph[node] {
+		switch visited[neighbor] {
+		case 0:
+			// Unvisited, continue DFS
+			if err := dfs(neighbor, graph, visited, path); err != nil {
+				return err
+			}
+		case 1:
+			// Currently visiting - cycle detected!
+			cycleStart := -1
+			for i, v := range path {
+				if v == neighbor {
+					cycleStart = i
+					break
+				}
+			}
+			if cycleStart >= 0 {
+				cycle := append(path[cycleStart:], neighbor)
+				return fmt.Errorf("cycle detected in version chain: %s", strings.Join(cycle, " -> "))
+			}
+			return fmt.Errorf("cycle detected in version chain involving: %s", neighbor)
+		case 2:
+			// Already visited, no cycle
+			continue
+		}
+	}
+
+	// Mark as fully visited
+	visited[node] = 2
+	return nil
 }
 
 // GetChanges returns all changes in the chain
@@ -343,8 +406,11 @@ func (mc *MigrationChain) GetMigrationPath(from, to *Version) []*VersionChange {
 	if from.IsOlderThan(to) {
 		for _, change := range mc.changes {
 			// Include changes that are in the path from 'from' to 'to'
+			// A change is included if:
+			// 1. Its FromVersion is >= from (Equal or IsNewerThan)
+			// 2. Its ToVersion is <= to (IsOlderThan or Equal)
 			if (change.FromVersion().Equal(from) || change.FromVersion().IsNewerThan(from)) &&
-				(change.ToVersion().Equal(to) || change.ToVersion().IsOlderThan(to)) {
+				(change.ToVersion().IsOlderThan(to) || change.ToVersion().Equal(to)) {
 				path = append(path, change)
 			}
 		}
@@ -353,8 +419,11 @@ func (mc *MigrationChain) GetMigrationPath(from, to *Version) []*VersionChange {
 		// We need to reverse the changes that got us from 'to' to 'from'
 		for _, change := range mc.changes {
 			// Include changes that are in the path from 'to' to 'from'
+			// A change is included if:
+			// 1. Its FromVersion is >= to (Equal or IsNewerThan)
+			// 2. Its ToVersion is <= from (IsOlderThan or Equal)
 			if (change.FromVersion().Equal(to) || change.FromVersion().IsNewerThan(to)) &&
-				(change.ToVersion().Equal(from) || change.ToVersion().IsOlderThan(from)) {
+				(change.ToVersion().IsOlderThan(from) || change.ToVersion().Equal(from)) {
 				path = append(path, change)
 			}
 		}

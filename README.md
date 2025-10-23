@@ -8,9 +8,14 @@ Epoch lets you version your Go APIs the way Stripe does - write your handlers on
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Why Epoch?
+- **One operation, multiple transformations** - `RenameField("old", "new")` generates request, response, AND error transformations
+- **Type-safe** - Compile-time checking with Go's type system
+- **Automatic error field transformation** - Field names in error messages automatically update for each version
+- **Path-based routing** - Explicit control over which endpoints each migration affects
 
+### Core Features
 - **Write once** - Implement handlers for your latest API version only
-- **Automatic migrations** - Define transformations between versions declaratively
+- **Bidirectional migrations** - Declarative operations work in both directions automatically
 - **Field order preservation** - JSON responses maintain original field order
 - **No duplication** - No need to maintain multiple versions of the same endpoint
 - **Flexible versioning** - Support date-based (`2024-01-01`), semantic (`v1.0.0`), or string versions
@@ -44,35 +49,22 @@ func main() {
     v1, _ := epoch.NewSemverVersion("1.0.0")
     v2, _ := epoch.NewSemverVersion("2.0.0")
     
-    migration := epoch.NewVersionChange(
-        "Add email to User",
-        v1, v2,
-        // Forward: v1 request → v2 (add email)
-        &epoch.AlterRequestInstruction{
-            Schemas: []interface{}{User{}},
-            Transformer: func(req *epoch.RequestInfo) error {
-                if !req.HasField("email") {
-                    req.SetField("email", "user@example.com")
-                }
-                return nil
-            },
-        },
-        // Backward: v2 response → v1 (remove email)
-        &epoch.AlterResponseInstruction{
-            Schemas: []interface{}{User{}},
-            Transformer: func(resp *epoch.ResponseInfo) error {
-                resp.DeleteField("email")
-                return nil
-            },
-        },
-    )
+    migration := epoch.NewVersionChangeBuilder(v1, v2).
+        Description("Add email to User").
+        ForPath("/users", "/users/:id").
+            AddField("email", "user@example.com").
+        Build()
 
     // Setup Epoch
-    epochInstance, _ := epoch.NewEpoch().
+    epochInstance, err := epoch.NewEpoch().
         WithVersions(v1, v2).
         WithHeadVersion().
         WithChanges(migration).
         Build()
+    
+    if err != nil {
+        panic(err) 
+    }
 
     // Add to Gin
     r := gin.Default()
@@ -98,6 +90,13 @@ func createUser(c *gin.Context) {
 }
 ```
 
+**What just happened?**
+- ✅ `ForPath()` explicitly defines which endpoints this migration applies to (path-based routing)
+- ✅ `AddField("email", "user@example.com")` automatically creates BOTH migrations:
+  - Request migration (v1→v2): adds `email` field if missing
+  - Response migration (v2→v1): removes `email` field
+- ✅ Error messages automatically transform field names for each version
+
 **Test it:**
 ```bash
 # v1.0.0 - No email in response
@@ -107,6 +106,77 @@ curl http://localhost:8080/users/1 -H "X-API-Version: 1.0.0"
 # v2.0.0 - Email included
 curl http://localhost:8080/users/1 -H "X-API-Version: 2.0.0"
 # {"id":1,"name":"John","email":"john@example.com"}
+```
+
+## Declarative Operations
+
+The new declarative API makes common migrations incredibly simple. Here are all available operations:
+
+### Field Operations
+
+```go
+migration := epoch.NewVersionChangeBuilder(v1, v2).
+    Description("Multiple field operations").
+    ForPath("/users", "/users/:id").
+        AddField("email", "default@example.com").      // Add field with default
+        RemoveField("temp_field").                     // Remove field
+        RenameField("name", "full_name").              // Rename field (+ auto error transform!)
+        MapEnumValues("status", map[string]string{    // Map enum values
+            "pending": "active",
+            "suspended": "inactive",
+        }).
+    Build()
+```
+
+> **Note:** `ForPath()` is required - it specifies which endpoints the migration applies to at runtime.
+
+### What Happens Automatically
+
+Each declarative operation generates **three transformations**:
+
+| Operation | Request (v1→v2) | Response (v2→v1) | Error Messages |
+|-----------|----------------|------------------|----------------|
+| `AddField("email", "default")` | Adds field if missing | Removes field | N/A |
+| `RemoveField("temp")` | Removes field | (Cannot restore) | N/A |
+| `RenameField("name", "full_name")` | Renames `name` → `full_name` | Renames `full_name` → `name` | Transforms "full_name" → "name" |
+| `MapEnumValues("status", {...})` | Maps values forward | Maps values backward | N/A |
+
+### Multiple Paths
+
+Apply migrations to multiple paths in one change:
+
+```go
+migration := epoch.NewVersionChangeBuilder(v2, v3).
+    Description("Update User endpoints").
+    ForPath("/users", "/users/:id").
+        RenameField("name", "full_name").
+        AddField("phone", "").
+    ForPath("/products", "/products/:id").
+        AddField("currency", "USD").
+        AddField("description", "").
+    Build()
+```
+
+### Custom Logic
+
+For complex transformations, mix declarative + custom:
+
+```go
+migration := epoch.NewVersionChangeBuilder(v1, v2).
+    Description("Complex migration").
+    ForPath("/users", "/users/:id").
+        AddField("email", "default@example.com").
+        // Schema-specific custom logic
+        OnRequest(func(req *epoch.RequestInfo) error {
+            // Complex validation or transformation
+            return nil
+        }).
+    // Global custom logic
+    CustomRequest(func(req *epoch.RequestInfo) error {
+        // Applies to all schemas
+        return nil
+    }).
+    Build()
 ```
 
 ## Core Concepts
@@ -401,14 +471,19 @@ The approach achieves **transparent API versioning with automatic migrations** f
 ## Testing
 
 ```bash
-# Run all tests
+# Run all tests 
 go test ./epoch/...
 
 # Run with coverage
 go test ./epoch/... -coverprofile=coverage.out
 go tool cover -html=coverage.out
 
-# Verify examples compile
+# Run specific test suites
+go test ./epoch -run TestMigrationChain  # Cycle detection tests
+go test ./epoch -run TestIntegration     # Integration tests
+go test ./epoch -run TestBuilderAPI      # Declarative API tests
+
+# Verify examples compile and run
 cd examples/basic && go build
 cd examples/advanced && go build
 ```

@@ -1,0 +1,253 @@
+package epoch
+
+import (
+	"fmt"
+
+	"github.com/bytedance/sonic/ast"
+)
+
+// Operation represents a declarative schema operation that can be applied bidirectionally
+type Operation interface {
+	// ApplyToRequest applies the forward transformation (v1 -> v2)
+	ApplyToRequest(node *ast.Node) error
+
+	// ApplyToResponse applies the backward transformation (v2 -> v1)
+	ApplyToResponse(node *ast.Node) error
+
+	// GetFieldMapping returns field name mappings for error transformation
+	// Returns a map of new field name -> old field name
+	GetFieldMapping() map[string]string
+}
+
+// RenameFieldOp renames a field
+type RenameFieldOp struct {
+	From string // Old field name (in v1)
+	To   string // New field name (in v2)
+}
+
+// ApplyToRequest converts from old name to new name (v1 -> v2)
+func (op *RenameFieldOp) ApplyToRequest(node *ast.Node) error {
+	if node == nil {
+		return nil
+	}
+
+	// Check if old field exists
+	if !node.Get(op.From).Exists() {
+		return nil
+	}
+
+	// Get the value of the old field
+	value := node.Get(op.From)
+	if value == nil {
+		return nil
+	}
+
+	// Set new field with the value
+	if err := SetNodeField(node, op.To, value); err != nil {
+		return fmt.Errorf("failed to set field %s: %w", op.To, err)
+	}
+
+	// Delete old field
+	return DeleteNodeField(node, op.From)
+}
+
+// ApplyToResponse converts from new name to old name (v2 -> v1)
+func (op *RenameFieldOp) ApplyToResponse(node *ast.Node) error {
+	if node == nil {
+		return nil
+	}
+
+	// Check if new field exists
+	if !node.Get(op.To).Exists() {
+		return nil
+	}
+
+	// Get the value of the new field
+	value := node.Get(op.To)
+	if value == nil {
+		return nil
+	}
+
+	// Set old field with the value
+	if err := SetNodeField(node, op.From, value); err != nil {
+		return fmt.Errorf("failed to set field %s: %w", op.From, err)
+	}
+
+	// Delete new field
+	return DeleteNodeField(node, op.To)
+}
+
+// GetFieldMapping returns the field mapping for error transformation
+func (op *RenameFieldOp) GetFieldMapping() map[string]string {
+	// In v2->v1 migration, we need to transform "To" -> "From" in error messages
+	return map[string]string{op.To: op.From}
+}
+
+// AddFieldOp adds a field with a default value
+type AddFieldOp struct {
+	Name    string
+	Default interface{}
+}
+
+// ApplyToRequest adds field if missing (v1 -> v2)
+func (op *AddFieldOp) ApplyToRequest(node *ast.Node) error {
+	if node == nil {
+		return nil
+	}
+
+	// Only add if field doesn't exist
+	if node.Get(op.Name).Exists() {
+		return nil
+	}
+
+	return SetNodeField(node, op.Name, op.Default)
+}
+
+// ApplyToResponse removes the field (v2 -> v1)
+func (op *AddFieldOp) ApplyToResponse(node *ast.Node) error {
+	if node == nil {
+		return nil
+	}
+
+	return DeleteNodeField(node, op.Name)
+}
+
+// GetFieldMapping returns empty map (no field rename)
+func (op *AddFieldOp) GetFieldMapping() map[string]string {
+	return nil
+}
+
+// RemoveFieldOp removes a field
+type RemoveFieldOp struct {
+	Name string
+}
+
+// ApplyToRequest removes the field (v1 -> v2)
+func (op *RemoveFieldOp) ApplyToRequest(node *ast.Node) error {
+	if node == nil {
+		return nil
+	}
+
+	return DeleteNodeField(node, op.Name)
+}
+
+// ApplyToResponse adds the field back (v2 -> v1, but we don't have the value)
+func (op *RemoveFieldOp) ApplyToResponse(node *ast.Node) error {
+	// When migrating back, we can't restore a removed field without knowing its value
+	// This is a limitation - users should use custom transformers if they need this
+	return nil
+}
+
+// GetFieldMapping returns empty map (no field rename)
+func (op *RemoveFieldOp) GetFieldMapping() map[string]string {
+	return nil
+}
+
+// MapEnumValuesOp maps enum values
+type MapEnumValuesOp struct {
+	Field   string
+	Mapping map[string]string // new value -> old value (for backward compatibility)
+}
+
+// ApplyToRequest maps enum values forward (v1 -> v2)
+// If a request contains new enum values that the older version can't handle, map them to old equivalents
+func (op *MapEnumValuesOp) ApplyToRequest(node *ast.Node) error {
+	if node == nil {
+		return nil
+	}
+
+	fieldNode := node.Get(op.Field)
+	if !fieldNode.Exists() {
+		return nil
+	}
+
+	// Get the current value
+	currentValue, err := fieldNode.String()
+	if err != nil {
+		return nil // Not a string, skip
+	}
+
+	// The mapping is newValue -> oldValue
+	// In requests: If we see a new value, normalize it to the old equivalent
+	if oldValue, exists := op.Mapping[currentValue]; exists {
+		return SetNodeField(node, op.Field, oldValue)
+	}
+
+	return nil
+}
+
+// ApplyToResponse maps enum values backward (v2 -> v1)
+// Reverses the mapping for responses
+func (op *MapEnumValuesOp) ApplyToResponse(node *ast.Node) error {
+	if node == nil {
+		return nil
+	}
+
+	fieldNode := node.Get(op.Field)
+	if !fieldNode.Exists() {
+		return nil
+	}
+
+	// Get the current value
+	currentValue, err := fieldNode.String()
+	if err != nil {
+		return nil // Not a string, skip
+	}
+
+	// The mapping is newValue -> oldValue
+	// In responses: We do the reverse - if we see an oldValue, map it back to a newValue
+	// Create reverse mapping: oldValue -> newValue
+	// Note: Multiple new values can map to one old value, so we just pick one (non-deterministic)
+	reverseMapping := make(map[string]string)
+	for newVal, oldVal := range op.Mapping {
+		if _, exists := reverseMapping[oldVal]; !exists {
+			reverseMapping[oldVal] = newVal
+		}
+	}
+
+	// If we have an old value, map it to a new value
+	if newValue, exists := reverseMapping[currentValue]; exists {
+		return SetNodeField(node, op.Field, newValue)
+	}
+
+	return nil
+}
+
+// GetFieldMapping returns empty map (enum values, not field names)
+func (op *MapEnumValuesOp) GetFieldMapping() map[string]string {
+	return nil
+}
+
+// OperationList is a collection of operations
+type OperationList []Operation
+
+// ApplyToRequest applies all operations to a request node
+func (ops OperationList) ApplyToRequest(node *ast.Node) error {
+	for _, op := range ops {
+		if err := op.ApplyToRequest(node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ApplyToResponse applies all operations to a response node
+func (ops OperationList) ApplyToResponse(node *ast.Node) error {
+	for _, op := range ops {
+		if err := op.ApplyToResponse(node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetFieldMappings returns combined field mappings from all operations
+func (ops OperationList) GetFieldMappings() map[string]string {
+	result := make(map[string]string)
+	for _, op := range ops {
+		for k, v := range op.GetFieldMapping() {
+			result[k] = v
+		}
+	}
+	return result
+}
