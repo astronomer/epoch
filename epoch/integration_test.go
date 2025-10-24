@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
-	"github.com/bytedance/sonic/ast"
 	"github.com/gin-gonic/gin"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -65,30 +64,12 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2025-01-01")
 			v2, _ := NewDateVersion("2025-06-01")
 
-			// v1 -> v2: Add email field to User
-			change := NewVersionChange(
-				"Add email field to User",
-				v1,
-				v2,
-				// Forward migration: v1 request -> v2 (add email)
-				&AlterRequestInstruction{
-					Path: "/users",
-					Transformer: func(req *RequestInfo) error {
-						if !req.HasField("email") {
-							req.SetField("email", "unknown@example.com")
-						}
-						return nil
-					},
-				},
-				// Backward migration: v2 response -> v1 (remove email)
-				&AlterResponseInstruction{
-					Path: "/users",
-					Transformer: func(resp *ResponseInfo) error {
-						resp.DeleteField("email")
-						return nil
-					},
-				},
-			)
+			// v1 -> v2: Add email field to User using declarative API
+			change := NewVersionChangeBuilder(v1, v2).
+				Description("Add email field to User").
+				ForPath("/users").
+				AddField("email", "unknown@example.com").
+				Build()
 
 			// Build Cadwyn instance
 			cadwynInstance, err := NewEpoch().
@@ -153,24 +134,12 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2025-01-01")
 			v2, _ := NewDateVersion("2025-06-01")
 
-			change := NewVersionChange(
-				"Add email field to User",
-				v1,
-				v2,
-				&AlterResponseInstruction{
-					Path: "/users",
-					Transformer: func(resp *ResponseInfo) error {
-						// Handle single user (if body is an object)
-						if resp.Body != nil && resp.Body.TypeSafe() == ast.V_OBJECT {
-							resp.DeleteField("email")
-						}
-						// Handle array of users
-						return resp.TransformArrayField("", func(userNode *ast.Node) error {
-							return DeleteNodeField(userNode, "email")
-						})
-					},
-				},
-			)
+			// Use declarative API for array migrations - this tests our fix!
+			change := NewVersionChangeBuilder(v1, v2).
+				Description("Add email field to User").
+				ForPath("/users").
+				AddField("email", "unknown@example.com").
+				Build()
 
 			cadwynInstance, err := NewEpoch().
 				WithVersions(v1, v2).
@@ -219,66 +188,20 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2025-06-01")
 			v3, _ := NewDateVersion("2024-01-01")
 
-			// Change 1->2: Add email field
-			change1 := NewVersionChange(
-				"Add email field to User",
-				v1, v2,
-				&AlterRequestInstruction{
-					Path: "/users",
-					Transformer: func(req *RequestInfo) error {
-						if !req.HasField("email") {
-							req.SetField("email", "unknown@example.com")
-						}
-						return nil
-					},
-				},
-				&AlterResponseInstruction{
-					Path: "/users",
-					Transformer: func(resp *ResponseInfo) error {
-						resp.DeleteField("email")
-						return nil
-					},
-				},
-			)
+			// Change 1->2: Add email field using declarative API
+			change1 := NewVersionChangeBuilder(v1, v2).
+				Description("Add email field to User").
+				ForPath("/users").
+				AddField("email", "unknown@example.com").
+				Build()
 
-			// Change 2->3: Add phone, rename name -> full_name
-			change2 := NewVersionChange(
-				"Add phone field and rename name to full_name",
-				v2, v3,
-				&AlterRequestInstruction{
-					Path: "/users",
-					Transformer: func(req *RequestInfo) error {
-						// Rename name -> full_name
-						if req.HasField("name") {
-							nameNode := req.GetField("name")
-							if nameNode != nil {
-								nameStr, _ := nameNode.String()
-								req.SetField("full_name", nameStr)
-								req.DeleteField("name")
-							}
-						}
-						// Add phone if missing
-						if !req.HasField("phone") {
-							req.SetField("phone", "")
-						}
-						return nil
-					},
-				},
-				&AlterResponseInstruction{
-					Path: "/users",
-					Transformer: func(resp *ResponseInfo) error {
-						// Rename full_name -> name
-						if fullNameNode := resp.GetField("full_name"); fullNameNode != nil && fullNameNode.Exists() {
-							fullNameStr, _ := fullNameNode.String()
-							resp.SetField("name", fullNameStr)
-							resp.DeleteField("full_name")
-						}
-						// Remove phone
-						resp.DeleteField("phone")
-						return nil
-					},
-				},
-			)
+			// Change 2->3: Add phone, rename name -> full_name using declarative API
+			change2 := NewVersionChangeBuilder(v2, v3).
+				Description("Add phone field and rename name to full_name").
+				ForPath("/users").
+				AddField("phone", "").
+				RenameField("name", "full_name").
+				Build()
 
 			// Build Cadwyn instance
 			cadwynInstance, err := NewEpoch().
@@ -347,41 +270,13 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2025-06-01")
 			v3, _ := NewDateVersion("2024-01-01")
 
-			// v2 -> v3: Add description and currency to Product
-			change := NewVersionChange(
-				"Add description and currency fields to Product",
-				v2, v3,
-				&AlterRequestInstruction{
-					Path: "/products",
-					Transformer: func(req *RequestInfo) error {
-						if !req.HasField("description") {
-							req.SetField("description", "")
-						}
-						if !req.HasField("currency") {
-							req.SetField("currency", "USD")
-						}
-						return nil
-					},
-				},
-				&AlterResponseInstruction{
-					Path: "/products",
-					Transformer: func(resp *ResponseInfo) error {
-						transformProduct := func(productNode *ast.Node) error {
-							productNode.Unset("description")
-							productNode.Unset("currency")
-							return nil
-						}
-
-						// Handle single product
-						if resp.Body != nil {
-							transformProduct(resp.Body)
-						}
-
-						// Handle array of products
-						return resp.TransformArrayField("", transformProduct)
-					},
-				},
-			)
+			// v2 -> v3: Add description and currency to Product using declarative API
+			change := NewVersionChangeBuilder(v2, v3).
+				Description("Add description and currency fields to Product").
+				ForPath("/products").
+				AddField("description", "").
+				AddField("currency", "USD").
+				Build()
 
 			cadwynInstance, err := NewEpoch().
 				WithVersions(v1, v2, v3).
@@ -448,11 +343,13 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2025-01-01")
 			v2, _ := NewDateVersion("2025-06-01")
 
+			// NOTE: Declarative API currently hardcodes MigrateHTTPErrors=true
+			// This test uses custom transformer to test the MigrateHTTPErrors=false case
 			change := NewVersionChange(
 				"Transform users",
 				v1, v2,
 				&AlterResponseInstruction{
-					Path:              "/users",
+					Path:              "/error",
 					MigrateHTTPErrors: false, // Don't migrate HTTP errors
 					Transformer: func(resp *ResponseInfo) error {
 						// This should not be called for error responses
@@ -499,20 +396,12 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2025-01-01")
 			v2, _ := NewDateVersion("2025-06-01")
 
-			change := NewVersionChange(
-				"Transform all responses",
-				v1, v2,
-				&AlterResponseInstruction{
-					Path:              "/error", // Match the actual path
-					MigrateHTTPErrors: true,     // Migrate HTTP errors
-					Transformer: func(resp *ResponseInfo) error {
-						if resp.Body != nil {
-							resp.SetField("migrated", true)
-						}
-						return nil
-					},
-				},
-			)
+			// Test that declarative API works with error responses (MigrateHTTPErrors=true by default)
+			change := NewVersionChangeBuilder(v1, v2).
+				Description("Transform error responses").
+				ForPath("/error").
+				AddField("version_info", "v2").
+				Build()
 
 			cadwynInstance, err := NewEpoch().
 				WithVersions(v1, v2).
@@ -525,24 +414,44 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			router.Use(cadwynInstance.Middleware())
 
 			router.GET("/error", cadwynInstance.WrapHandler(func(c *gin.Context) {
-				c.JSON(400, gin.H{"error": "Bad request"})
+				// Handler returns HEAD/v2 format with version_info field
+				c.JSON(400, gin.H{"error": "Bad request", "version_info": "v2"})
 			}))
 
-			req := httptest.NewRequest("GET", "/error", nil)
-			req.Header.Set("X-API-Version", "2025-01-01")
-			recorder := httptest.NewRecorder()
+			// Test with v2 - should have version_info field (no migration needed)
+			req2 := httptest.NewRequest("GET", "/error", nil)
+			req2.Header.Set("X-API-Version", "2025-06-01")
+			recorder2 := httptest.NewRecorder()
 
-			router.ServeHTTP(recorder, req)
+			router.ServeHTTP(recorder2, req2)
 
-			Expect(recorder.Code).To(Equal(400))
+			Expect(recorder2.Code).To(Equal(400))
 
-			var response map[string]interface{}
-			err = json.Unmarshal(recorder.Body.Bytes(), &response)
+			var response2 map[string]interface{}
+			err = json.Unmarshal(recorder2.Body.Bytes(), &response2)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should have been migrated
-			Expect(response).To(HaveKey("migrated"))
-			Expect(response["migrated"]).To(BeTrue())
+			// Should have version_info field (no migration needed)
+			Expect(response2).To(HaveKey("version_info"))
+			Expect(response2["version_info"]).To(Equal("v2"))
+			Expect(response2).To(HaveKey("error"))
+
+			// Test with v1 - should NOT have version_info field (removed by backward migration)
+			req1 := httptest.NewRequest("GET", "/error", nil)
+			req1.Header.Set("X-API-Version", "2025-01-01")
+			recorder1 := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder1, req1)
+
+			Expect(recorder1.Code).To(Equal(400))
+
+			var response1 map[string]interface{}
+			err = json.Unmarshal(recorder1.Body.Bytes(), &response1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should NOT have version_info field (removed by backward migration)
+			Expect(response1).NotTo(HaveKey("version_info"))
+			Expect(response1).To(HaveKey("error"))
 		})
 	})
 
@@ -602,75 +511,28 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2025-06-01")
 			v3, _ := NewDateVersion("2024-01-01")
 
-			// v1 -> v2: Add email to users
-			userChange1 := NewVersionChange(
-				"Add email field to User",
-				v1, v2,
-				&AlterResponseInstruction{
-					Path: "/users",
-					Transformer: func(resp *ResponseInfo) error {
-						// Handle single user (if body is an object)
-						if resp.Body != nil && resp.Body.Type() == ast.V_OBJECT {
-							resp.DeleteField("email")
-						}
-						// Handle array of users
-						return resp.TransformArrayField("", func(userNode *ast.Node) error {
-							return DeleteNodeField(userNode, "email")
-						})
-					},
-				},
-			)
+			// v1 -> v2: Add email to users using declarative API
+			userChange1 := NewVersionChangeBuilder(v1, v2).
+				Description("Add email field to User").
+				ForPath("/users").
+				AddField("email", "unknown@example.com").
+				Build()
 
-			// v2 -> v3: Add phone, rename name -> full_name for users
-			userChange2 := NewVersionChange(
-				"Add phone and rename name to full_name",
-				v2, v3,
-				&AlterResponseInstruction{
-					Path: "/users",
-					Transformer: func(resp *ResponseInfo) error {
-						transformUser := func(userNode *ast.Node) error {
-							// Rename full_name -> name using helper function
-							if err := RenameNodeField(userNode, "full_name", "name"); err != nil {
-								return err
-							}
-							// Remove phone field using helper function
-							return DeleteNodeField(userNode, "phone")
-						}
+			// v2 -> v3: Add phone, rename name -> full_name for users using declarative API
+			userChange2 := NewVersionChangeBuilder(v2, v3).
+				Description("Add phone and rename name to full_name").
+				ForPath("/users").
+				AddField("phone", "").
+				RenameField("name", "full_name").
+				Build()
 
-						// Handle single user (if body is an object)
-						if resp.Body != nil && resp.Body.Type() == ast.V_OBJECT {
-							transformUser(resp.Body)
-						}
-
-						// Handle array of users
-						return resp.TransformArrayField("", transformUser)
-					},
-				},
-			)
-
-			// v2 -> v3: Add currency and description to products
-			productChange := NewVersionChange(
-				"Add currency and description to Product",
-				v2, v3,
-				&AlterResponseInstruction{
-					Path: "/products",
-					Transformer: func(resp *ResponseInfo) error {
-						transformProduct := func(productNode *ast.Node) error {
-							productNode.Unset("currency")
-							productNode.Unset("description")
-							return nil
-						}
-
-						// Handle single product
-						if resp.Body != nil {
-							transformProduct(resp.Body)
-						}
-
-						// Handle array of products
-						return resp.TransformArrayField("", transformProduct)
-					},
-				},
-			)
+			// v2 -> v3: Add currency and description to products using declarative API
+			productChange := NewVersionChangeBuilder(v2, v3).
+				Description("Add currency and description to Product").
+				ForPath("/products").
+				AddField("currency", "USD").
+				AddField("description", "").
+				Build()
 
 			instance, err := NewEpoch().
 				WithVersions(v1, v2, v3).
@@ -1058,8 +920,9 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			// Migration with all 4 operation types
+			// Migration with all 4 operation types using declarative API
 			change := NewVersionChangeBuilder(v1, v2).
+				Description("Test all 4 declarative operations").
 				ForPath("/users").
 				AddField("email", "default@example.com").  // AddField
 				RemoveField("temp_field").                 // RemoveField
@@ -1108,7 +971,9 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
+			// Test error message field name transformation with declarative API
 			change := NewVersionChangeBuilder(v1, v2).
+				Description("Test error message field name transformation").
 				ForPath("/users").
 				RenameField("name", "full_name").
 				Build()
@@ -1145,14 +1010,16 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2024-06-01")
 			v3, _ := NewDateVersion("2025-01-01")
 
-			// v1 -> v2: Add email
+			// v1 -> v2: Add email using declarative API
 			change1 := NewVersionChangeBuilder(v1, v2).
+				Description("Add email field").
 				ForPath("/users", "/users/:id").
 				AddField("email", "default@example.com").
 				Build()
 
-			// v2 -> v3: Rename name -> full_name
+			// v2 -> v3: Rename name -> full_name using declarative API
 			change2 := NewVersionChangeBuilder(v2, v3).
+				Description("Rename name to full_name").
 				ForPath("/users", "/users/:id").
 				RenameField("name", "full_name").
 				Build()

@@ -108,20 +108,31 @@ func (b *versionChangeBuilder) Build() *VersionChange {
 				Methods:           []string{}, // Empty means all methods
 				MigrateHTTPErrors: true,
 				Transformer: func(resp *ResponseInfo) error {
-					// For non-error responses, apply operations
-					if resp.StatusCode < 400 {
-						if resp.Body != nil {
+					// Apply operations to all responses (including errors since MigrateHTTPErrors=true)
+					if resp.Body != nil {
+						// Handle arrays and objects separately to avoid conflicts
+						if resp.Body.TypeSafe() == ast.V_ARRAY {
+							// For arrays, apply operations to each item only
+							if err := resp.TransformArrayField("", func(node *ast.Node) error {
+								return pb.operations.ApplyToResponse(node)
+							}); err != nil {
+								return err
+							}
+						} else {
+							// For objects, apply operations to the object and handle nested arrays
 							if err := pb.operations.ApplyToResponse(resp.Body); err != nil {
 								return err
 							}
+							// Handle nested arrays within objects
+							if err := resp.TransformArrayField("", func(node *ast.Node) error {
+								return pb.operations.ApplyToResponse(node)
+							}); err != nil {
+								return err
+							}
 						}
-
-						// Handle arrays
-						return resp.TransformArrayField("", func(node *ast.Node) error {
-							return pb.operations.ApplyToResponse(node)
-						})
 					}
 
+					// Additionally transform field names in error messages for validation errors
 					if len(fieldMappings) > 0 {
 						return transformErrorFieldNames(resp, fieldMappings)
 					}

@@ -467,7 +467,8 @@ func (vah *VersionAwareHandler) migrateResponse(c *gin.Context, toVersion *Versi
 	headVersion := vah.versionBundle.GetHeadVersion()
 	migrationChain := vah.migrationChain.GetMigrationPath(headVersion, toVersion)
 
-	// Apply migrations in reverse direction
+	// Apply migrations in reverse order for backward migration
+	// (GetMigrationPath returns changes in forward definition order, but we need to apply them backward)
 	for i := len(migrationChain) - 1; i >= 0; i-- {
 		change := migrationChain[i]
 		if err := change.MigrateResponse(c.Request.Context(), responseInfo); err != nil {
