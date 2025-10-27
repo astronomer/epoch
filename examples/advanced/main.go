@@ -43,6 +43,32 @@ type Order struct {
 	CreatedAt string  `json:"created_at"`
 }
 
+// ExamplesPaginated demonstrates nested array transformations
+// This structure has arrays of structs that need field transformations
+type ExamplesPaginated struct {
+	Examples   []ExampleItem `json:"examples"`
+	TotalCount int           `json:"total_count"`
+	Metadata   ExampleMeta   `json:"metadata"`
+}
+
+// ExampleItem evolution:
+// v1: ID, Name, Tags
+// v2: ID, Title (renamed from Name), Tags, Category (added)
+// v3: ID, DisplayName (renamed from Title), Tags, Category, Priority (added)
+type ExampleItem struct {
+	ID          int      `json:"id"`
+	DisplayName string   `json:"display_name"` // Was "title" in v2, "name" in v1
+	Tags        []string `json:"tags"`
+	Category    string   `json:"category"` // Added in v2
+	Priority    int      `json:"priority"` // Added in v3
+}
+
+// ExampleMeta demonstrates nested object transformations
+type ExampleMeta struct {
+	CreatedBy   string `json:"created_by"`
+	LastUpdated string `json:"last_updated"` // Was "updated_at" in v1-v2
+}
+
 // In-memory storage (for demo purposes)
 var (
 	users = map[int]User{
@@ -55,6 +81,19 @@ var (
 	}
 	orders = map[int]Order{
 		1: {ID: 1, UserID: 1, ProductID: 1, Quantity: 1, Total: 999.99, CreatedAt: time.Now().Format(time.RFC3339)},
+	}
+	// Sample data for nested array transformations
+	examplesPaginated = ExamplesPaginated{
+		Examples: []ExampleItem{
+			{ID: 1, DisplayName: "First Example", Tags: []string{"demo", "test"}, Category: "tutorial", Priority: 1},
+			{ID: 2, DisplayName: "Second Example", Tags: []string{"advanced", "api"}, Category: "documentation", Priority: 2},
+			{ID: 3, DisplayName: "Third Example", Tags: []string{"nested", "arrays"}, Category: "testing", Priority: 3},
+		},
+		TotalCount: 3,
+		Metadata: ExampleMeta{
+			CreatedBy:   "system",
+			LastUpdated: time.Now().Format(time.RFC3339), // This will be "updated_at" in v1-v2
+		},
 	}
 	nextUserID    = 3
 	nextProductID = 3
@@ -75,8 +114,10 @@ func main() {
 			createUserV1ToV2Migration(v1, v2),
 			createUserV2ToV3Migration(v2, v3),
 			createProductV2ToV3Migration(v2, v3),
+			createExampleV1ToV2Migration(v1, v2),
+			createExampleV2ToV3Migration(v2, v3),
 		).
-		WithTypes(User{}, Product{}, Order{}).
+		WithTypes(User{}, Product{}, Order{}, ExamplesPaginated{}, ExampleItem{}, ExampleMeta{}).
 		WithVersionParameter("X-API-Version").
 		WithVersionFormat(epoch.VersionFormatDate).
 		Build()
@@ -118,6 +159,9 @@ func main() {
 		orderRoutes.POST("", epochInstance.WrapHandler(createOrder))
 	}
 
+	// Examples endpoint
+	r.GET("/examples", epochInstance.WrapHandler(listExamples))
+
 	// Meta endpoints (unversioned)
 	r.GET("/health", healthCheck)
 	r.GET("/versions", func(c *gin.Context) {
@@ -156,6 +200,7 @@ func main() {
 	fmt.Println("  POST   /products       - Create product")
 	fmt.Println("  GET    /orders         - List all orders")
 	fmt.Println("  POST   /orders         - Create order")
+	fmt.Println("  GET    /examples       - List examples")
 	fmt.Println("")
 	fmt.Println("💡 Comprehensive Test Commands:")
 	fmt.Println("")
@@ -212,13 +257,27 @@ func main() {
 	fmt.Println("  # Health check (unversioned endpoint)")
 	fmt.Println("  curl http://localhost:8082/health")
 	fmt.Println("")
+	fmt.Println("🔧 8. NESTED ARRAY TRANSFORMATIONS (NEW!)")
+	fmt.Println("  # V1: Examples with 'name' field in nested array items")
+	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8082/examples")
+	fmt.Println("  # Expected: {\"examples\":[{\"id\":1,\"name\":\"First Example\",\"tags\":[...]}]}")
+	fmt.Println("")
+	fmt.Println("  # V2: Examples with 'title' field (renamed from 'name') + category")
+	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8082/examples")
+	fmt.Println("  # Expected: {\"examples\":[{\"id\":1,\"title\":\"First Example\",\"category\":\"tutorial\",\"tags\":[...]}]}")
+	fmt.Println("")
+	fmt.Println("  # V3: Examples with 'display_name' field (renamed from 'title') + priority")
+	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8082/examples")
+	fmt.Println("  # Expected: {\"examples\":[{\"id\":1,\"display_name\":\"First Example\",\"category\":\"tutorial\",\"priority\":1,\"tags\":[...]}]}")
+	fmt.Println("")
 	fmt.Println("📋 MIGRATION OPERATIONS DEMONSTRATED:")
-	fmt.Println("  ✅ AddField: email, status, phone, description, currency")
-	fmt.Println("  ✅ RenameField: name ↔ full_name")
+	fmt.Println("  ✅ AddField: email, status, phone, description, currency, category, priority")
+	fmt.Println("  ✅ RenameField: name ↔ full_name, name ↔ title ↔ display_name, updated_at ↔ last_updated")
 	fmt.Println("  ✅ RemoveField: temp_field (v1→v2)")
 	fmt.Println("  ✅ Bidirectional: All operations work both ways")
 	fmt.Println("  ✅ Error Transformation: Field names in validation errors")
 	fmt.Println("  ✅ Array Handling: List endpoints transform each item")
+	fmt.Println("  ✅ NESTED Arrays: Transformations work on fields inside array items")
 	fmt.Println("")
 	fmt.Println("🌐 Server listening on http://localhost:8082")
 	fmt.Println("   Use X-API-Version header to specify version")
@@ -285,6 +344,30 @@ func createProductV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange 
 		// ✨ Automatic bidirectional migrations!
 		AddField("description", ""). // Adds in requests, removes in responses
 		AddField("currency", "USD"). // Adds in requests, removes in responses
+		Build()
+}
+
+// createExampleV1ToV2Migration
+// This migration affects the ExampleItem structs inside the Examples array
+func createExampleV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
+	return epoch.NewVersionChangeBuilder(from, to).
+		Description("Rename name to title in nested array items, add category field").
+		ForPath("/examples").
+		// These transformations will apply to fields inside the Examples[] array
+		RenameField("name", "title").          // Renames display_name ↔ title in nested array items
+		AddField("category", "uncategorized"). // Adds category field to nested array items
+		Build()
+}
+
+// createExampleV2ToV3Migration
+func createExampleV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
+	return epoch.NewVersionChangeBuilder(from, to).
+		Description("Rename title to display_name in nested array items, add priority field, rename updated_at to last_updated in metadata").
+		ForPath("/examples").
+		// These transformations will apply to fields inside the Examples[] array AND nested objects
+		RenameField("title", "display_name").      // Renames title ↔ display_name in nested array items
+		AddField("priority", 0).                   // Adds priority field to nested array items
+		RenameField("updated_at", "last_updated"). // Renames field in nested metadata object
 		Build()
 }
 
@@ -421,6 +504,10 @@ func createOrder(c *gin.Context) {
 	orders[order.ID] = order
 
 	c.JSON(http.StatusCreated, order)
+}
+
+func listExamples(c *gin.Context) {
+	c.JSON(http.StatusOK, examplesPaginated)
 }
 
 func healthCheck(c *gin.Context) {

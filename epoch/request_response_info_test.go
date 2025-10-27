@@ -1,10 +1,12 @@
 package epoch
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 
 	"github.com/bytedance/sonic"
+	"github.com/bytedance/sonic/ast"
 	"github.com/gin-gonic/gin"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -173,6 +175,138 @@ var _ = Describe("MigrationTypes", func() {
 				}).NotTo(Panic())
 			})
 		})
+
+		Describe("TransformNestedArrays", func() {
+			It("should transform fields in nested arrays within objects", func() {
+				// Create response with nested arrays
+				bodyJSON := `{
+					"items": [
+						{"name": "Item 1", "value": 100},
+						{"name": "Item 2", "value": 200}
+					],
+					"metadata": {
+						"total": 2
+					}
+				}`
+				bodyNode, _ := sonic.Get([]byte(bodyJSON))
+				testResponseInfo := NewResponseInfo(c, &bodyNode)
+
+				// Transform function that renames "name" to "title"
+				transformer := func(node *ast.Node) error {
+					if node.Get("name").Exists() {
+						nameValue := node.Get("name")
+						value, _ := nameValue.String()
+						err := SetNodeField(node, "title", value)
+						if err != nil {
+							return err
+						}
+						return DeleteNodeField(node, "name")
+					}
+					return nil
+				}
+
+				err := testResponseInfo.TransformNestedArrays(transformer)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify transformations were applied
+				items := testResponseInfo.Body.Get("items")
+				Expect(items.Exists()).To(BeTrue())
+
+				firstItem := items.Index(0)
+				Expect(firstItem.Get("title").Exists()).To(BeTrue())
+				Expect(firstItem.Get("name").Exists()).To(BeFalse())
+
+				titleValue, _ := firstItem.Get("title").String()
+				Expect(titleValue).To(Equal("Item 1"))
+			})
+
+			It("should handle deeply nested arrays", func() {
+				bodyJSON := `{
+					"categories": [
+						{
+							"name": "Category 1",
+							"items": [
+								{
+									"name": "Item 1",
+									"details": [
+										{"name": "Detail 1"}
+									]
+								}
+							]
+						}
+					]
+				}`
+				bodyNode, _ := sonic.Get([]byte(bodyJSON))
+				testResponseInfo := NewResponseInfo(c, &bodyNode)
+
+				// Transform function that adds "processed" field
+				transformer := func(node *ast.Node) error {
+					return SetNodeField(node, "processed", true)
+				}
+
+				err := testResponseInfo.TransformNestedArrays(transformer)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify transformations at all levels
+				categories := testResponseInfo.Body.Get("categories")
+				category := categories.Index(0)
+				Expect(category.Get("processed").Exists()).To(BeTrue())
+
+				items := category.Get("items")
+				item := items.Index(0)
+				Expect(item.Get("processed").Exists()).To(BeTrue())
+
+				details := item.Get("details")
+				detail := details.Index(0)
+				Expect(detail.Get("processed").Exists()).To(BeTrue())
+			})
+
+			It("should not process non-object bodies", func() {
+				// Test with array body (should not process)
+				bodyJSON := `[{"name": "Item 1"}, {"name": "Item 2"}]`
+				bodyNode, _ := sonic.Get([]byte(bodyJSON))
+				testResponseInfo := NewResponseInfo(c, &bodyNode)
+
+				transformerCalled := false
+				transformer := func(node *ast.Node) error {
+					transformerCalled = true
+					return nil
+				}
+
+				err := testResponseInfo.TransformNestedArrays(transformer)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(transformerCalled).To(BeFalse())
+			})
+
+			It("should handle nil body gracefully", func() {
+				testResponseInfo := &ResponseInfo{Body: nil}
+
+				transformer := func(node *ast.Node) error {
+					return nil
+				}
+
+				err := testResponseInfo.TransformNestedArrays(transformer)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should propagate transformer errors", func() {
+				bodyJSON := `{
+					"items": [
+						{"name": "Item 1"}
+					]
+				}`
+				bodyNode, _ := sonic.Get([]byte(bodyJSON))
+				testResponseInfo := NewResponseInfo(c, &bodyNode)
+
+				transformer := func(node *ast.Node) error {
+					return errors.New("transformation failed")
+				}
+
+				err := testResponseInfo.TransformNestedArrays(transformer)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("transformation failed"))
+			})
+		})
 	})
 
 	Describe("AlterRequestInstruction", func() {
@@ -227,5 +361,6 @@ var _ = Describe("MigrationTypes", func() {
 			Expect(instruction.Methods).To(ContainElements("GET", "POST"))
 			Expect(instruction.MigrateHTTPErrors).To(BeFalse())
 		})
+
 	})
 })

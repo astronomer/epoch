@@ -119,12 +119,12 @@ func (b *versionChangeBuilder) Build() *VersionChange {
 								return err
 							}
 						} else {
-							// For objects, apply operations to the object and handle nested arrays
+							// For objects, apply operations to the top-level object first
 							if err := pb.operations.ApplyToResponse(resp.Body); err != nil {
 								return err
 							}
-							// Handle nested arrays within objects
-							if err := resp.TransformArrayField("", func(node *ast.Node) error {
+							// Then recursively handle ALL nested arrays within the object
+							if err := resp.TransformNestedArrays(func(node *ast.Node) error {
 								return pb.operations.ApplyToResponse(node)
 							}); err != nil {
 								return err
