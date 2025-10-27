@@ -294,3 +294,103 @@ func (r *ResponseInfo) TransformArrayField(key string, transformer func(*ast.Nod
 
 	return nil
 }
+
+// TransformNestedArrays recursively finds and transforms all arrays nested within an object
+func (r *ResponseInfo) TransformNestedArrays(transformer func(*ast.Node) error) error {
+	if r.Body == nil {
+		return nil
+	}
+
+	// Only process if the body is an object
+	if r.Body.TypeSafe() != ast.V_OBJECT {
+		return nil
+	}
+
+	return transformNestedArraysRecursive(r.Body, transformer)
+}
+
+// transformNestedArraysRecursive is a helper that recursively transforms arrays within a node
+func transformNestedArraysRecursive(node *ast.Node, transformer func(*ast.Node) error) error {
+	if node == nil {
+		return nil
+	}
+
+	nodeType := node.TypeSafe()
+
+	switch nodeType {
+	case ast.V_OBJECT:
+		// Convert to map to get all keys
+		objMap, err := node.Map()
+		if err != nil {
+			return err
+		}
+
+		// Iterate through all fields
+		for key := range objMap {
+			value := node.Get(key)
+			if value == nil {
+				continue
+			}
+
+			valueType := value.TypeSafe()
+
+			if valueType == ast.V_ARRAY {
+				// Found an array - transform each item
+				length, err := value.Len()
+				if err != nil {
+					return err
+				}
+
+				for i := 0; i < length; i++ {
+					item := value.Index(i)
+					if item == nil {
+						continue
+					}
+
+					// Apply transformer to the array item
+					if err := transformer(item); err != nil {
+						return err
+					}
+
+					// Recursively process nested structures within the array item
+					if item.TypeSafe() == ast.V_OBJECT {
+						if err := transformNestedArraysRecursive(item, transformer); err != nil {
+							return err
+						}
+					}
+				}
+			} else if valueType == ast.V_OBJECT {
+				// Recursively process nested objects
+				if err := transformNestedArraysRecursive(value, transformer); err != nil {
+					return err
+				}
+			}
+		}
+
+	case ast.V_ARRAY:
+		// Handle arrays at the current level
+		length, err := node.Len()
+		if err != nil {
+			return err
+		}
+
+		for i := 0; i < length; i++ {
+			item := node.Index(i)
+			if item == nil {
+				continue
+			}
+
+			// Apply transformer to the array item
+			if err := transformer(item); err != nil {
+				return err
+			}
+
+			// Recursively process nested structures
+			if err := transformNestedArraysRecursive(item, transformer); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
