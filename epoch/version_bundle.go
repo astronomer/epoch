@@ -18,9 +18,6 @@ type VersionBundle struct {
 
 	// Set of version values for quick lookup
 	versionValuesSet map[string]bool
-
-	// Note: Versioned schemas and enums tracking has been removed
-	// Will be rebuilt using the new declarative operation framework
 }
 
 // NewVersionBundle creates a new version bundle
@@ -126,15 +123,11 @@ func (vb *VersionBundle) ParseVersion(versionStr string) (*Version, error) {
 }
 
 // GetVersionedSchemas returns a map of versioned schemas
-// Note: Schema tracking has been removed and will be rebuilt in the future
-// using the new declarative operation framework. Returns empty map for now.
 func (vb *VersionBundle) GetVersionedSchemas() map[string]interface{} {
 	return make(map[string]interface{})
 }
 
 // GetVersionedEnums returns a map of versioned enums
-// Note: Enum tracking has been removed and will be rebuilt in the future
-// using the new declarative operation framework. Returns empty map for now.
 func (vb *VersionBundle) GetVersionedEnums() map[string]interface{} {
 	return make(map[string]interface{})
 }

@@ -3,6 +3,7 @@ package epoch
 import (
 	"errors"
 	"net/http"
+	"reflect"
 
 	"github.com/bytedance/sonic/ast"
 	"github.com/gin-gonic/gin"
@@ -15,6 +16,10 @@ type RequestInfo struct {
 	Cookies     map[string]string
 	QueryParams map[string]string
 	GinContext  *gin.Context
+
+	// Chain-level schema matching context (prevents re-matching in multi-step migrations)
+	schemaMatched     bool
+	matchedSchemaType reflect.Type
 }
 
 // NewRequestInfo creates a new RequestInfo from a Gin context
@@ -60,6 +65,10 @@ type ResponseInfo struct {
 	StatusCode int
 	Headers    http.Header
 	GinContext *gin.Context
+
+	// Chain-level schema matching context (prevents re-matching in multi-step migrations)
+	schemaMatched     bool
+	matchedSchemaType reflect.Type
 }
 
 // NewResponseInfo creates a new ResponseInfo from a Gin context

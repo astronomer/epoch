@@ -279,7 +279,8 @@ var _ = Describe("Middleware", func() {
 			ginHandler := func(c *gin.Context) {
 				c.JSON(200, gin.H{"message": "test"})
 			}
-			handler = NewVersionAwareHandler(ginHandler, bundle, chain)
+			registry := NewEndpointRegistry()
+			handler = NewVersionAwareHandler(ginHandler, bundle, chain, registry)
 		})
 
 		It("should create a version-aware handler", func() {

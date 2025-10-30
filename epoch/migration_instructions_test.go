@@ -187,16 +187,20 @@ var _ = Describe("MigrationTypes", func() {
 			Expect(instruction.Transformer).NotTo(BeNil())
 		})
 
-		It("should create instruction with path and methods", func() {
+		It("should create instruction with schemas", func() {
+			type TestUser struct {
+				ID   int    `json:"id"`
+				Name string `json:"name"`
+			}
+
 			transformer := func(req *RequestInfo) error { return nil }
 			instruction := &AlterRequestInstruction{
-				Path:        "/users",
-				Methods:     []string{"GET", "POST"},
+				Schemas:     []interface{}{TestUser{}},
 				Transformer: transformer,
 			}
 
-			Expect(instruction.Path).To(Equal("/users"))
-			Expect(instruction.Methods).To(ContainElements("GET", "POST"))
+			Expect(instruction.Schemas).To(HaveLen(1))
+			Expect(instruction.Transformer).NotTo(BeNil())
 		})
 	})
 
@@ -214,18 +218,22 @@ var _ = Describe("MigrationTypes", func() {
 			Expect(instruction.Transformer).NotTo(BeNil())
 		})
 
-		It("should create instruction with path and methods", func() {
+		It("should create instruction with schemas and error migration flag", func() {
+			type TestUser struct {
+				ID   int    `json:"id"`
+				Name string `json:"name"`
+			}
+
 			transformer := func(resp *ResponseInfo) error { return nil }
 			instruction := &AlterResponseInstruction{
-				Path:              "/users",
-				Methods:           []string{"GET", "POST"},
+				Schemas:           []interface{}{TestUser{}},
 				MigrateHTTPErrors: false,
 				Transformer:       transformer,
 			}
 
-			Expect(instruction.Path).To(Equal("/users"))
-			Expect(instruction.Methods).To(ContainElements("GET", "POST"))
+			Expect(instruction.Schemas).To(HaveLen(1))
 			Expect(instruction.MigrateHTTPErrors).To(BeFalse())
+			Expect(instruction.Transformer).NotTo(BeNil())
 		})
 	})
 })

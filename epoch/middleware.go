@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -113,8 +114,8 @@ func NewVersionMiddleware(config MiddlewareConfig) *VersionMiddleware {
 }
 
 // Gin context keys for storing version information
-const versionContextKey = "cadwyn_api_version"
-const defaultVersionContextKey = "cadwyn_default_version_used"
+const versionContextKey = "epoch_api_version"
+const defaultVersionContextKey = "epoch_default_version_used"
 
 // Middleware returns the Gin middleware function
 func (vm *VersionMiddleware) Middleware() gin.HandlerFunc {
@@ -294,17 +295,19 @@ func IsDefaultVersionUsed(c *gin.Context) bool {
 
 // VersionAwareHandler wraps a Gin handler with version-aware request/response migration
 type VersionAwareHandler struct {
-	handler        gin.HandlerFunc
-	versionBundle  *VersionBundle
-	migrationChain *MigrationChain
+	handler          gin.HandlerFunc
+	versionBundle    *VersionBundle
+	migrationChain   *MigrationChain
+	endpointRegistry *EndpointRegistry
 }
 
 // NewVersionAwareHandler creates a new version-aware handler
-func NewVersionAwareHandler(handler gin.HandlerFunc, versionBundle *VersionBundle, migrationChain *MigrationChain) *VersionAwareHandler {
+func NewVersionAwareHandler(handler gin.HandlerFunc, versionBundle *VersionBundle, migrationChain *MigrationChain, endpointRegistry *EndpointRegistry) *VersionAwareHandler {
 	return &VersionAwareHandler{
-		handler:        handler,
-		versionBundle:  versionBundle,
-		migrationChain: migrationChain,
+		handler:          handler,
+		versionBundle:    versionBundle,
+		migrationChain:   migrationChain,
+		endpointRegistry: endpointRegistry,
 	}
 }
 
@@ -331,10 +334,49 @@ func (vah *VersionAwareHandler) handleWithMigration(c *gin.Context, requestedVer
 		return
 	}
 
-	// 1. Migrate request from requested version to head version
-	if err := vah.migrateRequest(c, requestedVersion); err != nil {
-		c.JSON(500, gin.H{"error": "Request migration failed", "details": err.Error()})
+	// Lookup endpoint definition
+	endpointDef, err := vah.endpointRegistry.Lookup(c.Request.Method, c.Request.URL.Path)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Endpoint not registered", "details": "This endpoint must be registered with type information via WrapHandler().Returns()/.Accepts()"})
 		return
+	}
+
+	// OLD FALLBACK CODE (REMOVED):
+	// We no longer fall back to schema matching. All endpoints MUST be registered.
+	// This ensures predictable behavior and eliminates the source of many bugs.
+	/*
+		if err != nil {
+			fmt.Printf("[ENDPOINT LOOKUP] Failed: %v - falling back to schema matching\n", err)
+			// Endpoint not registered - fall back to old behavior (schema matching)
+			// This allows gradual migration - endpoints without type hints use old system
+			if err := vah.migrateRequest(c, requestedVersion); err != nil {
+				c.JSON(500, gin.H{"error": "Request migration failed", "details": err.Error()})
+				return
+			}
+
+			responseCapture := &ResponseCapture{
+				ResponseWriter: c.Writer,
+				body:           make([]byte, 0),
+				statusCode:     200,
+			}
+			c.Writer = responseCapture
+
+			vah.handler(c)
+
+			if err := vah.migrateResponse(c, requestedVersion, responseCapture); err != nil {
+				c.JSON(500, gin.H{"error": "Response migration failed", "details": err.Error()})
+				return
+			}
+			return
+		}
+	*/
+
+	// 1. Migrate request using KNOWN type
+	if endpointDef.RequestType != nil {
+		if err := vah.migrateRequestByType(c, requestedVersion, endpointDef.RequestType); err != nil {
+			c.JSON(500, gin.H{"error": "Request migration failed", "details": err.Error()})
+			return
+		}
 	}
 
 	// 2. Create a response writer that captures the response
@@ -348,10 +390,21 @@ func (vah *VersionAwareHandler) handleWithMigration(c *gin.Context, requestedVer
 	// 3. Call the handler (which expects head version data)
 	vah.handler(c)
 
-	// 4. Migrate response from head version back to requested version
-	if err := vah.migrateResponse(c, requestedVersion, responseCapture); err != nil {
-		c.JSON(500, gin.H{"error": "Response migration failed", "details": err.Error()})
-		return
+	// 4. Migrate response using KNOWN type(s)
+	if endpointDef.ResponseType != nil {
+		if err := vah.migrateResponseByType(c, requestedVersion, responseCapture,
+			endpointDef.ResponseType, endpointDef.NestedArrays); err != nil {
+			c.JSON(500, gin.H{"error": "Response migration failed", "details": err.Error()})
+			return
+		}
+	} else {
+		// No response type registered, write response as-is
+		c.Writer = responseCapture.ResponseWriter
+		if responseCapture.body != nil {
+			c.Data(responseCapture.statusCode, "application/json", responseCapture.body)
+		} else {
+			c.Writer.WriteHeader(responseCapture.statusCode)
+		}
 	}
 }
 
@@ -408,15 +461,11 @@ func (vah *VersionAwareHandler) migrateRequest(c *gin.Context, fromVersion *Vers
 	// Create RequestInfo for migration
 	requestInfo := NewRequestInfo(c, &bodyNode)
 
-	// Find migration chain from requested version to head
+	// Apply chain-level migration from requested version to head
+	// This uses chain-aware schema matching to handle multi-step migrations with field renaming
 	headVersion := vah.versionBundle.GetHeadVersion()
-	migrationChain := vah.migrationChain.GetMigrationPath(fromVersion, headVersion)
-
-	// Apply migrations in forward direction
-	for _, change := range migrationChain {
-		if err := change.MigrateRequest(c.Request.Context(), requestInfo); err != nil {
-			return fmt.Errorf("failed to migrate request with change %s: %w", change.Description(), err)
-		}
+	if err := vah.migrationChain.MigrateRequest(c.Request.Context(), requestInfo, fromVersion, headVersion); err != nil {
+		return fmt.Errorf("failed to migrate request: %w", err)
 	}
 
 	// Update the request context with migrated data
@@ -463,17 +512,139 @@ func (vah *VersionAwareHandler) migrateResponse(c *gin.Context, toVersion *Versi
 	responseInfo := NewResponseInfo(c, responseNode)
 	responseInfo.StatusCode = responseCapture.statusCode
 
-	// Find migration chain from head version back to requested version
+	// Apply chain-level migration from head version back to requested version
+	// This uses chain-aware schema matching to handle multi-step migrations with field renaming
 	headVersion := vah.versionBundle.GetHeadVersion()
-	migrationChain := vah.migrationChain.GetMigrationPath(headVersion, toVersion)
 
-	// Apply migrations in reverse order for backward migration
-	// (GetMigrationPath returns changes in forward definition order, but we need to apply them backward)
-	for i := len(migrationChain) - 1; i >= 0; i-- {
-		change := migrationChain[i]
-		if err := change.MigrateResponse(c.Request.Context(), responseInfo); err != nil {
-			return fmt.Errorf("failed to migrate response with change %s: %w", change.Description(), err)
+	if err := vah.migrationChain.MigrateResponse(c.Request.Context(), responseInfo, headVersion, toVersion); err != nil {
+		return fmt.Errorf("failed to migrate response: %w", err)
+	}
+
+	// Write the migrated response with preserved field order
+	c.Writer = responseCapture.ResponseWriter
+
+	if responseInfo.Body != nil {
+		// Use Sonic's Raw() to preserve field order
+		migratedJSON, err := responseInfo.Body.Raw()
+		if err != nil {
+			return fmt.Errorf("failed to get raw JSON from migrated response: %w", err)
 		}
+
+		c.Data(responseInfo.StatusCode, "application/json", []byte(migratedJSON))
+	} else {
+		c.Writer.WriteHeader(responseInfo.StatusCode)
+	}
+
+	return nil
+}
+
+// migrateRequestByType migrates request data using a known type (no schema matching)
+func (vah *VersionAwareHandler) migrateRequestByType(
+	c *gin.Context,
+	fromVersion *Version,
+	requestType reflect.Type,
+) error {
+	// Get request body if present
+	if c.Request.Body == nil {
+		return nil // No body to migrate
+	}
+
+	// Read body once and preserve it
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read request body: %w", err)
+	}
+	c.Request.Body.Close()
+
+	// If body is empty, nothing to migrate
+	if len(bodyBytes) == 0 {
+		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		return nil
+	}
+
+	// Parse JSON body with Sonic to preserve field order
+	bodyNode, err := sonic.Get(bodyBytes)
+	if err != nil {
+		// If JSON parsing fails, restore original body and let handler deal with it
+		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		return nil
+	}
+
+	// Load the node to parse the entire structure
+	if err := bodyNode.Load(); err != nil {
+		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		return nil
+	}
+
+	// Create RequestInfo for migration
+	requestInfo := NewRequestInfo(c, &bodyNode)
+
+	// Apply migrations for this SPECIFIC type (NO schema matching)
+	headVersion := vah.versionBundle.GetHeadVersion()
+	if err := vah.migrationChain.MigrateRequestForType(c.Request.Context(), requestInfo, requestType, fromVersion, headVersion); err != nil {
+		return fmt.Errorf("failed to migrate request: %w", err)
+	}
+
+	// Update the request context with migrated data
+	c.Set("migratedRequestBody", requestInfo.Body)
+
+	// Marshal the migrated body using Sonic's Raw() to preserve field order
+	migratedJSON, err := requestInfo.Body.Raw()
+	if err != nil {
+		return fmt.Errorf("failed to get raw JSON from migrated request: %w", err)
+	}
+
+	c.Request.Body = io.NopCloser(bytes.NewReader([]byte(migratedJSON)))
+
+	return nil
+}
+
+// migrateResponseByType migrates response data using known type(s) (no schema matching)
+func (vah *VersionAwareHandler) migrateResponseByType(
+	c *gin.Context,
+	toVersion *Version,
+	responseCapture *ResponseCapture,
+	responseType reflect.Type,
+	nestedArrays map[string]reflect.Type,
+) error {
+	// Parse captured response body with Sonic to preserve field order
+	var responseNode *ast.Node
+	if len(responseCapture.body) > 0 {
+		node, err := sonic.Get(responseCapture.body)
+		if err != nil {
+			// If JSON parsing fails, write original response
+			c.Writer = responseCapture.ResponseWriter
+			c.Writer.WriteHeader(responseCapture.statusCode)
+			_, _ = c.Writer.Write(responseCapture.body)
+			return nil
+		}
+
+		// IMPORTANT: sonic.Get() returns a search node that needs to be loaded
+		if err := node.Load(); err != nil {
+			c.Writer = responseCapture.ResponseWriter
+			c.Writer.WriteHeader(responseCapture.statusCode)
+			_, _ = c.Writer.Write(responseCapture.body)
+			return nil
+		}
+
+		responseNode = &node
+	}
+
+	// Create ResponseInfo for migration
+	responseInfo := NewResponseInfo(c, responseNode)
+	responseInfo.StatusCode = responseCapture.statusCode
+
+	// Apply migrations for this SPECIFIC type (NO schema matching)
+	headVersion := vah.versionBundle.GetHeadVersion()
+	if err := vah.migrationChain.MigrateResponseForType(
+		c.Request.Context(),
+		responseInfo,
+		responseType,
+		nestedArrays,
+		headVersion,
+		toVersion,
+	); err != nil {
+		return fmt.Errorf("failed to migrate response: %w", err)
 	}
 
 	// Write the migrated response with preserved field order
