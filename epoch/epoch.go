@@ -160,14 +160,6 @@ func (c *Epoch) ParseVersion(versionStr string) (*Version, error) {
 	return c.versionBundle.ParseVersion(versionStr)
 }
 
-// GenerateStructForVersion generates Go code for a struct at a specific version
-// Note: Schema generation has been removed and will be rebuilt in the future
-// using the new declarative operation framework. This function is kept for
-// backward compatibility but will return an error.
-func (c *Epoch) GenerateStructForVersion(structType interface{}, targetVersion string) (string, error) {
-	return "", fmt.Errorf("schema generation has been temporarily removed and will be rebuilt using the new declarative API")
-}
-
 // EpochBuilder provides a fluent API for building Epoch instances
 type EpochBuilder struct {
 	versions      []*Version

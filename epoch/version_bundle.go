@@ -122,16 +122,6 @@ func (vb *VersionBundle) ParseVersion(versionStr string) (*Version, error) {
 	return nil, fmt.Errorf("unknown version '%s': available versions are %v", versionStr, vb.versionValues)
 }
 
-// GetVersionedSchemas returns a map of versioned schemas
-func (vb *VersionBundle) GetVersionedSchemas() map[string]interface{} {
-	return make(map[string]interface{})
-}
-
-// GetVersionedEnums returns a map of versioned enums
-func (vb *VersionBundle) GetVersionedEnums() map[string]interface{} {
-	return make(map[string]interface{})
-}
-
 // IsVersionDefined checks if a version is defined in this bundle
 func (vb *VersionBundle) IsVersionDefined(versionStr string) bool {
 	if versionStr == "head" {

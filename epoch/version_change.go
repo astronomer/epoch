@@ -243,8 +243,7 @@ func NewMigrationChain(changes []*VersionChange) (*MigrationChain, error) {
 
 // MigrateRequest applies all changes in the chain for request migration
 func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *RequestInfo, from, to *Version) error {
-	// NOTE: Runtime type matching has been removed. All endpoints must use EndpointRegistry
-	// to explicitly declare their types at setup time. The matchedSchemaType is set by MigrateRequestForType.
+	// Type information is set by MigrateRequestForType from the EndpointRegistry
 
 	// Find the starting point in the version chain
 	start := -1
@@ -297,8 +296,7 @@ func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *Res
 		return nil
 	}
 
-	// NOTE: Runtime type matching has been removed. All endpoints must use EndpointRegistry
-	// to explicitly declare their types at setup time. The matchedSchemaType is set by MigrateResponseForType.
+	// Type information is set by MigrateResponseForType from the EndpointRegistry
 
 	// If 'from' is HEAD, treat it as the latest non-HEAD version
 	// since migrations are defined between numbered versions, not to/from HEAD
@@ -381,9 +379,6 @@ func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *Res
 func (mc *MigrationChain) AddChange(change *VersionChange) {
 	mc.changes = append(mc.changes, change)
 }
-
-// NOTE: Runtime schema matching has been removed entirely.
-// The new architecture uses EndpointRegistry for explicit type registration at endpoint setup time.
 
 // detectCycles uses depth-first search to find cycles in the version graph
 func (mc *MigrationChain) detectCycles() error {

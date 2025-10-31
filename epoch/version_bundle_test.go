@@ -148,26 +148,6 @@ var _ = Describe("VersionBundle", func() {
 		})
 	})
 
-	Describe("GetVersionedSchemas", func() {
-		It("should return empty map when no schemas are defined", func() {
-			var err error
-			bundle, err = NewVersionBundle([]*Version{v1})
-			Expect(err).NotTo(HaveOccurred())
-			schemas := bundle.GetVersionedSchemas()
-			Expect(schemas).NotTo(BeNil())
-		})
-	})
-
-	Describe("GetVersionedEnums", func() {
-		It("should return empty map when no enums are defined", func() {
-			var err error
-			bundle, err = NewVersionBundle([]*Version{v1})
-			Expect(err).NotTo(HaveOccurred())
-			enums := bundle.GetVersionedEnums()
-			Expect(enums).NotTo(BeNil())
-		})
-	})
-
 	Describe("Iterator", func() {
 		BeforeEach(func() {
 			var err error
