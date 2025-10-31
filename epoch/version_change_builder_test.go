@@ -1,8 +1,6 @@
 package epoch
 
 import (
-	"testing"
-
 	"github.com/bytedance/sonic"
 	"github.com/bytedance/sonic/ast"
 	. "github.com/onsi/ginkgo/v2"
@@ -25,11 +23,6 @@ type BuilderTestProduct struct {
 	Price       float64 `json:"price"`
 	Description string  `json:"description,omitempty"`
 	Currency    string  `json:"currency,omitempty"`
-}
-
-func TestSchemaVersionChangeBuilder(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "SchemaVersionChangeBuilder Suite")
 }
 
 var _ = Describe("SchemaVersionChangeBuilder", func() {
