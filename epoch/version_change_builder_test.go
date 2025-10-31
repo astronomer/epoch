@@ -10,7 +10,7 @@ import (
 )
 
 // Test types for type-based migrations
-type User struct {
+type BuilderTestUser struct {
 	ID       int    `json:"id"`
 	Name     string `json:"name"`
 	FullName string `json:"full_name"`
@@ -19,7 +19,7 @@ type User struct {
 	Status   string `json:"status"`
 }
 
-type Product struct {
+type BuilderTestProduct struct {
 	ID          int     `json:"id"`
 	Name        string  `json:"name"`
 	Price       float64 `json:"price"`
@@ -50,7 +50,7 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 		It("should create migration with clear direction semantics", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
 				Description("Add email field to User").
-				ForType(User{}).
+				ForType(BuilderTestUser{}).
 				RequestToNextVersion().
 				AddField("email", "default@example.com"). // Add email when going to v2
 				ResponseToPreviousVersion().
@@ -66,10 +66,10 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 		It("should support multiple schemas in one migration", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
 				Description("Update User and Product schemas").
-				ForType(User{}).
+				ForType(BuilderTestUser{}).
 				ResponseToPreviousVersion().
 				RenameField("full_name", "name").
-				ForType(Product{}).
+				ForType(BuilderTestProduct{}).
 				ResponseToPreviousVersion().
 				RemoveField("currency"). // Remove new field for v1 clients
 				Build()
@@ -104,7 +104,7 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 
 		It("should generate default description if none provided", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
-				ForType(User{}).
+				ForType(BuilderTestUser{}).
 				RequestToNextVersion().
 				AddField("email", "test@example.com").
 				Build()
@@ -134,11 +134,11 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 
 		It("should apply RequestToNextVersion operations correctly", func() {
 			migration := NewVersionChangeBuilder(v1, v2). // v1→v2 migration
-										ForType(User{}).
-										RequestToNextVersion().
-										AddField("created_at", "2024-01-01").
-										RenameField("name", "full_name").
-										Build()
+									ForType(BuilderTestUser{}).
+									RequestToNextVersion().
+									AddField("created_at", "2024-01-01").
+									RenameField("name", "full_name").
+									Build()
 
 			// Create a mock RequestInfo
 			requestInfo := &RequestInfo{Body: testNode}
@@ -165,11 +165,11 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 
 		It("should apply ResponseToPreviousVersion operations correctly", func() {
 			migration := NewVersionChangeBuilder(v2, v1). // v2→v1 migration
-										ForType(User{}).
-										ResponseToPreviousVersion().
-										RemoveField("email").
-										AddField("legacy_field", "legacy_value").
-										Build()
+									ForType(BuilderTestUser{}).
+									ResponseToPreviousVersion().
+									RemoveField("email").
+									AddField("legacy_field", "legacy_value").
+									Build()
 
 			// Create a mock ResponseInfo
 			responseInfo := &ResponseInfo{Body: testNode, StatusCode: 200}
@@ -196,12 +196,12 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 		It("should allow chaining between different direction builders", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
 				Description("Complex chaining example").
-				ForType(User{}).
+				ForType(BuilderTestUser{}).
 				RequestToNextVersion().
 				AddField("email", "default@example.com").
 				ResponseToPreviousVersion().
 				RemoveField("phone").
-				ForType(Product{}).
+				ForType(BuilderTestProduct{}).
 				ResponseToPreviousVersion().
 				RemoveField("currency").
 				Build()
@@ -212,7 +212,7 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 
 		It("should allow returning to schema builder from direction builders", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
-				ForType(Product{}). // Should return to schema builder
+				ForType(BuilderTestProduct{}). // Should return to schema builder
 				ResponseToPreviousVersion().
 				RemoveField("description").
 				Build()

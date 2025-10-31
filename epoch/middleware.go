@@ -341,36 +341,6 @@ func (vah *VersionAwareHandler) handleWithMigration(c *gin.Context, requestedVer
 		return
 	}
 
-	// OLD FALLBACK CODE (REMOVED):
-	// We no longer fall back to schema matching. All endpoints MUST be registered.
-	// This ensures predictable behavior and eliminates the source of many bugs.
-	/*
-		if err != nil {
-			fmt.Printf("[ENDPOINT LOOKUP] Failed: %v - falling back to schema matching\n", err)
-			// Endpoint not registered - fall back to old behavior (schema matching)
-			// This allows gradual migration - endpoints without type hints use old system
-			if err := vah.migrateRequest(c, requestedVersion); err != nil {
-				c.JSON(500, gin.H{"error": "Request migration failed", "details": err.Error()})
-				return
-			}
-
-			responseCapture := &ResponseCapture{
-				ResponseWriter: c.Writer,
-				body:           make([]byte, 0),
-				statusCode:     200,
-			}
-			c.Writer = responseCapture
-
-			vah.handler(c)
-
-			if err := vah.migrateResponse(c, requestedVersion, responseCapture); err != nil {
-				c.JSON(500, gin.H{"error": "Response migration failed", "details": err.Error()})
-				return
-			}
-			return
-		}
-	*/
-
 	// 1. Migrate request using KNOWN type
 	if endpointDef.RequestType != nil {
 		if err := vah.migrateRequestByType(c, requestedVersion, endpointDef.RequestType); err != nil {

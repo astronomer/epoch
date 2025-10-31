@@ -225,7 +225,7 @@ var _ = Describe("Middleware", func() {
 	Describe("GetVersionFromContext", func() {
 		It("should return version from context", func() {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Set("cadwyn_api_version", v1)
+			c.Set("epoch_api_version", v1)
 
 			version := GetVersionFromContext(c)
 			Expect(version).To(Equal(v1))
@@ -240,7 +240,7 @@ var _ = Describe("Middleware", func() {
 
 		It("should return nil when context value is not a version", func() {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Set("cadwyn_api_version", "not a version")
+			c.Set("epoch_api_version", "not a version")
 
 			version := GetVersionFromContext(c)
 			Expect(version).To(BeNil())
@@ -250,7 +250,7 @@ var _ = Describe("Middleware", func() {
 	Describe("IsDefaultVersionUsed", func() {
 		It("should return true when default version was used", func() {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Set("cadwyn_default_version_used", true)
+			c.Set("epoch_default_version_used", true)
 
 			used := IsDefaultVersionUsed(c)
 			Expect(used).To(BeTrue())
@@ -258,7 +258,7 @@ var _ = Describe("Middleware", func() {
 
 		It("should return false when explicit version was used", func() {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Set("cadwyn_default_version_used", false)
+			c.Set("epoch_default_version_used", false)
 
 			used := IsDefaultVersionUsed(c)
 			Expect(used).To(BeFalse())

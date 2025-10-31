@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http/httptest"
+	"reflect"
 
 	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
@@ -50,7 +51,7 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 			change := NewVersionChange("Test change", v1, v2, requestInst)
 			Expect(change).NotTo(BeNil())
 			Expect(change.Description()).To(Equal("Test change"))
-			
+
 			// Schema registry has been removed - types are now declared at endpoint registration
 			// Type information is explicitly provided via WrapHandler().Returns()/.Accepts()
 		})
@@ -76,7 +77,7 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 			Email string `json:"email"`
 		}
 
-		It("should migrate request using schema matching", func() {
+		It("should migrate request using explicit type", func() {
 			requestInst := &AlterRequestInstruction{
 				Schemas: []interface{}{TestUser{}},
 				Transformer: func(req *RequestInfo) error {
@@ -89,8 +90,10 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 
 			change := NewVersionChange("Test migration", v1, v2, requestInst)
 
-			// Create request that matches TestUser schema
+			// Create request with explicit type information (simulating endpoint registry)
 			reqInfo := createTestRequestInfo(`{"id": 1, "name": "John Doe"}`)
+			reqInfo.schemaMatched = true
+			reqInfo.matchedSchemaType = reflect.TypeOf(TestUser{})
 
 			err := change.MigrateRequest(ctx, reqInfo)
 			Expect(err).NotTo(HaveOccurred())
@@ -168,6 +171,8 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 			change := NewVersionChange("Test migration", v1, v2, requestInst)
 
 			reqInfo := createTestRequestInfo(`{"id": 1, "name": "John Doe"}`)
+			reqInfo.schemaMatched = true
+			reqInfo.matchedSchemaType = reflect.TypeOf(TestUser{})
 
 			err := change.MigrateRequest(ctx, reqInfo)
 			Expect(err).To(HaveOccurred())
@@ -182,9 +187,9 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 			Email string `json:"email"`
 		}
 
-		It("should migrate response using schema matching", func() {
+		It("should migrate response using explicit type", func() {
 			responseInst := &AlterResponseInstruction{
-				Schemas: []interface{}{TestUser{}},
+				Schemas:           []interface{}{TestUser{}},
 				MigrateHTTPErrors: false,
 				Transformer: func(resp *ResponseInfo) error {
 					if resp.Body != nil {
@@ -197,6 +202,8 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 			change := NewVersionChange("Test migration", v1, v2, responseInst)
 
 			respInfo := createTestResponseInfo(`{"id": 1, "name": "John Doe"}`, 200)
+			respInfo.schemaMatched = true
+			respInfo.matchedSchemaType = reflect.TypeOf(TestUser{})
 
 			err := change.MigrateResponse(ctx, respInfo)
 			Expect(err).NotTo(HaveOccurred())
@@ -207,7 +214,7 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 
 		It("should apply global response instructions", func() {
 			globalInst := &AlterResponseInstruction{
-				Schemas: []interface{}{}, // Global
+				Schemas:           []interface{}{}, // Global
 				MigrateHTTPErrors: true,
 				Transformer: func(resp *ResponseInfo) error {
 					resp.SetField("global_applied", true)
@@ -228,7 +235,7 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 
 		It("should respect MigrateHTTPErrors flag", func() {
 			responseInst := &AlterResponseInstruction{
-				Schemas: []interface{}{TestUser{}},
+				Schemas:           []interface{}{TestUser{}},
 				MigrateHTTPErrors: false, // Don't migrate errors
 				Transformer: func(resp *ResponseInfo) error {
 					resp.SetField("migrated", true)
@@ -240,6 +247,8 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 
 			// Test with error response
 			respInfo := createTestResponseInfo(`{"id": 1, "name": "John Doe"}`, 400)
+			respInfo.schemaMatched = true
+			respInfo.matchedSchemaType = reflect.TypeOf(TestUser{})
 
 			err := change.MigrateResponse(ctx, respInfo)
 			Expect(err).NotTo(HaveOccurred())
@@ -249,6 +258,8 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 
 			// Test with success response
 			respInfo2 := createTestResponseInfo(`{"id": 1, "name": "John Doe"}`, 200)
+			respInfo2.schemaMatched = true
+			respInfo2.matchedSchemaType = reflect.TypeOf(TestUser{})
 
 			err = change.MigrateResponse(ctx, respInfo2)
 			Expect(err).NotTo(HaveOccurred())
@@ -259,7 +270,7 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 
 		It("should migrate HTTP errors when flag is true", func() {
 			responseInst := &AlterResponseInstruction{
-				Schemas: []interface{}{TestUser{}},
+				Schemas:           []interface{}{TestUser{}},
 				MigrateHTTPErrors: true, // Migrate errors
 				Transformer: func(resp *ResponseInfo) error {
 					resp.SetField("migrated", true)
@@ -270,6 +281,8 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 			change := NewVersionChange("Test migration", v1, v2, responseInst)
 
 			respInfo := createTestResponseInfo(`{"id": 1, "name": "John Doe"}`, 400)
+			respInfo.schemaMatched = true
+			respInfo.matchedSchemaType = reflect.TypeOf(TestUser{})
 
 			err := change.MigrateResponse(ctx, respInfo)
 			Expect(err).NotTo(HaveOccurred())
@@ -280,7 +293,7 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 
 		It("should handle nil response body gracefully", func() {
 			responseInst := &AlterResponseInstruction{
-				Schemas: []interface{}{TestUser{}},
+				Schemas:           []interface{}{TestUser{}},
 				MigrateHTTPErrors: true,
 				Transformer: func(resp *ResponseInfo) error {
 					resp.SetField("migrated", true)
@@ -311,7 +324,7 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 
 		It("should register multiple schemas from instructions", func() {
 			requestInst := &AlterRequestInstruction{
-				Schemas: []interface{}{TestUser{}, TestProduct{}},
+				Schemas:     []interface{}{TestUser{}, TestProduct{}},
 				Transformer: func(req *RequestInfo) error { return nil },
 			}
 
@@ -323,7 +336,7 @@ var _ = Describe("VersionChange - Schema-Based", func() {
 
 		It("should handle pointer types in schema registration", func() {
 			requestInst := &AlterRequestInstruction{
-				Schemas: []interface{}{&TestUser{}}, // Pointer type
+				Schemas:     []interface{}{&TestUser{}}, // Pointer type
 				Transformer: func(req *RequestInfo) error { return nil },
 			}
 
