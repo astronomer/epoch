@@ -9,9 +9,10 @@ import (
 
 // Epoch provides API versioning capabilities for existing Gin applications
 type Epoch struct {
-	versionBundle  *VersionBundle
-	migrationChain *MigrationChain
-	versionConfig  VersionConfig
+	versionBundle    *VersionBundle
+	migrationChain   *MigrationChain
+	versionConfig    VersionConfig
+	endpointRegistry *EndpointRegistry
 }
 
 // VersionConfig holds configuration for version detection and handling
@@ -46,10 +47,92 @@ func (c *Epoch) Middleware() gin.HandlerFunc {
 	return middleware.Middleware()
 }
 
+// HandlerWrapper wraps a handler and collects type information for endpoint registration
+type HandlerWrapper struct {
+	epoch        *Epoch
+	handler      gin.HandlerFunc
+	request      interface{}
+	response     interface{}
+	nestedArrays map[string]interface{}
+}
+
 // WrapHandler wraps a Gin handler to provide automatic request/response migration
-func (c *Epoch) WrapHandler(handler gin.HandlerFunc) gin.HandlerFunc {
-	versionAwareHandler := NewVersionAwareHandler(handler, c.versionBundle, c.migrationChain)
-	return versionAwareHandler.HandlerFunc()
+// Returns a HandlerWrapper that allows type registration via builder pattern
+func (c *Epoch) WrapHandler(handler gin.HandlerFunc) *HandlerWrapper {
+	return &HandlerWrapper{
+		epoch:        c,
+		handler:      handler,
+		nestedArrays: make(map[string]interface{}),
+	}
+}
+
+// Accepts registers the request type for this endpoint
+func (hw *HandlerWrapper) Accepts(reqType interface{}) *HandlerWrapper {
+	hw.request = reqType
+	return hw
+}
+
+// Returns registers the response type for this endpoint
+func (hw *HandlerWrapper) Returns(respType interface{}) *HandlerWrapper {
+	hw.response = respType
+	return hw
+}
+
+// WithArrayItems registers a nested array field and its item type
+func (hw *HandlerWrapper) WithArrayItems(fieldName string, itemType interface{}) *HandlerWrapper {
+	hw.nestedArrays[fieldName] = itemType
+	return hw
+}
+
+// ToHandlerFunc converts the wrapper into a gin.HandlerFunc
+// Gin routers expect gin.HandlerFunc, so call this method at the end of the chain
+// Example: r.GET("/users", epochInstance.WrapHandler(listUsers).Returns(UsersListResponse{}).ToHandlerFunc())
+func (hw *HandlerWrapper) ToHandlerFunc() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Register endpoint on first request (lazy registration)
+		hw.registerEndpointOnce(c)
+
+		// Delegate to version-aware handler
+		versionAwareHandler := NewVersionAwareHandler(hw.handler, hw.epoch.versionBundle, hw.epoch.migrationChain, hw.epoch.endpointRegistry)
+		versionAwareHandler.HandlerFunc()(c)
+	}
+}
+
+// registerEndpointOnce registers the endpoint with the registry (called on first request)
+func (hw *HandlerWrapper) registerEndpointOnce(c *gin.Context) {
+	// Build endpoint definition
+	def := &EndpointDefinition{
+		Method:      c.Request.Method,
+		PathPattern: c.FullPath(), // Gin's FullPath() includes the route pattern like "/users/:id"
+	}
+
+	if hw.request != nil {
+		def.RequestType = reflect.TypeOf(hw.request)
+		if def.RequestType.Kind() == reflect.Ptr {
+			def.RequestType = def.RequestType.Elem()
+		}
+	}
+
+	if hw.response != nil {
+		def.ResponseType = reflect.TypeOf(hw.response)
+		if def.ResponseType.Kind() == reflect.Ptr {
+			def.ResponseType = def.ResponseType.Elem()
+		}
+	}
+
+	if len(hw.nestedArrays) > 0 {
+		def.NestedArrays = make(map[string]reflect.Type)
+		for field, itemType := range hw.nestedArrays {
+			itemReflectType := reflect.TypeOf(itemType)
+			if itemReflectType.Kind() == reflect.Ptr {
+				itemReflectType = itemReflectType.Elem()
+			}
+			def.NestedArrays[field] = itemReflectType
+		}
+	}
+
+	// Register with the endpoint registry
+	hw.epoch.endpointRegistry.Register(def.Method, def.PathPattern, def)
 }
 
 // GetVersionBundle returns the version bundle
@@ -75,14 +158,6 @@ func (c *Epoch) GetHeadVersion() *Version {
 // ParseVersion parses a version string
 func (c *Epoch) ParseVersion(versionStr string) (*Version, error) {
 	return c.versionBundle.ParseVersion(versionStr)
-}
-
-// GenerateStructForVersion generates Go code for a struct at a specific version
-// Note: Schema generation has been removed and will be rebuilt in the future
-// using the new declarative operation framework. This function is kept for
-// backward compatibility but will return an error.
-func (c *Epoch) GenerateStructForVersion(structType interface{}, targetVersion string) (string, error) {
-	return "", fmt.Errorf("schema generation has been temporarily removed and will be rebuilt using the new declarative API")
 }
 
 // EpochBuilder provides a fluent API for building Epoch instances
@@ -211,9 +286,10 @@ func (cb *EpochBuilder) Build() (*Epoch, error) {
 	}
 
 	return &Epoch{
-		versionBundle:  versionBundle,
-		migrationChain: migrationChain,
-		versionConfig:  cb.versionConfig,
+		versionBundle:    versionBundle,
+		migrationChain:   migrationChain,
+		versionConfig:    cb.versionConfig,
+		endpointRegistry: NewEndpointRegistry(),
 	}, nil
 }
 

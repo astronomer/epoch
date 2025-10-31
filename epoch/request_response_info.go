@@ -3,6 +3,7 @@ package epoch
 import (
 	"errors"
 	"net/http"
+	"reflect"
 
 	"github.com/bytedance/sonic/ast"
 	"github.com/gin-gonic/gin"
@@ -15,6 +16,10 @@ type RequestInfo struct {
 	Cookies     map[string]string
 	QueryParams map[string]string
 	GinContext  *gin.Context
+
+	// Chain-level schema matching context (prevents re-matching in multi-step migrations)
+	schemaMatched     bool
+	matchedSchemaType reflect.Type
 }
 
 // NewRequestInfo creates a new RequestInfo from a Gin context
@@ -60,6 +65,13 @@ type ResponseInfo struct {
 	StatusCode int
 	Headers    http.Header
 	GinContext *gin.Context
+
+	// Chain-level schema matching context (prevents re-matching in multi-step migrations)
+	schemaMatched     bool
+	matchedSchemaType reflect.Type
+
+	// Nested array type information for step-by-step transformations
+	nestedArrayTypes map[string]reflect.Type
 }
 
 // NewResponseInfo creates a new ResponseInfo from a Gin context
@@ -296,6 +308,11 @@ func (r *ResponseInfo) TransformArrayField(key string, transformer func(*ast.Nod
 }
 
 // TransformNestedArrays recursively finds and transforms all arrays nested within an object
+//
+// NOTE: This is a utility method for custom transformations. The framework's automatic
+// nested array migrations use type-aware transformations (transformNestedArrayItemsForSingleStep)
+// which apply migrations step-by-step with proper type information. Use this method only for
+// custom migration logic in ResponseCustom operations where you need non-type-aware recursion.
 func (r *ResponseInfo) TransformNestedArrays(transformer func(*ast.Node) error) error {
 	if r.Body == nil {
 		return nil

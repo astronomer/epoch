@@ -1,27 +1,35 @@
 package epoch
 
 import (
+	"reflect"
 	"strings"
 
 	"github.com/bytedance/sonic/ast"
 )
 
-// versionChangeBuilder implements the fluent builder API for creating version changes
+// ============================================================================
+// VERSION CHANGE BUILDER - Fluent API for building migrations
+// ============================================================================
+
+// versionChangeBuilder implements the flow-based fluent builder API
+// Following the actual migration flow:
+// - Requests: Client Version → HEAD Version (always forward)
+// - Responses: HEAD Version → Client Version (always backward)
 type versionChangeBuilder struct {
 	description    string
 	fromVersion    *Version
 	toVersion      *Version
-	pathOps        map[string]*pathBuilder
+	typeOps        map[reflect.Type]*typeBuilder
 	customRequest  func(*RequestInfo) error
 	customResponse func(*ResponseInfo) error
 }
 
-// NewVersionChangeBuilder creates a new version change builder (new fluent API)
+// NewVersionChangeBuilder creates a new type-based version change builder
 func NewVersionChangeBuilder(fromVersion, toVersion *Version) *versionChangeBuilder {
 	return &versionChangeBuilder{
 		fromVersion: fromVersion,
 		toVersion:   toVersion,
-		pathOps:     make(map[string]*pathBuilder),
+		typeOps:     make(map[reflect.Type]*typeBuilder),
 	}
 }
 
@@ -31,21 +39,32 @@ func (b *versionChangeBuilder) Description(desc string) *versionChangeBuilder {
 	return b
 }
 
-// ForPath starts building operations for specific paths (runtime routing)
-// Multiple paths can be specified to apply the same operations to all of them.
-func (b *versionChangeBuilder) ForPath(paths ...string) *pathBuilder {
-	pb := &pathBuilder{
-		parent:     b,
-		paths:      paths,
-		operations: make([]Operation, 0),
+// ForType starts building operations for specific types
+// This allows targeting migrations to specific Go struct types (e.g., UserResponse)
+// Types are explicitly declared at endpoint registration via WrapHandler().Returns()/.Accepts()
+func (b *versionChangeBuilder) ForType(types ...interface{}) *typeBuilder {
+	tb := &typeBuilder{
+		parent:                       b,
+		targetTypes:                  make([]reflect.Type, 0, len(types)),
+		requestToNextVersionOps:      make(RequestToNextVersionOperationList, 0),
+		responseToPreviousVersionOps: make(ResponseToPreviousVersionOperationList, 0),
 	}
 
-	// Store by first path for retrieval
-	if len(paths) > 0 {
-		b.pathOps[paths[0]] = pb
+	// Convert types to reflect.Type
+	for _, t := range types {
+		reflectType := reflect.TypeOf(t)
+		if reflectType.Kind() == reflect.Ptr {
+			reflectType = reflectType.Elem()
+		}
+		tb.targetTypes = append(tb.targetTypes, reflectType)
+
+		// Store by first type for retrieval
+		if len(tb.targetTypes) == 1 {
+			b.typeOps[reflectType] = tb
+		}
 	}
 
-	return pb
+	return tb
 }
 
 // CustomRequest adds a global custom request transformer
@@ -66,75 +85,91 @@ func (b *versionChangeBuilder) Build() *VersionChange {
 		b.description = "Migration from " + b.fromVersion.String() + " to " + b.toVersion.String()
 	}
 
-	// Validate: require at least one path or custom transformer
-	if len(b.pathOps) == 0 && b.customRequest == nil && b.customResponse == nil {
-		panic("epoch: VersionChange must specify at least one path using ForPath() or custom transformers")
+	// Validate: require at least one type or custom transformer
+	if len(b.typeOps) == 0 && b.customRequest == nil && b.customResponse == nil {
+		panic("epoch: VersionChange must specify at least one type using ForType() or custom transformers")
 	}
 
 	var instructions []interface{}
 
-	// Compile path-based operations into instructions (RUNTIME ROUTING)
-	for _, pb := range b.pathOps {
-		if len(pb.operations) == 0 {
+	// Compile type-based operations into instructions
+	for _, tb := range b.typeOps {
+		if len(tb.requestToNextVersionOps) == 0 &&
+			len(tb.responseToPreviousVersionOps) == 0 {
 			continue
 		}
 
-		// Get field mappings for error transformation
-		fieldMappings := pb.operations.GetFieldMappings()
+		// CRITICAL: Create local copies to avoid closure variable capture bug
+		// Without this, all closures would reference the same (last) tb
+		tbCopy := tb
 
-		// Create request instruction for each path
-		for _, path := range pb.paths {
+		// Get field mappings for error transformation
+		fieldMappings := make(map[string]string)
+
+		// Combine field mappings from both operation types
+		for k, v := range tbCopy.requestToNextVersionOps.GetFieldMappings() {
+			fieldMappings[k] = v
+		}
+		for k, v := range tbCopy.responseToPreviousVersionOps.GetFieldMappings() {
+			fieldMappings[k] = v
+		}
+
+		// Create request instruction for each type
+		for _, targetType := range tbCopy.targetTypes {
+			// CRITICAL: Create local copy for closure
+			targetTypeCopy := targetType
+			requestOpsCopy := tbCopy.requestToNextVersionOps
+
 			requestInst := &AlterRequestInstruction{
-				Path:    path,
-				Methods: []string{}, // Empty means all methods
+				Schemas: []interface{}{reflect.New(targetTypeCopy).Interface()},
 				Transformer: func(req *RequestInfo) error {
 					if req.Body == nil {
 						return nil
 					}
 
-					// Apply operations to request body
-					if err := pb.operations.ApplyToRequest(req.Body); err != nil {
-						return err
-					}
-
-					return nil
+					// Request migration is always FROM client version TO HEAD version
+					// Apply "to next version" operations (Client→HEAD)
+					return requestOpsCopy.Apply(req.Body)
 				},
 			}
 			instructions = append(instructions, requestInst)
 
 			// Create response instruction
+			responseOpsCopy := tbCopy.responseToPreviousVersionOps
+			fieldMappingsCopy := make(map[string]string)
+			for k, v := range fieldMappings {
+				fieldMappingsCopy[k] = v
+			}
+
 			responseInst := &AlterResponseInstruction{
-				Path:              path,
-				Methods:           []string{}, // Empty means all methods
+				Schemas:           []interface{}{reflect.New(targetTypeCopy).Interface()},
 				MigrateHTTPErrors: true,
 				Transformer: func(resp *ResponseInfo) error {
-					// Apply operations to all responses (including errors since MigrateHTTPErrors=true)
 					if resp.Body != nil {
-						// Handle arrays and objects separately to avoid conflicts
+						// Handle arrays and objects separately
 						if resp.Body.TypeSafe() == ast.V_ARRAY {
-							// For arrays, apply operations to each item only
+							// For arrays, apply operations to each item
 							if err := resp.TransformArrayField("", func(node *ast.Node) error {
-								return pb.operations.ApplyToResponse(node)
+								// Response migration is always FROM HEAD version TO client version
+								// Apply "to previous version" operations (HEAD→Client)
+								return responseOpsCopy.Apply(node)
 							}); err != nil {
 								return err
 							}
 						} else {
-							// For objects, apply operations to the top-level object first
-							if err := pb.operations.ApplyToResponse(resp.Body); err != nil {
+							// For objects, apply operations to the object
+							// Response migration is always FROM HEAD version TO client version
+							if err := responseOpsCopy.Apply(resp.Body); err != nil {
 								return err
 							}
-							// Then recursively handle ALL nested arrays within the object
-							if err := resp.TransformNestedArrays(func(node *ast.Node) error {
-								return pb.operations.ApplyToResponse(node)
-							}); err != nil {
-								return err
-							}
+							// Note: Nested arrays are now handled by VersionChange.MigrateResponse
+							// using type-aware transformNestedArrayItemsForSingleStep at each migration step
 						}
 					}
 
 					// Additionally transform field names in error messages for validation errors
-					if len(fieldMappings) > 0 {
-						return transformErrorFieldNames(resp, fieldMappings)
+					if len(fieldMappingsCopy) > 0 {
+						return transformErrorFieldNamesInResponse(resp, fieldMappingsCopy)
 					}
 
 					return nil
@@ -160,66 +195,189 @@ func (b *versionChangeBuilder) Build() *VersionChange {
 		})
 	}
 
-	// Use the old NewVersionChange function to create the actual VersionChange
 	return NewVersionChange(b.description, b.fromVersion, b.toVersion, instructions...)
 }
 
-// pathBuilder builds operations for specific paths (runtime routing)
-type pathBuilder struct {
-	parent     *versionChangeBuilder
-	paths      []string
-	operations OperationList
+// typeBuilder builds operations for specific types
+type typeBuilder struct {
+	parent                       *versionChangeBuilder
+	targetTypes                  []reflect.Type
+	requestToNextVersionOps      RequestToNextVersionOperationList
+	responseToPreviousVersionOps ResponseToPreviousVersionOperationList
 }
 
-// pathBuilder methods
-
-// AddField adds a field with a default value
-func (pb *pathBuilder) AddField(name string, defaultValue interface{}) *pathBuilder {
-	pb.operations = append(pb.operations, &AddFieldOp{
-		Name:    name,
-		Default: defaultValue,
-	})
-	return pb
+// RequestToNextVersion returns a builder for request operations (Client→HEAD)
+// This is the ONLY direction requests flow
+func (tb *typeBuilder) RequestToNextVersion() *requestToNextVersionBuilder {
+	return &requestToNextVersionBuilder{parent: tb}
 }
 
-// RemoveField removes a field
-func (pb *pathBuilder) RemoveField(name string) *pathBuilder {
-	pb.operations = append(pb.operations, &RemoveFieldOp{
-		Name: name,
-	})
-	return pb
+// ResponseToPreviousVersion returns a builder for response operations (HEAD→Client)
+// This is the ONLY direction responses flow
+func (tb *typeBuilder) ResponseToPreviousVersion() *responseToPreviousVersionBuilder {
+	return &responseToPreviousVersionBuilder{parent: tb}
 }
 
-// RenameField renames a field
-func (pb *pathBuilder) RenameField(from, to string) *pathBuilder {
-	pb.operations = append(pb.operations, &RenameFieldOp{
-		From: from,
-		To:   to,
-	})
-	return pb
-}
-
-// MapEnumValues maps enum values
-func (pb *pathBuilder) MapEnumValues(field string, mapping map[string]string) *pathBuilder {
-	pb.operations = append(pb.operations, &MapEnumValuesOp{
-		Field:   field,
-		Mapping: mapping,
-	})
-	return pb
-}
-
-// ForPath returns to the parent and starts a new path builder
-func (pb *pathBuilder) ForPath(paths ...string) *pathBuilder {
-	return pb.parent.ForPath(paths...)
+// ForType returns to the parent and starts a new type builder
+func (tb *typeBuilder) ForType(types ...interface{}) *typeBuilder {
+	return tb.parent.ForType(types...)
 }
 
 // Build is a convenience method that calls the parent's Build()
-func (pb *pathBuilder) Build() *VersionChange {
-	return pb.parent.Build()
+func (tb *typeBuilder) Build() *VersionChange {
+	return tb.parent.Build()
 }
 
-// transformErrorFieldNames transforms field names in error messages
-func transformErrorFieldNames(resp *ResponseInfo, fieldMapping map[string]string) error {
+type requestToNextVersionBuilder struct {
+	parent *typeBuilder
+}
+
+// AddField adds a field when request migrates from client to HEAD
+func (b *requestToNextVersionBuilder) AddField(name string, defaultValue interface{}) *requestToNextVersionBuilder {
+	b.parent.requestToNextVersionOps = append(b.parent.requestToNextVersionOps,
+		&RequestAddField{
+			Name:    name,
+			Default: defaultValue,
+		})
+	return b
+}
+
+// AddFieldWithDefault adds a field ONLY if missing (Cadwyn-style default handling)
+func (b *requestToNextVersionBuilder) AddFieldWithDefault(name string, defaultValue interface{}) *requestToNextVersionBuilder {
+	b.parent.requestToNextVersionOps = append(b.parent.requestToNextVersionOps,
+		&RequestAddFieldWithDefault{
+			Name:    name,
+			Default: defaultValue,
+		})
+	return b
+}
+
+// RemoveField removes a field when request migrates from client to HEAD
+func (b *requestToNextVersionBuilder) RemoveField(name string) *requestToNextVersionBuilder {
+	b.parent.requestToNextVersionOps = append(b.parent.requestToNextVersionOps,
+		&RequestRemoveField{
+			Name: name,
+		})
+	return b
+}
+
+// RenameField renames a field when request migrates from client to HEAD
+func (b *requestToNextVersionBuilder) RenameField(from, to string) *requestToNextVersionBuilder {
+	b.parent.requestToNextVersionOps = append(b.parent.requestToNextVersionOps,
+		&RequestRenameField{
+			From: from,
+			To:   to,
+		})
+	return b
+}
+
+// Custom applies a custom transformation function to the request
+func (b *requestToNextVersionBuilder) Custom(fn func(*RequestInfo) error) *requestToNextVersionBuilder {
+	// Wrap RequestInfo function to work with ast.Node
+	b.parent.requestToNextVersionOps = append(b.parent.requestToNextVersionOps,
+		&RequestCustom{
+			Fn: func(node *ast.Node) error {
+				// Create a temporary RequestInfo wrapper
+				req := &RequestInfo{Body: node}
+				return fn(req)
+			},
+		})
+	return b
+}
+
+// Back to response builder
+func (b *requestToNextVersionBuilder) ResponseToPreviousVersion() *responseToPreviousVersionBuilder {
+	return b.parent.ResponseToPreviousVersion()
+}
+
+// Back to type builder
+func (b *requestToNextVersionBuilder) ForType(types ...interface{}) *typeBuilder {
+	return b.parent.ForType(types...)
+}
+
+// Build completes the builder chain
+func (b *requestToNextVersionBuilder) Build() *VersionChange {
+	return b.parent.Build()
+}
+
+type responseToPreviousVersionBuilder struct {
+	parent *typeBuilder
+}
+
+// AddField adds a field when response migrates from HEAD to client
+func (b *responseToPreviousVersionBuilder) AddField(name string, defaultValue interface{}) *responseToPreviousVersionBuilder {
+	b.parent.responseToPreviousVersionOps = append(b.parent.responseToPreviousVersionOps,
+		&ResponseAddField{
+			Name:    name,
+			Default: defaultValue,
+		})
+	return b
+}
+
+// RemoveField removes a field when response migrates from HEAD to client
+func (b *responseToPreviousVersionBuilder) RemoveField(name string) *responseToPreviousVersionBuilder {
+	b.parent.responseToPreviousVersionOps = append(b.parent.responseToPreviousVersionOps,
+		&ResponseRemoveField{
+			Name: name,
+		})
+	return b
+}
+
+// RemoveFieldIfDefault removes a field ONLY if it equals the default value
+func (b *responseToPreviousVersionBuilder) RemoveFieldIfDefault(name string, defaultValue interface{}) *responseToPreviousVersionBuilder {
+	b.parent.responseToPreviousVersionOps = append(b.parent.responseToPreviousVersionOps,
+		&ResponseRemoveFieldIfDefault{
+			Name:    name,
+			Default: defaultValue,
+		})
+	return b
+}
+
+// RenameField renames a field when response migrates from HEAD to client
+func (b *responseToPreviousVersionBuilder) RenameField(from, to string) *responseToPreviousVersionBuilder {
+	b.parent.responseToPreviousVersionOps = append(b.parent.responseToPreviousVersionOps,
+		&ResponseRenameField{
+			From: from,
+			To:   to,
+		})
+	return b
+}
+
+// Custom applies a custom transformation function to the response
+func (b *responseToPreviousVersionBuilder) Custom(fn func(*ResponseInfo) error) *responseToPreviousVersionBuilder {
+	// Wrap ResponseInfo function to work with ast.Node
+	b.parent.responseToPreviousVersionOps = append(b.parent.responseToPreviousVersionOps,
+		&ResponseCustom{
+			Fn: func(node *ast.Node) error {
+				// Create a temporary ResponseInfo wrapper
+				resp := &ResponseInfo{Body: node}
+				return fn(resp)
+			},
+		})
+	return b
+}
+
+// Back to request builder
+func (b *responseToPreviousVersionBuilder) RequestToNextVersion() *requestToNextVersionBuilder {
+	return b.parent.RequestToNextVersion()
+}
+
+// Back to type builder
+func (b *responseToPreviousVersionBuilder) ForType(types ...interface{}) *typeBuilder {
+	return b.parent.ForType(types...)
+}
+
+// Build completes the builder chain
+func (b *responseToPreviousVersionBuilder) Build() *VersionChange {
+	return b.parent.Build()
+}
+
+// ============================================================================
+// ERROR FIELD NAME TRANSFORMATION HELPERS
+// ============================================================================
+
+// transformErrorFieldNamesInResponse transforms field names in error messages
+func transformErrorFieldNamesInResponse(resp *ResponseInfo, fieldMapping map[string]string) error {
 	// Only transform validation errors (400 Bad Request)
 	if resp.StatusCode != 400 || resp.Body == nil {
 		return nil
@@ -233,7 +391,7 @@ func transformErrorFieldNames(resp *ResponseInfo, fieldMapping map[string]string
 	// Handle simple string errors
 	if errorNode.TypeSafe() == ast.V_STRING {
 		errorStr, _ := errorNode.String()
-		transformedError := replaceFieldNamesInString(errorStr, fieldMapping)
+		transformedError := replaceFieldNamesInErrorString(errorStr, fieldMapping)
 		resp.SetField("error", transformedError)
 		return nil
 	}
@@ -243,7 +401,7 @@ func transformErrorFieldNames(resp *ResponseInfo, fieldMapping map[string]string
 		messageNode := errorNode.Get("message")
 		if messageNode != nil && messageNode.Exists() {
 			messageStr, _ := messageNode.String()
-			transformedMessage := replaceFieldNamesInString(messageStr, fieldMapping)
+			transformedMessage := replaceFieldNamesInErrorString(messageStr, fieldMapping)
 
 			// Reconstruct error object
 			errorObj := map[string]interface{}{
@@ -264,8 +422,8 @@ func transformErrorFieldNames(resp *ResponseInfo, fieldMapping map[string]string
 	return nil
 }
 
-// replaceFieldNamesInString replaces field names in error messages
-func replaceFieldNamesInString(errorMsg string, fieldMapping map[string]string) string {
+// replaceFieldNamesInErrorString replaces field names in error messages
+func replaceFieldNamesInErrorString(errorMsg string, fieldMapping map[string]string) string {
 	result := errorMsg
 
 	for newField, oldField := range fieldMapping {
@@ -274,11 +432,11 @@ func replaceFieldNamesInString(errorMsg string, fieldMapping map[string]string) 
 			old string
 			new string
 		}{
-			{newField, oldField},                                                                         // better_new_name -> new_name
-			{toPascalCase(newField), toPascalCase(oldField)},                                             // BetterNewName -> NewName
-			{"'" + newField + "'", "'" + oldField + "'"},                                                 // 'better_new_name' -> 'new_name'
-			{"\"" + newField + "\"", "\"" + oldField + "\""},                                             // "better_new_name" -> "new_name"
-			{"Key: 'User." + toPascalCase(newField) + "'", "Key: 'User." + toPascalCase(oldField) + "'"}, // Gin validation
+			{newField, oldField},
+			{toPascalCaseString(newField), toPascalCaseString(oldField)},
+			{"'" + newField + "'", "'" + oldField + "'"},
+			{"\"" + newField + "\"", "\"" + oldField + "\""},
+			{"Key: 'User." + toPascalCaseString(newField) + "'", "Key: 'User." + toPascalCaseString(oldField) + "'"},
 		}
 
 		for _, p := range patterns {
@@ -289,8 +447,8 @@ func replaceFieldNamesInString(errorMsg string, fieldMapping map[string]string) 
 	return result
 }
 
-// toPascalCase converts snake_case to PascalCase
-func toPascalCase(s string) string {
+// toPascalCaseString converts snake_case to PascalCase
+func toPascalCaseString(s string) string {
 	if s == "" {
 		return ""
 	}
@@ -312,7 +470,7 @@ func toPascalCase(s string) string {
 			continue
 		}
 
-		// Capitalize first character properly using strings.ToUpper
+		// Capitalize first character
 		runes := []rune(part)
 		if len(runes) > 0 {
 			result.WriteString(strings.ToUpper(string(runes[0])))

@@ -1,302 +1,216 @@
 package epoch
 
 import (
-	"context"
-	"net/http/httptest"
-
 	"github.com/bytedance/sonic"
-	"github.com/gin-gonic/gin"
+	"github.com/bytedance/sonic/ast"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("Declarative Builder API", func() {
+// Test types for type-based migrations
+type BuilderTestUser struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	FullName string `json:"full_name"`
+	Email    string `json:"email,omitempty"`
+	Phone    string `json:"phone,omitempty"`
+	Status   string `json:"status"`
+}
+
+type BuilderTestProduct struct {
+	ID          int     `json:"id"`
+	Name        string  `json:"name"`
+	Price       float64 `json:"price"`
+	Description string  `json:"description,omitempty"`
+	Currency    string  `json:"currency,omitempty"`
+}
+
+var _ = Describe("SchemaVersionChangeBuilder", func() {
 	var (
-		v1 *Version
-		v2 *Version
-		v3 *Version
+		v1, v2 *Version
 	)
 
 	BeforeEach(func() {
-		v1, _ = NewDateVersion("2024-01-01")
-		v2, _ = NewDateVersion("2024-06-01")
-		v3, _ = NewDateVersion("2025-01-01")
+		var err error
+		v1, err = NewDateVersion("2024-01-01")
+		Expect(err).NotTo(HaveOccurred())
+
+		v2, err = NewDateVersion("2024-06-01")
+		Expect(err).NotTo(HaveOccurred())
 	})
 
-	Describe("FieldRename Operation", func() {
-		type User struct {
-			ID   int    `json:"id"`
-			Name string `json:"name"`
-		}
-
-		It("should rename field in request (forward migration)", func() {
-			// Create migration: v1 has "name", v2 has "full_name"
+	Describe("Cadwyn-Style API", func() {
+		It("should create migration with clear direction semantics", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
-				Description("Rename name to full_name").
-				ForPath("/test").
-				RenameField("name", "full_name").
+				Description("Add email field to User").
+				ForType(BuilderTestUser{}).
+				RequestToNextVersion().
+				AddField("email", "default@example.com"). // Add email when going to v2
+				ResponseToPreviousVersion().
+				RemoveField("email"). // Remove email from responses for v1 clients
 				Build()
 
-			// Test request migration (v1 -> v2)
-			requestJSON := `{"name": "John Doe"}`
-			reqInfo := createRequestInfo(requestJSON)
-
-			err := migration.MigrateRequest(context.Background(), reqInfo)
-			Expect(err).ToNot(HaveOccurred())
-
-			// Should have "full_name" now
-			Expect(reqInfo.Body.Get("full_name").Exists()).To(BeTrue())
-			fullName, _ := reqInfo.Body.Get("full_name").String()
-			Expect(fullName).To(Equal("John Doe"))
-
-			// Should NOT have "name"
-			Expect(reqInfo.Body.Get("name").Exists()).To(BeFalse())
+			Expect(migration).NotTo(BeNil())
+			Expect(migration.Description()).To(Equal("Add email field to User"))
+			Expect(migration.FromVersion()).To(Equal(v1))
+			Expect(migration.ToVersion()).To(Equal(v2))
 		})
 
-		It("should rename field in response (backward migration)", func() {
-			// Create migration: v1 has "name", v2 has "full_name"
+		It("should support multiple schemas in one migration", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
-				Description("Rename name to full_name").
-				ForPath("/test").
-				RenameField("name", "full_name").
+				Description("Update User and Product schemas").
+				ForType(BuilderTestUser{}).
+				ResponseToPreviousVersion().
+				RenameField("full_name", "name").
+				ForType(BuilderTestProduct{}).
+				ResponseToPreviousVersion().
+				RemoveField("currency"). // Remove new field for v1 clients
 				Build()
 
-			// Test response migration (v2 -> v1)
-			responseJSON := `{"full_name": "Jane Smith"}`
-			respInfo := createResponseInfo(responseJSON, 200)
-
-			err := migration.MigrateResponse(context.Background(), respInfo)
-			Expect(err).ToNot(HaveOccurred())
-
-			// Should have "name" now
-			Expect(respInfo.Body.Get("name").Exists()).To(BeTrue())
-			name, _ := respInfo.Body.Get("name").String()
-			Expect(name).To(Equal("Jane Smith"))
-
-			// Should NOT have "full_name"
-			Expect(respInfo.Body.Get("full_name").Exists()).To(BeFalse())
+			Expect(migration).NotTo(BeNil())
+			Expect(migration.Description()).To(Equal("Update User and Product schemas"))
 		})
 
-		It("should transform field names in error messages", func() {
-			// Create migration: v1 has "name", v2 has "full_name"
+		It("should support global custom transformers", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
-				Description("Rename name to full_name").
-				ForPath("/test").
-				RenameField("name", "full_name").
+				Description("Global custom operations").
+				CustomRequest(func(req *RequestInfo) error {
+					// Custom logic for all requests
+					return nil
+				}).
+				CustomResponse(func(resp *ResponseInfo) error {
+					// Custom logic for all responses
+					return nil
+				}).
 				Build()
 
-			// Test error message transformation
-			errorJSON := `{"error": "Field 'full_name' is required"}`
-			respInfo := createResponseInfo(errorJSON, 400)
+			Expect(migration).NotTo(BeNil())
+		})
 
-			err := migration.MigrateResponse(context.Background(), respInfo)
-			Expect(err).ToNot(HaveOccurred())
+		It("should require at least one schema or custom transformer", func() {
+			Expect(func() {
+				NewVersionChangeBuilder(v1, v2).
+					Description("Empty migration").
+					Build()
+			}).To(Panic())
+		})
 
-			// Error message should have "name" instead of "full_name"
-			errorMsg, _ := respInfo.Body.Get("error").String()
-			Expect(errorMsg).To(ContainSubstring("name"))
-			Expect(errorMsg).ToNot(ContainSubstring("full_name"))
+		It("should generate default description if none provided", func() {
+			migration := NewVersionChangeBuilder(v1, v2).
+				ForType(BuilderTestUser{}).
+				RequestToNextVersion().
+				AddField("email", "test@example.com").
+				Build()
+
+			Expect(migration.Description()).To(Equal("Migration from 2024-01-01 to 2024-06-01"))
 		})
 	})
 
-	Describe("FieldAdd Operation", func() {
-		type User struct {
-			ID    int    `json:"id"`
-			Email string `json:"email"`
-		}
+	Describe("Direction-Specific Operations", func() {
+		var testNode *ast.Node
 
-		It("should add field with default in request", func() {
-			migration := NewVersionChangeBuilder(v1, v2).
-				Description("Add email field").
-				ForPath("/test").
-				AddField("email", "unknown@example.com").
-				Build()
-
-			// Request without email
-			requestJSON := `{"id": 1}`
-			reqInfo := createRequestInfo(requestJSON)
-
-			err := migration.MigrateRequest(context.Background(), reqInfo)
-			Expect(err).ToNot(HaveOccurred())
-
-			// Should have email now
-			email, _ := reqInfo.Body.Get("email").String()
-			Expect(email).To(Equal("unknown@example.com"))
+		BeforeEach(func() {
+			jsonData := `{
+				"id": 1,
+				"name": "John Doe",
+				"full_name": "John Doe",
+				"email": "john@example.com",
+				"phone": "+1-555-0100",
+				"status": "active"
+			}`
+			node, err := sonic.Get([]byte(jsonData))
+			Expect(err).NotTo(HaveOccurred())
+			err = node.Load()
+			Expect(err).NotTo(HaveOccurred())
+			testNode = &node
 		})
 
-		It("should not override existing field value", func() {
+		It("should apply RequestToNextVersion operations correctly", func() {
+			migration := NewVersionChangeBuilder(v1, v2). // v1→v2 migration
+									ForType(BuilderTestUser{}).
+									RequestToNextVersion().
+									AddField("created_at", "2024-01-01").
+									RenameField("name", "full_name").
+									Build()
+
+			// Create a mock RequestInfo
+			requestInfo := &RequestInfo{Body: testNode}
+
+			// Apply the migration (should use RequestToNextVersion operations)
+			instructions := migration.instructionsToMigrateToPreviousVersion
+			for _, instruction := range instructions {
+				if reqInst, ok := instruction.(*AlterRequestInstruction); ok {
+					err := reqInst.Transformer(requestInfo)
+					Expect(err).NotTo(HaveOccurred())
+				}
+			}
+
+			// Verify transformations
+			createdAtNode := testNode.Get("created_at")
+			Expect(createdAtNode.Exists()).To(BeTrue())
+
+			nameNode := testNode.Get("name")
+			Expect(nameNode.Exists()).To(BeFalse())
+
+			fullNameNode := testNode.Get("full_name")
+			Expect(fullNameNode.Exists()).To(BeTrue())
+		})
+
+		It("should apply ResponseToPreviousVersion operations correctly", func() {
+			migration := NewVersionChangeBuilder(v2, v1). // v2→v1 migration
+									ForType(BuilderTestUser{}).
+									ResponseToPreviousVersion().
+									RemoveField("email").
+									AddField("legacy_field", "legacy_value").
+									Build()
+
+			// Create a mock ResponseInfo
+			responseInfo := &ResponseInfo{Body: testNode, StatusCode: 200}
+
+			// Apply the migration (should use ResponseToPreviousVersion operations)
+			instructions := migration.instructionsToMigrateToPreviousVersion
+			for _, instruction := range instructions {
+				if respInst, ok := instruction.(*AlterResponseInstruction); ok {
+					err := respInst.Transformer(responseInfo)
+					Expect(err).NotTo(HaveOccurred())
+				}
+			}
+
+			// Verify transformations
+			emailNode := testNode.Get("email")
+			Expect(emailNode.Exists()).To(BeFalse())
+
+			legacyNode := testNode.Get("legacy_field")
+			Expect(legacyNode.Exists()).To(BeTrue())
+		})
+	})
+
+	Describe("Builder Fluency", func() {
+		It("should allow chaining between different direction builders", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
-				Description("Add email field").
-				ForPath("/test").
+				Description("Complex chaining example").
+				ForType(BuilderTestUser{}).
+				RequestToNextVersion().
 				AddField("email", "default@example.com").
+				ResponseToPreviousVersion().
+				RemoveField("phone").
+				ForType(BuilderTestProduct{}).
+				ResponseToPreviousVersion().
+				RemoveField("currency").
 				Build()
 
-			// Request with email already set
-			requestJSON := `{"id": 1, "email": "user@example.com"}`
-			reqInfo := createRequestInfo(requestJSON)
-
-			err := migration.MigrateRequest(context.Background(), reqInfo)
-			Expect(err).ToNot(HaveOccurred())
-
-			// Should keep original email
-			email, _ := reqInfo.Body.Get("email").String()
-			Expect(email).To(Equal("user@example.com"))
+			Expect(migration).NotTo(BeNil())
+			Expect(migration.Description()).To(Equal("Complex chaining example"))
 		})
 
-		It("should remove field in response (backward migration)", func() {
+		It("should allow returning to schema builder from direction builders", func() {
 			migration := NewVersionChangeBuilder(v1, v2).
-				Description("Add email field").
-				ForPath("/test").
-				AddField("email", "unknown@example.com").
+				ForType(BuilderTestProduct{}). // Should return to schema builder
+				ResponseToPreviousVersion().
+				RemoveField("description").
 				Build()
 
-			// Response with email
-			responseJSON := `{"id": 1, "email": "test@example.com"}`
-			respInfo := createResponseInfo(responseJSON, 200)
-
-			err := migration.MigrateResponse(context.Background(), respInfo)
-			Expect(err).ToNot(HaveOccurred())
-
-			// Email should be removed
-			Expect(respInfo.Body.Get("email").Exists()).To(BeFalse())
-		})
-	})
-
-	Describe("EnumValueMap Operation", func() {
-		type User struct {
-			ID     int    `json:"id"`
-			Status string `json:"status"`
-		}
-
-		It("should map enum values in request", func() {
-			migration := NewVersionChangeBuilder(v2, v3).
-				Description("Map status values").
-				ForPath("/test").
-				MapEnumValues("status", map[string]string{
-					"pending":   "inactive",
-					"suspended": "inactive",
-				}).
-				Build()
-
-			// Request with "pending" status
-			requestJSON := `{"id": 1, "status": "pending"}`
-			reqInfo := createRequestInfo(requestJSON)
-
-			err := migration.MigrateRequest(context.Background(), reqInfo)
-			Expect(err).ToNot(HaveOccurred())
-
-			// Should be mapped to "inactive"
-			status, _ := reqInfo.Body.Get("status").String()
-			Expect(status).To(Equal("inactive"))
-		})
-
-		It("should reverse map enum values in response", func() {
-			migration := NewVersionChangeBuilder(v2, v3).
-				Description("Map status values").
-				ForPath("/test").
-				MapEnumValues("status", map[string]string{
-					"pending":   "inactive",
-					"suspended": "inactive",
-				}).
-				Build()
-
-			// Response with "inactive" status
-			responseJSON := `{"id": 1, "status": "inactive"}`
-			respInfo := createResponseInfo(responseJSON, 200)
-
-			err := migration.MigrateResponse(context.Background(), respInfo)
-			Expect(err).ToNot(HaveOccurred())
-
-			// Should be reverse mapped to one of "pending" or "suspended"
-			// (map iteration order is not guaranteed, so both are valid)
-			status, _ := respInfo.Body.Get("status").String()
-			Expect(status).To(Or(Equal("pending"), Equal("suspended")))
-		})
-	})
-
-	Describe("Multiple Operations", func() {
-		type User struct {
-			ID    int    `json:"id"`
-			Name  string `json:"name"`
-			Email string `json:"email"`
-		}
-
-		It("should apply multiple operations in sequence", func() {
-			migration := NewVersionChangeBuilder(v1, v2).
-				Description("Multiple field operations").
-				ForPath("/test").
-				RenameField("name", "full_name").
-				AddField("email", "unknown@example.com").
-				RemoveField("temp_field").
-				Build()
-
-			// Request with old structure
-			requestJSON := `{"id": 1, "name": "John", "temp_field": "old"}`
-			reqInfo := createRequestInfo(requestJSON)
-
-			err := migration.MigrateRequest(context.Background(), reqInfo)
-			Expect(err).ToNot(HaveOccurred())
-
-			// Check results
-			fullName, _ := reqInfo.Body.Get("full_name").String()
-			Expect(fullName).To(Equal("John"))
-			Expect(reqInfo.Body.Get("name").Exists()).To(BeFalse())
-
-			email, _ := reqInfo.Body.Get("email").String()
-			Expect(email).To(Equal("unknown@example.com"))
-
-			Expect(reqInfo.Body.Get("temp_field").Exists()).To(BeFalse())
-		})
-	})
-
-	Describe("Chaining Multiple Schemas", func() {
-		type User struct {
-			Name string `json:"name"`
-		}
-
-		type Product struct {
-			Title string `json:"title"`
-		}
-
-		It("should apply operations to multiple schemas", func() {
-			migration := NewVersionChangeBuilder(v1, v2).
-				Description("Update multiple schemas").
-				ForPath("/users").
-				RenameField("name", "full_name").
-				ForPath("/products").
-				RenameField("title", "product_name").
-				Build()
-
-			// Both transformations should be compiled
-			Expect(migration).ToNot(BeNil())
-			Expect(migration.Description()).To(Equal("Update multiple schemas"))
+			Expect(migration).NotTo(BeNil())
 		})
 	})
 })
-
-// Helper functions
-
-func createRequestInfo(jsonStr string) *RequestInfo {
-	root, _ := sonic.GetFromString(jsonStr)
-	// Create a Gin context with /test path to match ForPath("/test") in migrations
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/test", nil)
-	return &RequestInfo{
-		Body:       &root,
-		GinContext: c,
-	}
-}
-
-func createResponseInfo(jsonStr string, statusCode int) *ResponseInfo {
-	root, _ := sonic.GetFromString(jsonStr)
-	// Create a Gin context with /test path to match ForPath("/test") in migrations
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/test", nil)
-	return &ResponseInfo{
-		Body:       &root,
-		StatusCode: statusCode,
-		GinContext: c,
-	}
-}

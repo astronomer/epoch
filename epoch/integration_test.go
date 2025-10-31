@@ -12,45 +12,37 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// Test models for integration tests
-// User model evolution (similar to examples/advanced/main.go):
-// 2025-01-01: ID, Name
-// 2025-06-01: Added Email
-// 2024-01-01: Added Phone, renamed Name -> FullName
-type UserV1 struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
-}
+// Test models - HEAD version only (what controllers actually work with)
+// Migrations describe how older versions differ from HEAD
 
-type UserV2 struct {
-	ID    int    `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
-}
-
-type UserV3 struct {
+// User - HEAD version has all fields
+type User struct {
 	ID       int    `json:"id"`
+	FullName string `json:"full_name"` // V2 renamed from "name"
+	Email    string `json:"email"`     // Added in V2
+	Phone    string `json:"phone"`     // Added in V3
+}
+
+// Product - HEAD version
+type Product struct {
+	ID          int     `json:"id"`
+	Name        string  `json:"name"`
+	Price       float64 `json:"price"`
+	Currency    string  `json:"currency"`    // Added in V2
+	Description string  `json:"description"` // Added in V3
+}
+
+// CreateUserRequest - HEAD version
+type CreateUserRequest struct {
 	FullName string `json:"full_name"`
 	Email    string `json:"email"`
 	Phone    string `json:"phone"`
 }
 
-// Product model evolution:
-// 2025-01-01: ID, Name, Price
-// 2025-06-01: No changes
-// 2024-01-01: Added Description, Currency
-type ProductV1 struct {
-	ID    int     `json:"id"`
-	Name  string  `json:"name"`
-	Price float64 `json:"price"`
-}
-
-type ProductV3 struct {
-	ID          int     `json:"id"`
-	Name        string  `json:"name"`
-	Price       float64 `json:"price"`
-	Currency    string  `json:"currency"`
-	Description string  `json:"description,omitempty"`
+// UsersListResponse - wrapper with nested array
+type UsersListResponse struct {
+	Users []User `json:"users"`
+	Total int    `json:"total"`
 }
 
 var _ = Describe("End-to-End Integration Tests", func() {
@@ -58,60 +50,64 @@ var _ = Describe("End-to-End Integration Tests", func() {
 		gin.SetMode(gin.TestMode)
 	})
 
-	Describe("Complete API Versioning Flow", func() {
-		It("should handle v1 to v2 migration (add email field)", func() {
-			// Setup date-based versions (similar to examples/advanced)
-			v1, _ := NewDateVersion("2025-01-01")
-			v2, _ := NewDateVersion("2025-06-01")
+	Describe("Basic Single-Type Migrations", func() {
+		It("should handle simple field addition (V1 to V2 migration)", func() {
+			// Setup versions
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
 
-			// v1 -> v2: Add email field to User using declarative API
+			// V1→V2: Add email field
+			// In V1, User only has: id, full_name, phone
+			// In V2, User has: id, full_name, email, phone (HEAD)
 			change := NewVersionChangeBuilder(v1, v2).
 				Description("Add email field to User").
-				ForPath("/users").
+				ForType(User{}).
+				RequestToNextVersion().
 				AddField("email", "unknown@example.com").
+				ResponseToPreviousVersion().
+				RemoveField("email").
 				Build()
 
-			// Build Cadwyn instance
-			cadwynInstance, err := NewEpoch().
+			epochInstance, err := NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change).
-				WithTypes(UserV1{}, UserV2{}).
 				WithVersionFormat(VersionFormatDate).
 				Build()
 			Expect(err).NotTo(HaveOccurred())
 
-			// Setup Gin router
 			router := gin.New()
-			router.Use(cadwynInstance.Middleware())
+			router.Use(epochInstance.Middleware())
 
-			// Handler that works with v2 (latest) format
-			router.POST("/users", cadwynInstance.WrapHandler(func(c *gin.Context) {
+			// Handler works with HEAD version (has email)
+			router.POST("/users", epochInstance.WrapHandler(func(c *gin.Context) {
 				var user map[string]interface{}
 				if err := c.ShouldBindJSON(&user); err != nil {
 					c.JSON(400, gin.H{"error": err.Error()})
 					return
 				}
 
-				// Verify we received v2 format with email
-				Expect(user).To(HaveKey("name"))
+				// Verify handler receives V2 format (HEAD) with email
+				Expect(user).To(HaveKey("full_name"))
 				Expect(user).To(HaveKey("email"))
 
-				// Return v2 format response
+				// Return HEAD version response
 				c.JSON(200, gin.H{
-					"id":    1,
-					"name":  user["name"],
-					"email": user["email"],
+					"id":        1,
+					"full_name": user["full_name"],
+					"email":     user["email"],
+					"phone":     "+1-555-0100",
 				})
-			}))
+			}).Accepts(User{}).Returns(User{}).ToHandlerFunc())
 
-			// Test with v1 client (no email)
+			// Test with V1 client (no email)
 			reqBody := map[string]interface{}{
-				"name": "John Doe",
+				"full_name": "John Doe",
+				"phone":     "+1-555-0100",
 			}
 			bodyBytes, _ := json.Marshal(reqBody)
 
 			req := httptest.NewRequest("POST", "/users", bytes.NewReader(bodyBytes))
-			req.Header.Set("X-API-Version", "2025-01-01")
+			req.Header.Set("X-API-Version", "2024-01-01")
 			req.Header.Set("Content-Type", "application/json")
 			recorder := httptest.NewRecorder()
 
@@ -123,45 +119,154 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			err = json.Unmarshal(recorder.Body.Bytes(), &response)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Response should be converted back to v1 format (no email)
-			Expect(response).To(HaveKey("name"))
+			// V1 response should NOT have email field
 			Expect(response).To(HaveKey("id"))
+			Expect(response).To(HaveKey("full_name"))
 			Expect(response).NotTo(HaveKey("email"))
-			Expect(response["name"]).To(Equal("John Doe"))
+			Expect(response["full_name"]).To(Equal("John Doe"))
 		})
 
-		It("should handle array responses with migrations", func() {
-			v1, _ := NewDateVersion("2025-01-01")
-			v2, _ := NewDateVersion("2025-06-01")
+		It("should handle field renaming (V1 name to V2 full_name)", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
 
-			// Use declarative API for array migrations - this tests our fix!
+			// V1 has "name", V2 (HEAD) has "full_name"
 			change := NewVersionChangeBuilder(v1, v2).
-				Description("Add email field to User").
-				ForPath("/users").
-				AddField("email", "unknown@example.com").
+				Description("Rename name to full_name").
+				ForType(User{}).
+				RequestToNextVersion().
+				RenameField("name", "full_name").
+				ResponseToPreviousVersion().
+				RenameField("full_name", "name").
 				Build()
 
-			cadwynInstance, err := NewEpoch().
+			epochInstance, err := NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change).
-				WithTypes(UserV1{}, UserV2{}).
 				WithVersionFormat(VersionFormatDate).
 				Build()
 			Expect(err).NotTo(HaveOccurred())
 
 			router := gin.New()
-			router.Use(cadwynInstance.Middleware())
+			router.Use(epochInstance.Middleware())
 
-			router.GET("/users", cadwynInstance.WrapHandler(func(c *gin.Context) {
-				// Return array of v2 users with email
-				c.JSON(200, []gin.H{
-					{"id": 1, "name": "Alice", "email": "alice@example.com"},
-					{"id": 2, "name": "Bob", "email": "bob@example.com"},
+			router.POST("/users", epochInstance.WrapHandler(func(c *gin.Context) {
+				var user map[string]interface{}
+				c.ShouldBindJSON(&user)
+
+				// Handler expects "full_name" (HEAD version)
+				Expect(user).To(HaveKey("full_name"))
+				Expect(user).NotTo(HaveKey("name"))
+
+				c.JSON(200, gin.H{
+					"id":        1,
+					"full_name": user["full_name"],
+					"email":     "test@example.com",
+					"phone":     "+1-555-0100",
 				})
-			}))
+			}).Accepts(User{}).Returns(User{}).ToHandlerFunc())
 
+			// V1 client sends "name"
+			reqBody := `{"name": "Alice Johnson"}`
+			req := httptest.NewRequest("POST", "/users", strings.NewReader(reqBody))
+			req.Header.Set("X-API-Version", "2024-01-01")
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response map[string]interface{}
+			json.Unmarshal(recorder.Body.Bytes(), &response)
+
+			// V1 response should have "name", not "full_name"
+			Expect(response).To(HaveKey("name"))
+			Expect(response).NotTo(HaveKey("full_name"))
+			Expect(response["name"]).To(Equal("Alice Johnson"))
+		})
+
+		It("should work with semver versioning format", func() {
+			v1, _ := NewSemverVersion("1.0.0")
+			v2, _ := NewSemverVersion("2.0.0")
+
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(User{}).
+				RequestToNextVersion().
+				AddField("email", "default@example.com").
+				ResponseToPreviousVersion().
+				RemoveField("email").
+				Build()
+
+			epochInstance, err := NewEpoch().
+				WithVersions(v1, v2).
+				WithChanges(change).
+				WithVersionFormat(VersionFormatSemver).
+				Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			router := gin.New()
+			router.Use(epochInstance.Middleware())
+
+			router.GET("/users/1", epochInstance.WrapHandler(func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"id":        1,
+					"full_name": "Bob",
+					"email":     "bob@example.com",
+					"phone":     "+1-555-0200",
+				})
+			}).Returns(User{}).ToHandlerFunc())
+
+			req := httptest.NewRequest("GET", "/users/1", nil)
+			req.Header.Set("X-API-Version", "1.0.0")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+			var response map[string]interface{}
+			json.Unmarshal(recorder.Body.Bytes(), &response)
+
+			// V1 should not have email
+			Expect(response).NotTo(HaveKey("email"))
+		})
+	})
+
+	Describe("Array Response Handling", func() {
+		It("should handle top-level array responses", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			// V1 doesn't have email field
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(User{}).
+				RequestToNextVersion().
+				AddField("email", "unknown@example.com").
+				ResponseToPreviousVersion().
+				RemoveField("email").
+				Build()
+
+			epochInstance, err := NewEpoch().
+				WithVersions(v1, v2).
+				WithChanges(change).
+				WithVersionFormat(VersionFormatDate).
+				Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			router := gin.New()
+			router.Use(epochInstance.Middleware())
+
+			// Handler returns array of users (HEAD version)
+			router.GET("/users", epochInstance.WrapHandler(func(c *gin.Context) {
+				c.JSON(200, []gin.H{
+					{"id": 1, "full_name": "Alice", "email": "alice@example.com", "phone": "+1-555-0100"},
+					{"id": 2, "full_name": "Bob", "email": "bob@example.com", "phone": "+1-555-0200"},
+				})
+			}).Returns([]User{}).ToHandlerFunc())
+
+			// V1 client request
 			req := httptest.NewRequest("GET", "/users", nil)
-			req.Header.Set("X-API-Version", "2025-01-01")
+			req.Header.Set("X-API-Version", "2024-01-01")
 			recorder := httptest.NewRecorder()
 
 			router.ServeHTTP(recorder, req)
@@ -172,80 +277,49 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			err = json.Unmarshal(recorder.Body.Bytes(), &response)
 			Expect(err).NotTo(HaveOccurred())
 
-			// All users should not have email field
+			// All array items should not have email
 			Expect(response).To(HaveLen(2))
 			Expect(response[0]).NotTo(HaveKey("email"))
 			Expect(response[1]).NotTo(HaveKey("email"))
-			Expect(response[0]["name"]).To(Equal("Alice"))
-			Expect(response[1]["name"]).To(Equal("Bob"))
+			Expect(response[0]["full_name"]).To(Equal("Alice"))
 		})
-	})
 
-	Describe("Multi-Version Chain Migration", func() {
-		It("should migrate through three versions with field renaming", func() {
-			// Setup three date-based versions
-			v1, _ := NewDateVersion("2025-01-01")
-			v2, _ := NewDateVersion("2025-06-01")
-			v3, _ := NewDateVersion("2024-01-01")
+		It("should handle nested array fields with WithArrayItems", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
 
-			// Change 1->2: Add email field using declarative API
-			change1 := NewVersionChangeBuilder(v1, v2).
-				Description("Add email field to User").
-				ForPath("/users").
+			// V1 doesn't have email field
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(User{}).
+				RequestToNextVersion().
 				AddField("email", "unknown@example.com").
+				ResponseToPreviousVersion().
+				RemoveField("email").
 				Build()
 
-			// Change 2->3: Add phone, rename name -> full_name using declarative API
-			change2 := NewVersionChangeBuilder(v2, v3).
-				Description("Add phone field and rename name to full_name").
-				ForPath("/users").
-				AddField("phone", "").
-				RenameField("name", "full_name").
-				Build()
-
-			// Build Cadwyn instance
-			cadwynInstance, err := NewEpoch().
-				WithVersions(v1, v2, v3).
-				WithChanges(change1, change2).
-				WithTypes(UserV1{}, UserV2{}, UserV3{}).
+			epochInstance, err := NewEpoch().
+				WithVersions(v1, v2).
+				WithChanges(change).
 				WithVersionFormat(VersionFormatDate).
 				Build()
 			Expect(err).NotTo(HaveOccurred())
 
-			// Setup router
 			router := gin.New()
-			router.Use(cadwynInstance.Middleware())
+			router.Use(epochInstance.Middleware())
 
-			router.POST("/users", cadwynInstance.WrapHandler(func(c *gin.Context) {
-				var user map[string]interface{}
-				if err := c.ShouldBindJSON(&user); err != nil {
-					c.JSON(400, gin.H{"error": err.Error()})
-					return
-				}
-
-				// Handler expects v3 format (latest) with full_name, email, phone
-				Expect(user).To(HaveKey("full_name"))
-				Expect(user).To(HaveKey("email"))
-				Expect(user).To(HaveKey("phone"))
-				Expect(user).NotTo(HaveKey("name"))
-
+			// Handler returns wrapper with nested array
+			router.GET("/users", epochInstance.WrapHandler(func(c *gin.Context) {
 				c.JSON(200, gin.H{
-					"id":        1,
-					"full_name": user["full_name"],
-					"email":     user["email"],
-					"phone":     user["phone"],
+					"users": []gin.H{
+						{"id": 1, "full_name": "Alice", "email": "alice@example.com", "phone": "+1-555-0100"},
+						{"id": 2, "full_name": "Bob", "email": "bob@example.com", "phone": "+1-555-0200"},
+					},
+					"total": 2,
 				})
-			}))
+			}).Returns(UsersListResponse{}).WithArrayItems("users", User{}).ToHandlerFunc())
 
-			// Test with v1 client (only has name field)
-			reqBody := map[string]interface{}{
-				"name": "Alice Johnson",
-			}
-			bodyBytes, _ := json.Marshal(reqBody)
-
-			req := httptest.NewRequest("POST", "/users", bytes.NewReader(bodyBytes))
-			req.Header.Set("X-API-Version", "2025-01-01")
-			req.Header.Set("Content-Type", "application/json")
+			req := httptest.NewRequest("GET", "/users", nil)
+			req.Header.Set("X-API-Version", "2024-01-01")
 			recorder := httptest.NewRecorder()
 
 			router.ServeHTTP(recorder, req)
@@ -256,47 +330,62 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			err = json.Unmarshal(recorder.Body.Bytes(), &response)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Response should be v1 format (only id and name)
-			Expect(response).To(HaveKey("id"))
-			Expect(response).To(HaveKey("name"))
-			Expect(response).NotTo(HaveKey("full_name"))
-			Expect(response).NotTo(HaveKey("email"))
-			Expect(response).NotTo(HaveKey("phone"))
-			Expect(response["name"]).To(Equal("Alice Johnson"))
+			Expect(response).To(HaveKey("users"))
+			Expect(response).To(HaveKey("total"))
+			Expect(response["total"]).To(Equal(float64(2)))
+
+			users := response["users"].([]interface{})
+			Expect(users).To(HaveLen(2))
+
+			user0 := users[0].(map[string]interface{})
+			user1 := users[1].(map[string]interface{})
+
+			// Nested array items should not have email in V1
+			Expect(user0).NotTo(HaveKey("email"))
+			Expect(user1).NotTo(HaveKey("email"))
+			Expect(user0["full_name"]).To(Equal("Alice"))
 		})
+	})
 
-		It("should handle Product migrations with currency and description", func() {
-			v1, _ := NewDateVersion("2025-01-01")
-			v2, _ := NewDateVersion("2025-06-01")
-			v3, _ := NewDateVersion("2024-01-01")
+	Describe("Multi-Step Migration Chains", func() {
+		It("should migrate through three versions (V1->V2->V3)", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+			v3, _ := NewDateVersion("2025-01-01")
 
-			// v2 -> v3: Add description and currency to Product using declarative API
-			change := NewVersionChangeBuilder(v2, v3).
-				Description("Add description and currency fields to Product").
-				ForPath("/products").
-				AddField("description", "").
+			// V1->V2: Add currency
+			change1 := NewVersionChangeBuilder(v1, v2).
+				ForType(Product{}).
+				RequestToNextVersion().
 				AddField("currency", "USD").
+				ResponseToPreviousVersion().
+				RemoveField("currency").
 				Build()
 
-			cadwynInstance, err := NewEpoch().
+			// V2->V3: Add description
+			change2 := NewVersionChangeBuilder(v2, v3).
+				ForType(Product{}).
+				RequestToNextVersion().
+				AddField("description", "").
+				ResponseToPreviousVersion().
+				RemoveField("description").
+				Build()
+
+			epochInstance, err := NewEpoch().
 				WithVersions(v1, v2, v3).
-				WithChanges(change).
-				WithTypes(ProductV1{}, ProductV3{}).
+				WithChanges(change1, change2).
 				WithVersionFormat(VersionFormatDate).
 				Build()
 			Expect(err).NotTo(HaveOccurred())
 
 			router := gin.New()
-			router.Use(cadwynInstance.Middleware())
+			router.Use(epochInstance.Middleware())
 
-			router.POST("/products", cadwynInstance.WrapHandler(func(c *gin.Context) {
+			router.POST("/products", epochInstance.WrapHandler(func(c *gin.Context) {
 				var product map[string]interface{}
-				if err := c.ShouldBindJSON(&product); err != nil {
-					c.JSON(400, gin.H{"error": err.Error()})
-					return
-				}
+				c.ShouldBindJSON(&product)
 
-				// Handler expects v3 format (latest)
+				// Handler expects V3 (HEAD) with currency and description
 				Expect(product).To(HaveKey("currency"))
 				Expect(product).To(HaveKey("description"))
 
@@ -304,20 +393,15 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					"id":          1,
 					"name":        product["name"],
 					"price":       product["price"],
-					"currency":    product["currency"],
+					"currency":    "USD",
 					"description": "High-performance laptop",
 				})
-			}))
+			}).Accepts(Product{}).Returns(Product{}).ToHandlerFunc())
 
-			// Test with v2 client (no currency/description)
-			reqBody := map[string]interface{}{
-				"name":  "Laptop",
-				"price": 999.99,
-			}
-			bodyBytes, _ := json.Marshal(reqBody)
-
-			req := httptest.NewRequest("POST", "/products", bytes.NewReader(bodyBytes))
-			req.Header.Set("X-API-Version", "2025-06-01")
+			// V1 client (no currency, no description)
+			reqBody := `{"name": "Laptop", "price": 999.99}`
+			req := httptest.NewRequest("POST", "/products", strings.NewReader(reqBody))
+			req.Header.Set("X-API-Version", "2024-01-01")
 			req.Header.Set("Content-Type", "application/json")
 			recorder := httptest.NewRecorder()
 
@@ -326,42 +410,152 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(recorder.Code).To(Equal(200))
 
 			var response map[string]interface{}
-			err = json.Unmarshal(recorder.Body.Bytes(), &response)
-			Expect(err).NotTo(HaveOccurred())
+			json.Unmarshal(recorder.Body.Bytes(), &response)
 
-			// Response should be v2 format (no currency, no description)
-			Expect(response).To(HaveKey("id"))
+			// V1 response should have no currency or description
 			Expect(response).To(HaveKey("name"))
 			Expect(response).To(HaveKey("price"))
 			Expect(response).NotTo(HaveKey("currency"))
 			Expect(response).NotTo(HaveKey("description"))
 		})
+
+		It("should handle V2 client correctly (intermediate version)", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+			v3, _ := NewDateVersion("2025-01-01")
+
+			change1 := NewVersionChangeBuilder(v1, v2).
+				ForType(Product{}).
+				RequestToNextVersion().
+				AddField("currency", "USD").
+				ResponseToPreviousVersion().
+				RemoveField("currency").
+				Build()
+
+			change2 := NewVersionChangeBuilder(v2, v3).
+				ForType(Product{}).
+				RequestToNextVersion().
+				AddField("description", "").
+				ResponseToPreviousVersion().
+				RemoveField("description").
+				Build()
+
+			epochInstance, err := NewEpoch().
+				WithVersions(v1, v2, v3).
+				WithChanges(change1, change2).
+				WithVersionFormat(VersionFormatDate).
+				Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			router := gin.New()
+			router.Use(epochInstance.Middleware())
+
+			router.GET("/products/1", epochInstance.WrapHandler(func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"id":          1,
+					"name":        "Mouse",
+					"price":       29.99,
+					"currency":    "USD",
+					"description": "Wireless mouse",
+				})
+			}).Returns(Product{}).ToHandlerFunc())
+
+			req := httptest.NewRequest("GET", "/products/1", nil)
+			req.Header.Set("X-API-Version", "2024-06-01")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response map[string]interface{}
+			json.Unmarshal(recorder.Body.Bytes(), &response)
+
+			// V2 should have currency but NOT description
+			Expect(response).To(HaveKey("currency"))
+			Expect(response).NotTo(HaveKey("description"))
+		})
 	})
 
-	Describe("Error Response Handling", func() {
-		It("should not migrate error responses when MigrateHTTPErrors is false", func() {
-			v1, _ := NewDateVersion("2025-01-01")
-			v2, _ := NewDateVersion("2025-06-01")
+	Describe("Multiple Types in Single Endpoint", func() {
+		It("should handle different request and response types", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
 
-			// NOTE: Declarative API currently hardcodes MigrateHTTPErrors=true
-			// This test uses custom transformer to test the MigrateHTTPErrors=false case
-			change := NewVersionChange(
-				"Transform users",
-				v1, v2,
-				&AlterResponseInstruction{
-					Path:              "/error",
-					MigrateHTTPErrors: false, // Don't migrate HTTP errors
-					Transformer: func(resp *ResponseInfo) error {
-						// This should not be called for error responses
-						if resp.Body != nil {
-							resp.SetField("migrated", true)
-						}
-						return nil
-					},
-				},
-			)
+			// Request type migration (CreateUserRequest)
+			reqChange := NewVersionChangeBuilder(v1, v2).
+				ForType(CreateUserRequest{}).
+				RequestToNextVersion().
+				AddField("email", "unknown@example.com").
+				Build()
 
-			cadwynInstance, err := NewEpoch().
+			// Response type migration (User)
+			respChange := NewVersionChangeBuilder(v1, v2).
+				ForType(User{}).
+				ResponseToPreviousVersion().
+				RemoveField("phone").
+				Build()
+
+			epochInstance, err := NewEpoch().
+				WithVersions(v1, v2).
+				WithChanges(reqChange, respChange).
+				WithVersionFormat(VersionFormatDate).
+				Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			router := gin.New()
+			router.Use(epochInstance.Middleware())
+
+			router.POST("/users", epochInstance.WrapHandler(func(c *gin.Context) {
+				var req map[string]interface{}
+				c.ShouldBindJSON(&req)
+
+				// Request should have email (added by migration)
+				Expect(req).To(HaveKey("email"))
+
+				c.JSON(200, gin.H{
+					"id":        1,
+					"full_name": req["full_name"],
+					"email":     req["email"],
+					"phone":     "+1-555-0100",
+				})
+			}).Accepts(CreateUserRequest{}).Returns(User{}).ToHandlerFunc())
+
+			// V1 client sends request without email
+			reqBody := `{"full_name": "Charlie"}`
+			req := httptest.NewRequest("POST", "/users", strings.NewReader(reqBody))
+			req.Header.Set("X-API-Version", "2024-01-01")
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response map[string]interface{}
+			json.Unmarshal(recorder.Body.Bytes(), &response)
+
+			// V1 response should not have phone
+			Expect(response).NotTo(HaveKey("phone"))
+			Expect(response).To(HaveKey("email"))
+		})
+	})
+
+	Describe("Field Renaming Across Versions", func() {
+		It("should transform field names in error messages", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			// V1 has "name", V2 (HEAD) has "full_name"
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(User{}).
+				RequestToNextVersion().
+				RenameField("name", "full_name").
+				ResponseToPreviousVersion().
+				RenameField("full_name", "name").
+				Build()
+
+			epochInstance, err := NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change).
 				WithVersionFormat(VersionFormatDate).
@@ -369,14 +563,66 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			router := gin.New()
-			router.Use(cadwynInstance.Middleware())
+			router.Use(epochInstance.Middleware())
 
-			router.GET("/error", cadwynInstance.WrapHandler(func(c *gin.Context) {
+			// Handler returns error mentioning "full_name"
+			router.GET("/users/1", epochInstance.WrapHandler(func(c *gin.Context) {
+				c.JSON(400, gin.H{
+					"error": "Field 'full_name' is required",
+				})
+			}).Returns(User{}).ToHandlerFunc())
+
+			req := httptest.NewRequest("GET", "/users/1", nil)
+			req.Header.Set("X-API-Version", "2024-01-01")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(400))
+
+			body := recorder.Body.String()
+
+			// Error message should mention "name" not "full_name" for V1
+			Expect(body).To(ContainSubstring("name"))
+			Expect(body).NotTo(ContainSubstring("full_name"))
+		})
+	})
+
+	Describe("Error Response Handling", func() {
+		It("should not migrate error responses when MigrateHTTPErrors is false", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			// Custom change with MigrateHTTPErrors = false
+			change := NewVersionChange(
+				"Test error handling",
+				v1, v2,
+				&AlterResponseInstruction{
+					Schemas:           []interface{}{User{}},
+					MigrateHTTPErrors: false,
+					Transformer: func(resp *ResponseInfo) error {
+						resp.SetField("migrated", true)
+						return nil
+					},
+				},
+			)
+
+			epochInstance, err := NewEpoch().
+				WithVersions(v1, v2).
+				WithChanges(change).
+				WithVersionFormat(VersionFormatDate).
+				Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			router := gin.New()
+			router.Use(epochInstance.Middleware())
+
+			router.GET("/error", epochInstance.WrapHandler(func(c *gin.Context) {
 				c.JSON(400, gin.H{"error": "Bad request"})
-			}))
+			}).Returns(User{}).ToHandlerFunc())
 
 			req := httptest.NewRequest("GET", "/error", nil)
-			req.Header.Set("X-API-Version", "2025-01-01")
+			req.Header.Set("X-API-Version", "2024-01-01")
 			recorder := httptest.NewRecorder()
 
 			router.ServeHTTP(recorder, req)
@@ -384,26 +630,33 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(recorder.Code).To(Equal(400))
 
 			var response map[string]interface{}
-			err = json.Unmarshal(recorder.Body.Bytes(), &response)
-			Expect(err).NotTo(HaveOccurred())
+			json.Unmarshal(recorder.Body.Bytes(), &response)
 
-			// Should not have been migrated
+			// Should NOT be migrated
 			Expect(response).NotTo(HaveKey("migrated"))
 			Expect(response).To(HaveKey("error"))
 		})
 
 		It("should migrate error responses when MigrateHTTPErrors is true", func() {
-			v1, _ := NewDateVersion("2025-01-01")
-			v2, _ := NewDateVersion("2025-06-01")
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
 
-			// Test that declarative API works with error responses (MigrateHTTPErrors=true by default)
-			change := NewVersionChangeBuilder(v1, v2).
-				Description("Transform error responses").
-				ForPath("/error").
-				AddField("version_info", "v2").
-				Build()
+			// Custom change with MigrateHTTPErrors = true
+			change := NewVersionChange(
+				"Add version_info field",
+				v1, v2,
+				&AlterResponseInstruction{
+					Schemas:           []interface{}{User{}},
+					MigrateHTTPErrors: true,
+					Transformer: func(resp *ResponseInfo) error {
+						// Remove version_info for V1
+						resp.DeleteField("version_info")
+						return nil
+					},
+				},
+			)
 
-			cadwynInstance, err := NewEpoch().
+			epochInstance, err := NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change).
 				WithVersionFormat(VersionFormatDate).
@@ -411,61 +664,168 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			router := gin.New()
-			router.Use(cadwynInstance.Middleware())
+			router.Use(epochInstance.Middleware())
 
-			router.GET("/error", cadwynInstance.WrapHandler(func(c *gin.Context) {
-				// Handler returns HEAD/v2 format with version_info field
-				c.JSON(400, gin.H{"error": "Bad request", "version_info": "v2"})
-			}))
+			router.GET("/error", epochInstance.WrapHandler(func(c *gin.Context) {
+				c.JSON(400, gin.H{
+					"error":        "Bad request",
+					"version_info": "v2",
+				})
+			}).Returns(User{}).ToHandlerFunc())
 
-			// Test with v2 - should have version_info field (no migration needed)
+			// Test V2 - should have version_info
 			req2 := httptest.NewRequest("GET", "/error", nil)
-			req2.Header.Set("X-API-Version", "2025-06-01")
-			recorder2 := httptest.NewRecorder()
+			req2.Header.Set("X-API-Version", "2024-06-01")
+			rec2 := httptest.NewRecorder()
 
-			router.ServeHTTP(recorder2, req2)
+			router.ServeHTTP(rec2, req2)
 
-			Expect(recorder2.Code).To(Equal(400))
+			Expect(rec2.Code).To(Equal(400))
 
-			var response2 map[string]interface{}
-			err = json.Unmarshal(recorder2.Body.Bytes(), &response2)
-			Expect(err).NotTo(HaveOccurred())
+			var resp2 map[string]interface{}
+			json.Unmarshal(rec2.Body.Bytes(), &resp2)
+			Expect(resp2).To(HaveKey("version_info"))
 
-			// Should have version_info field (no migration needed)
-			Expect(response2).To(HaveKey("version_info"))
-			Expect(response2["version_info"]).To(Equal("v2"))
-			Expect(response2).To(HaveKey("error"))
-
-			// Test with v1 - should NOT have version_info field (removed by backward migration)
+			// Test V1 - should NOT have version_info
 			req1 := httptest.NewRequest("GET", "/error", nil)
-			req1.Header.Set("X-API-Version", "2025-01-01")
-			recorder1 := httptest.NewRecorder()
+			req1.Header.Set("X-API-Version", "2024-01-01")
+			rec1 := httptest.NewRecorder()
 
-			router.ServeHTTP(recorder1, req1)
+			router.ServeHTTP(rec1, req1)
 
-			Expect(recorder1.Code).To(Equal(400))
+			Expect(rec1.Code).To(Equal(400))
 
-			var response1 map[string]interface{}
-			err = json.Unmarshal(recorder1.Body.Bytes(), &response1)
+			var resp1 map[string]interface{}
+			json.Unmarshal(rec1.Body.Bytes(), &resp1)
+			Expect(resp1).NotTo(HaveKey("version_info"))
+		})
+	})
+
+	Describe("Endpoint Registry Integration", func() {
+		It("should handle parameterized paths like /users/:id", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(User{}).
+				ResponseToPreviousVersion().
+				RemoveField("email").
+				Build()
+
+			epochInstance, err := NewEpoch().
+				WithVersions(v1, v2).
+				WithChanges(change).
+				WithVersionFormat(VersionFormatDate).
+				Build()
 			Expect(err).NotTo(HaveOccurred())
 
-			// Should NOT have version_info field (removed by backward migration)
-			Expect(response1).NotTo(HaveKey("version_info"))
-			Expect(response1).To(HaveKey("error"))
+			router := gin.New()
+			router.Use(epochInstance.Middleware())
+
+			router.GET("/users/:id", epochInstance.WrapHandler(func(c *gin.Context) {
+				id := c.Param("id")
+				c.JSON(200, gin.H{
+					"id":        id,
+					"full_name": "Test User",
+					"email":     "test@example.com",
+					"phone":     "+1-555-0100",
+				})
+			}).Returns(User{}).ToHandlerFunc())
+
+			req := httptest.NewRequest("GET", "/users/123", nil)
+			req.Header.Set("X-API-Version", "2024-01-01")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response map[string]interface{}
+			json.Unmarshal(recorder.Body.Bytes(), &response)
+
+			Expect(response["id"]).To(Equal("123"))
+			Expect(response).NotTo(HaveKey("email"))
+		})
+
+		It("should handle different HTTP methods on same path separately", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			userChange := NewVersionChangeBuilder(v1, v2).
+				ForType(User{}).
+				ResponseToPreviousVersion().
+				RemoveField("email").
+				Build()
+
+			createChange := NewVersionChangeBuilder(v1, v2).
+				ForType(CreateUserRequest{}).
+				RequestToNextVersion().
+				AddField("email", "default@example.com").
+				Build()
+
+			epochInstance, err := NewEpoch().
+				WithVersions(v1, v2).
+				WithChanges(userChange, createChange).
+				WithVersionFormat(VersionFormatDate).
+				Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			router := gin.New()
+			router.Use(epochInstance.Middleware())
+
+			// GET /users - returns User
+			router.GET("/users", epochInstance.WrapHandler(func(c *gin.Context) {
+				c.JSON(200, []gin.H{
+					{"id": 1, "full_name": "Alice", "email": "alice@example.com", "phone": "+1-555-0100"},
+				})
+			}).Returns([]User{}).ToHandlerFunc())
+
+			// POST /users - accepts CreateUserRequest, returns User
+			router.POST("/users", epochInstance.WrapHandler(func(c *gin.Context) {
+				var req map[string]interface{}
+				c.ShouldBindJSON(&req)
+
+				Expect(req).To(HaveKey("email"))
+
+				c.JSON(201, gin.H{
+					"id":        2,
+					"full_name": req["full_name"],
+					"email":     req["email"],
+					"phone":     "+1-555-0200",
+				})
+			}).Accepts(CreateUserRequest{}).Returns(User{}).ToHandlerFunc())
+
+			// Test GET
+			getReq := httptest.NewRequest("GET", "/users", nil)
+			getReq.Header.Set("X-API-Version", "2024-01-01")
+			getRec := httptest.NewRecorder()
+			router.ServeHTTP(getRec, getReq)
+			Expect(getRec.Code).To(Equal(200))
+
+			// Test POST
+			postReq := httptest.NewRequest("POST", "/users", strings.NewReader(`{"full_name":"Bob"}`))
+			postReq.Header.Set("X-API-Version", "2024-01-01")
+			postReq.Header.Set("Content-Type", "application/json")
+			postRec := httptest.NewRecorder()
+			router.ServeHTTP(postRec, postReq)
+			Expect(postRec.Code).To(Equal(201))
+
+			var postResp map[string]interface{}
+			json.Unmarshal(postRec.Body.Bytes(), &postResp)
+			Expect(postResp).NotTo(HaveKey("email"))
 		})
 	})
 
 	Describe("Builder Pattern Integration", func() {
-		It("should build complete Cadwyn instance with all features using date versioning", func() {
-			v1, _ := NewDateVersion("2025-01-01")
-			v2, _ := NewDateVersion("2024-01-01")
+		It("should build complete Epoch instance with all features", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
 
 			change := NewVersionChange("Test change", v1, v2)
 
 			instance, err := NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change).
-				WithTypes(UserV1{}, UserV2{}).
 				WithVersionParameter("X-API-Version").
 				WithVersionFormat(VersionFormatDate).
 				WithDefaultVersion(v1).
@@ -490,7 +850,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(instance).NotTo(BeNil())
 
-			instance2, err2 := QuickStart("2025-01-01", "2024-01-01")
+			instance2, err2 := QuickStart("2024-01-01", "2024-06-01")
 			Expect(err2).NotTo(HaveOccurred())
 			Expect(instance2).NotTo(BeNil())
 
@@ -504,136 +864,17 @@ var _ = Describe("End-to-End Integration Tests", func() {
 		})
 	})
 
-	Describe("Complete Real-World API Scenario", func() {
-		It("should handle full API with multiple endpoints and date-based versions", func() {
-			// Setup date-based versions (similar to examples/advanced)
-			v1, _ := NewDateVersion("2025-01-01")
-			v2, _ := NewDateVersion("2025-06-01")
-			v3, _ := NewDateVersion("2024-01-01")
-
-			// v1 -> v2: Add email to users using declarative API
-			userChange1 := NewVersionChangeBuilder(v1, v2).
-				Description("Add email field to User").
-				ForPath("/users").
-				AddField("email", "unknown@example.com").
-				Build()
-
-			// v2 -> v3: Add phone, rename name -> full_name for users using declarative API
-			userChange2 := NewVersionChangeBuilder(v2, v3).
-				Description("Add phone and rename name to full_name").
-				ForPath("/users").
-				AddField("phone", "").
-				RenameField("name", "full_name").
-				Build()
-
-			// v2 -> v3: Add currency and description to products using declarative API
-			productChange := NewVersionChangeBuilder(v2, v3).
-				Description("Add currency and description to Product").
-				ForPath("/products").
-				AddField("currency", "USD").
-				AddField("description", "").
-				Build()
-
-			instance, err := NewEpoch().
-				WithVersions(v1, v2, v3).
-				WithHeadVersion().
-				WithChanges(userChange1, userChange2, productChange).
-				WithTypes(UserV1{}, UserV2{}, UserV3{}, ProductV1{}, ProductV3{}).
-				WithVersionFormat(VersionFormatDate).
-				WithDefaultVersion(v2).
-				Build()
-
-			Expect(err).NotTo(HaveOccurred())
-
-			// Setup router with multiple endpoints
-			router := gin.New()
-			router.Use(instance.Middleware())
-
-			// User endpoints (return HEAD version format)
-			router.GET("/users", instance.WrapHandler(func(c *gin.Context) {
-				c.JSON(200, []gin.H{
-					{"id": 1, "full_name": "Alice Johnson", "email": "alice@example.com", "phone": "+1-555-0100"},
-					{"id": 2, "full_name": "Bob Smith", "email": "bob@example.com", "phone": "+1-555-0200"},
-				})
-			}))
-
-			router.GET("/products", instance.WrapHandler(func(c *gin.Context) {
-				c.JSON(200, []gin.H{
-					{"id": 1, "name": "Laptop", "price": 999.99, "currency": "USD", "description": "High-performance"},
-					{"id": 2, "name": "Mouse", "price": 29.99, "currency": "USD", "description": "Wireless"},
-				})
-			}))
-
-			// Test users with v1 (2025-01-01) - only id and name
-			req1 := httptest.NewRequest("GET", "/users", nil)
-			req1.Header.Set("X-API-Version", "2025-01-01")
-			rec1 := httptest.NewRecorder()
-			router.ServeHTTP(rec1, req1)
-			Expect(rec1.Code).To(Equal(200))
-
-			var users1 []map[string]interface{}
-			json.Unmarshal(rec1.Body.Bytes(), &users1)
-			Expect(users1[0]).To(HaveKey("name"))
-			Expect(users1[0]).NotTo(HaveKey("email"))
-			Expect(users1[0]).NotTo(HaveKey("phone"))
-			Expect(users1[0]).NotTo(HaveKey("full_name"))
-
-			// Test users with v2 (2025-06-01) - has name and email, no phone or full_name
-			req2 := httptest.NewRequest("GET", "/users", nil)
-			req2.Header.Set("X-API-Version", "2025-06-01")
-			rec2 := httptest.NewRecorder()
-			router.ServeHTTP(rec2, req2)
-			Expect(rec2.Code).To(Equal(200))
-
-			var users2 []map[string]interface{}
-			json.Unmarshal(rec2.Body.Bytes(), &users2)
-			Expect(users2[0]).To(HaveKey("name"))
-			Expect(users2[0]).To(HaveKey("email")) // v2 has email
-			Expect(users2[0]).NotTo(HaveKey("phone"))
-			Expect(users2[0]).NotTo(HaveKey("full_name"))
-
-			// Test products with v2 (2025-06-01) - no currency/description
-			req3 := httptest.NewRequest("GET", "/products", nil)
-			req3.Header.Set("X-API-Version", "2025-06-01")
-			rec3 := httptest.NewRecorder()
-			router.ServeHTTP(rec3, req3)
-			Expect(rec3.Code).To(Equal(200))
-
-			var products2 []map[string]interface{}
-			json.Unmarshal(rec3.Body.Bytes(), &products2)
-			Expect(products2[0]).To(HaveKey("name"))
-			Expect(products2[0]).To(HaveKey("price"))
-			Expect(products2[0]).NotTo(HaveKey("currency"))
-			Expect(products2[0]).NotTo(HaveKey("description"))
-
-			// Test with HEAD version - all fields present
-			req4 := httptest.NewRequest("GET", "/users", nil)
-			req4.Header.Set("X-API-Version", "head")
-			rec4 := httptest.NewRecorder()
-			router.ServeHTTP(rec4, req4)
-			Expect(rec4.Code).To(Equal(200))
-
-			var usersHead []map[string]interface{}
-			json.Unmarshal(rec4.Body.Bytes(), &usersHead)
-			Expect(usersHead[0]).To(HaveKey("full_name"))
-			Expect(usersHead[0]).To(HaveKey("email"))
-			Expect(usersHead[0]).To(HaveKey("phone"))
-		})
-	})
-
-	Describe("JSON Field Order Preservation", func() {
+	Describe("Field Order Preservation", func() {
 		It("should preserve field order in API responses", func() {
-			v1, _ := NewDateVersion("2025-01-01")
-			v2, _ := NewDateVersion("2024-01-01")
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
 
-			// Migration that adds fields - they should appear at the end
 			change := NewVersionChange(
-				"Add fields to response",
+				"Remove fields",
 				v1, v2,
 				&AlterResponseInstruction{
-					Path: "/users",
+					Schemas: []interface{}{User{}},
 					Transformer: func(resp *ResponseInfo) error {
-						// Remove fields for v1 (going backwards)
 						resp.DeleteField("email")
 						resp.DeleteField("phone")
 						return nil
@@ -651,15 +892,13 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			router := gin.New()
 			router.Use(instance.Middleware())
 
-			// Handler returns v2 format with specific field order
 			router.GET("/users", instance.WrapHandler(func(c *gin.Context) {
 				// Return JSON with non-alphabetical field order
-				c.Data(200, "application/json", []byte(`{"zebra": "first", "alpha": "second", "name": "John", "email": "john@example.com", "phone": "555-1234"}`))
-			}))
+				c.Data(200, "application/json", []byte(`{"zebra": "first", "alpha": "second", "full_name": "John", "email": "john@example.com", "phone": "555-1234"}`))
+			}).Returns(User{}).ToHandlerFunc())
 
-			// Test with v1 - should preserve original order of remaining fields
 			req := httptest.NewRequest("GET", "/users", nil)
-			req.Header.Set("X-API-Version", "2025-01-01")
+			req.Header.Set("X-API-Version", "2024-01-01")
 			recorder := httptest.NewRecorder()
 			router.ServeHTTP(recorder, req)
 
@@ -669,7 +908,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			// Verify field order is preserved (zebra comes before alpha)
 			zebraPos := strings.Index(responseBody, `"zebra"`)
 			alphaPos := strings.Index(responseBody, `"alpha"`)
-			namePos := strings.Index(responseBody, `"name"`)
+			namePos := strings.Index(responseBody, `"full_name"`)
 
 			Expect(zebraPos).To(BeNumerically("<", alphaPos))
 			Expect(alphaPos).To(BeNumerically("<", namePos))
@@ -680,7 +919,6 @@ var _ = Describe("End-to-End Integration Tests", func() {
 		})
 
 		It("should demonstrate Sonic vs standard JSON order preservation", func() {
-			// Test data with intentionally non-alphabetical order
 			testJSON := `{"zebra": 1, "alpha": 2, "middle": 3}`
 
 			// Test with Sonic (should preserve order)
@@ -709,59 +947,9 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(sonicZebraPos).To(BeNumerically("<", sonicAlphaPos),
 				"Sonic should preserve zebra before alpha")
 
-			// This demonstrates why we use Sonic for order preservation
 			GinkgoWriter.Printf("Original: %s\n", testJSON)
 			GinkgoWriter.Printf("Sonic:    %s\n", sonicStr)
 			GinkgoWriter.Printf("Standard: %s\n", stdStr)
-		})
-
-		It("should preserve order in nested objects and arrays", func() {
-			v1, _ := NewDateVersion("2025-01-01")
-
-			instance, err := NewEpoch().
-				WithVersions(v1).
-				WithVersionFormat(VersionFormatDate).
-				Build()
-			Expect(err).NotTo(HaveOccurred())
-
-			router := gin.New()
-			router.Use(instance.Middleware())
-
-			router.GET("/complex", instance.WrapHandler(func(c *gin.Context) {
-				// Complex nested structure with non-alphabetical order
-				complexJSON := `{
-					"users": [
-						{
-							"z_last_name": "Smith",
-							"a_first_name": "John",
-							"profile": {
-								"zebra_field": "first",
-								"alpha_field": "second"
-							}
-						}
-					],
-					"zebra_metadata": {"version": "1.0"}
-				}`
-				c.Data(200, "application/json", []byte(complexJSON))
-			}))
-
-			req := httptest.NewRequest("GET", "/complex", nil)
-			req.Header.Set("X-API-Version", "2025-01-01")
-			recorder := httptest.NewRecorder()
-			router.ServeHTTP(recorder, req)
-
-			Expect(recorder.Code).To(Equal(200))
-			responseBody := recorder.Body.String()
-
-			// Verify nested object field order is preserved
-			zLastNamePos := strings.Index(responseBody, `"z_last_name"`)
-			aFirstNamePos := strings.Index(responseBody, `"a_first_name"`)
-			Expect(zLastNamePos).To(BeNumerically("<", aFirstNamePos))
-
-			// Verify deeply nested field order is preserved
-			zebraFieldPos := strings.Index(responseBody, `"zebra_field"`)
-			alphaFieldPos := strings.Index(responseBody, `"alpha_field"`)
-			Expect(zebraFieldPos).To(BeNumerically("<", alphaFieldPos))
 		})
 	})
 
@@ -772,16 +960,17 @@ var _ = Describe("End-to-End Integration Tests", func() {
 
 			// Create circular migration: v1 -> v2 -> v1
 			change1 := NewVersionChangeBuilder(v1, v2).
-				ForPath("/users").
+				ForType(User{}).
+				RequestToNextVersion().
 				AddField("email", "test@example.com").
 				Build()
 
 			change2 := NewVersionChangeBuilder(v2, v1).
-				ForPath("/users").
+				ForType(User{}).
+				RequestToNextVersion().
 				RemoveField("email").
 				Build()
 
-			// This should fail with cycle detection error
 			_, err := NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change1, change2).
@@ -798,16 +987,17 @@ var _ = Describe("End-to-End Integration Tests", func() {
 
 			// Valid linear chain: v1 -> v2 -> v3
 			change1 := NewVersionChangeBuilder(v1, v2).
-				ForPath("/users").
+				ForType(User{}).
+				RequestToNextVersion().
 				AddField("email", "test@example.com").
 				Build()
 
 			change2 := NewVersionChangeBuilder(v2, v3).
-				ForPath("/users").
+				ForType(User{}).
+				RequestToNextVersion().
 				RenameField("name", "full_name").
 				Build()
 
-			// Should succeed
 			epochInstance, err := NewEpoch().
 				WithVersions(v1, v2, v3).
 				WithChanges(change1, change2).
@@ -818,258 +1008,122 @@ var _ = Describe("End-to-End Integration Tests", func() {
 		})
 	})
 
-	Describe("Path-Based Routing Integration", func() {
-		It("should only apply migrations to matching paths", func() {
-			v1, _ := NewDateVersion("2024-01-01")
-			v2, _ := NewDateVersion("2024-06-01")
-
-			// Migration only for /users endpoints
-			change := NewVersionChangeBuilder(v1, v2).
-				ForPath("/users", "/users/:id").
-				AddField("email", "default@example.com").
-				Build()
-
-			epochInstance, err := NewEpoch().
-				WithVersions(v1, v2).
-				WithChanges(change).
-				Build()
-			Expect(err).NotTo(HaveOccurred())
-
-			router := gin.New()
-			router.Use(epochInstance.Middleware())
-
-			// User endpoint (should be migrated)
-			router.GET("/users/:id", epochInstance.WrapHandler(func(c *gin.Context) {
-				c.JSON(200, gin.H{"id": 1, "name": "John", "email": "john@example.com"})
-			}))
-
-			// Product endpoint (should NOT be migrated)
-			router.GET("/products/:id", epochInstance.WrapHandler(func(c *gin.Context) {
-				c.JSON(200, gin.H{"id": 1, "name": "Laptop", "price": 999.99})
-			}))
-
-			// Test user endpoint (v1 - email should be removed)
-			req1 := httptest.NewRequest("GET", "/users/1", nil)
-			req1.Header.Set("X-API-Version", "2024-01-01")
-			recorder1 := httptest.NewRecorder()
-			router.ServeHTTP(recorder1, req1)
-
-			var userResp map[string]interface{}
-			json.Unmarshal(recorder1.Body.Bytes(), &userResp)
-			_, hasEmail := userResp["email"]
-			Expect(hasEmail).To(BeFalse(), "User email should be removed for v1")
-
-			// Test product endpoint (v1 - should be unchanged, no migration)
-			req2 := httptest.NewRequest("GET", "/products/1", nil)
-			req2.Header.Set("X-API-Version", "2024-01-01")
-			recorder2 := httptest.NewRecorder()
-			router.ServeHTTP(recorder2, req2)
-
-			var productResp map[string]interface{}
-			json.Unmarshal(recorder2.Body.Bytes(), &productResp)
-			Expect(productResp["name"]).To(Equal("Laptop"))
-			Expect(productResp["price"]).To(Equal(999.99))
-		})
-
-		It("should handle multiple paths in one migration", func() {
-			v1, _ := NewDateVersion("2024-01-01")
-			v2, _ := NewDateVersion("2024-06-01")
-
-			// Single migration affecting multiple paths
-			change := NewVersionChangeBuilder(v1, v2).
-				ForPath("/users").
-				AddField("email", "user@example.com").
-				ForPath("/admins").
-				AddField("email", "admin@example.com").
-				Build()
-
-			epochInstance, err := NewEpoch().
-				WithVersions(v1, v2).
-				WithChanges(change).
-				Build()
-			Expect(err).NotTo(HaveOccurred())
-
-			router := gin.New()
-			router.Use(epochInstance.Middleware())
-
-			router.GET("/users", epochInstance.WrapHandler(func(c *gin.Context) {
-				c.JSON(200, gin.H{"id": 1, "name": "User", "email": "user@example.com"})
-			}))
-
-			router.GET("/admins", epochInstance.WrapHandler(func(c *gin.Context) {
-				c.JSON(200, gin.H{"id": 1, "name": "Admin", "email": "admin@example.com"})
-			}))
-
-			// Test both endpoints with v1
-			for _, path := range []string{"/users", "/admins"} {
-				req := httptest.NewRequest("GET", path, nil)
-				req.Header.Set("X-API-Version", "2024-01-01")
-				recorder := httptest.NewRecorder()
-				router.ServeHTTP(recorder, req)
-
-				var resp map[string]interface{}
-				json.Unmarshal(recorder.Body.Bytes(), &resp)
-				_, hasEmail := resp["email"]
-				Expect(hasEmail).To(BeFalse(), path+" email should be removed for v1")
-			}
-		})
-	})
-
-	Describe("Declarative API Integration", func() {
-		It("should handle all 4 operation types in one migration", func() {
-			v1, _ := NewDateVersion("2024-01-01")
-			v2, _ := NewDateVersion("2024-06-01")
-
-			// Migration with all 4 operation types using declarative API
-			change := NewVersionChangeBuilder(v1, v2).
-				Description("Test all 4 declarative operations").
-				ForPath("/users").
-				AddField("email", "default@example.com").  // AddField
-				RemoveField("temp_field").                 // RemoveField
-				RenameField("name", "full_name").          // RenameField
-				MapEnumValues("status", map[string]string{ // MapEnumValues
-					"pending": "active",
-				}).
-				Build()
-
-			epochInstance, err := NewEpoch().
-				WithVersions(v1, v2).
-				WithChanges(change).
-				Build()
-			Expect(err).NotTo(HaveOccurred())
-
-			router := gin.New()
-			router.Use(epochInstance.Middleware())
-
-			router.POST("/users", epochInstance.WrapHandler(func(c *gin.Context) {
-				var body map[string]interface{}
-				c.ShouldBindJSON(&body)
-				c.JSON(200, body)
-			}))
-
-			// Test request migration (v1 -> v2)
-			// Send v1 request, it gets migrated to v2, handler echoes it, then migrated back to v1
-			reqBody := `{"name":"John","temp_field":"old","status":"active"}`
-			req := httptest.NewRequest("POST", "/users", bytes.NewBufferString(reqBody))
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("X-API-Version", "2024-01-01")
-			recorder := httptest.NewRecorder()
-			router.ServeHTTP(recorder, req)
-
-			var resp map[string]interface{}
-			json.Unmarshal(recorder.Body.Bytes(), &resp)
-
-			// Verify transformations (response is migrated back to v1)
-			Expect(resp["name"]).To(Equal("John")) // RenameField applied (full_name -> name on response)
-			_, hasEmail := resp["email"]
-			Expect(hasEmail).To(BeFalse()) // AddField removed on response migration
-			_, hasTempField := resp["temp_field"]
-			Expect(hasTempField).To(BeFalse()) // RemoveField applied on request
-		})
-
-		It("should transform error messages with field renames", func() {
-			v1, _ := NewDateVersion("2024-01-01")
-			v2, _ := NewDateVersion("2024-06-01")
-
-			// Test error message field name transformation with declarative API
-			change := NewVersionChangeBuilder(v1, v2).
-				Description("Test error message field name transformation").
-				ForPath("/users").
-				RenameField("name", "full_name").
-				Build()
-
-			epochInstance, err := NewEpoch().
-				WithVersions(v1, v2).
-				WithChanges(change).
-				Build()
-			Expect(err).NotTo(HaveOccurred())
-
-			router := gin.New()
-			router.Use(epochInstance.Middleware())
-
-			router.GET("/users", epochInstance.WrapHandler(func(c *gin.Context) {
-				// Simulate an error mentioning "full_name"
-				c.JSON(400, gin.H{"error": "Field 'full_name' is required"})
-			}))
-
-			// Request with v1 - error should mention "name" not "full_name"
-			req := httptest.NewRequest("GET", "/users", nil)
-			req.Header.Set("X-API-Version", "2024-01-01")
-			recorder := httptest.NewRecorder()
-			router.ServeHTTP(recorder, req)
-
-			body := recorder.Body.String()
-			Expect(body).To(ContainSubstring("name"))
-			Expect(body).NotTo(ContainSubstring("full_name"))
-		})
-	})
-
-	Describe("Complex Chained Migrations Integration", func() {
-		It("should handle migrations across multiple versions", func() {
+	Describe("Complex Multi-Version Scenarios", func() {
+		It("should handle complete real-world API scenario", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 			v3, _ := NewDateVersion("2025-01-01")
 
-			// v1 -> v2: Add email using declarative API
-			change1 := NewVersionChangeBuilder(v1, v2).
-				Description("Add email field").
-				ForPath("/users", "/users/:id").
-				AddField("email", "default@example.com").
+			// User migrations
+			userChange1 := NewVersionChangeBuilder(v1, v2).
+				ForType(User{}).
+				RequestToNextVersion().
+				AddField("email", "unknown@example.com").
+				ResponseToPreviousVersion().
+				RemoveField("email").
 				Build()
 
-			// v2 -> v3: Rename name -> full_name using declarative API
-			change2 := NewVersionChangeBuilder(v2, v3).
-				Description("Rename name to full_name").
-				ForPath("/users", "/users/:id").
+			userChange2 := NewVersionChangeBuilder(v2, v3).
+				ForType(User{}).
+				RequestToNextVersion().
 				RenameField("name", "full_name").
+				AddField("phone", "").
+				ResponseToPreviousVersion().
+				RenameField("full_name", "name").
+				RemoveField("phone").
 				Build()
 
-			epochInstance, err := NewEpoch().
-				WithVersions(v1, v2, v3).
-				WithChanges(change1, change2).
+			// Product migrations
+			productChange := NewVersionChangeBuilder(v2, v3).
+				ForType(Product{}).
+				RequestToNextVersion().
+				AddField("currency", "USD").
+				AddField("description", "").
+				ResponseToPreviousVersion().
+				RemoveField("currency").
+				RemoveField("description").
 				Build()
+
+			instance, err := NewEpoch().
+				WithVersions(v1, v2, v3).
+				WithChanges(userChange1, userChange2, productChange).
+				WithVersionFormat(VersionFormatDate).
+				WithDefaultVersion(v2).
+				Build()
+
 			Expect(err).NotTo(HaveOccurred())
 
 			router := gin.New()
-			router.Use(epochInstance.Middleware())
+			router.Use(instance.Middleware())
 
-			router.GET("/users/:id", epochInstance.WrapHandler(func(c *gin.Context) {
-				// HEAD version (v3) response
-				c.JSON(200, gin.H{
-					"id":        1,
-					"full_name": "John Doe",
-					"email":     "john@example.com",
+			// User endpoint (returns HEAD version)
+			router.GET("/users", instance.WrapHandler(func(c *gin.Context) {
+				c.JSON(200, []gin.H{
+					{"id": 1, "full_name": "Alice Johnson", "email": "alice@example.com", "phone": "+1-555-0100"},
+					{"id": 2, "full_name": "Bob Smith", "email": "bob@example.com", "phone": "+1-555-0200"},
 				})
-			}))
+			}).Returns([]User{}).ToHandlerFunc())
 
-			// Test v1 (should apply BOTH response migrations in reverse)
-			req1 := httptest.NewRequest("GET", "/users/1", nil)
+			// Product endpoint
+			router.GET("/products", instance.WrapHandler(func(c *gin.Context) {
+				c.JSON(200, []gin.H{
+					{"id": 1, "name": "Laptop", "price": 999.99, "currency": "USD", "description": "High-performance"},
+					{"id": 2, "name": "Mouse", "price": 29.99, "currency": "USD", "description": "Wireless"},
+				})
+			}).Returns([]Product{}).ToHandlerFunc())
+
+			// Test V1 users
+			req1 := httptest.NewRequest("GET", "/users", nil)
 			req1.Header.Set("X-API-Version", "2024-01-01")
-			recorder1 := httptest.NewRecorder()
-			router.ServeHTTP(recorder1, req1)
+			rec1 := httptest.NewRecorder()
+			router.ServeHTTP(rec1, req1)
+			Expect(rec1.Code).To(Equal(200))
 
-			var v1Resp map[string]interface{}
-			json.Unmarshal(recorder1.Body.Bytes(), &v1Resp)
-			Expect(v1Resp["id"]).To(Equal(float64(1)))
-			Expect(v1Resp["name"]).To(Equal("John Doe")) // full_name -> name (chained)
-			_, hasEmail := v1Resp["email"]
-			Expect(hasEmail).To(BeFalse()) // email removed
-			_, hasFullName := v1Resp["full_name"]
-			Expect(hasFullName).To(BeFalse()) // Doesn't exist in v1
+			var users1 []map[string]interface{}
+			json.Unmarshal(rec1.Body.Bytes(), &users1)
+			Expect(users1[0]).To(HaveKey("name"))
+			Expect(users1[0]).NotTo(HaveKey("email"))
+			Expect(users1[0]).NotTo(HaveKey("phone"))
+			Expect(users1[0]).NotTo(HaveKey("full_name"))
 
-			// Test v2 (should only apply one response migration: full_name -> name)
-			req2 := httptest.NewRequest("GET", "/users/1", nil)
+			// Test V2 users
+			req2 := httptest.NewRequest("GET", "/users", nil)
 			req2.Header.Set("X-API-Version", "2024-06-01")
-			recorder2 := httptest.NewRecorder()
-			router.ServeHTTP(recorder2, req2)
+			rec2 := httptest.NewRecorder()
+			router.ServeHTTP(rec2, req2)
+			Expect(rec2.Code).To(Equal(200))
 
-			var v2Resp map[string]interface{}
-			json.Unmarshal(recorder2.Body.Bytes(), &v2Resp)
-			Expect(v2Resp["id"]).To(Equal(float64(1)))
-			Expect(v2Resp["name"]).To(Equal("John Doe"))          // full_name -> name
-			Expect(v2Resp["email"]).To(Equal("john@example.com")) // email kept
-			_, hasFullName2 := v2Resp["full_name"]
-			Expect(hasFullName2).To(BeFalse()) // Doesn't exist in v2
+			var users2 []map[string]interface{}
+			json.Unmarshal(rec2.Body.Bytes(), &users2)
+			Expect(users2[0]).To(HaveKey("name"))
+			Expect(users2[0]).To(HaveKey("email"))
+			Expect(users2[0]).NotTo(HaveKey("phone"))
+			Expect(users2[0]).NotTo(HaveKey("full_name"))
+
+			// Test V2 products (no currency/description)
+			req3 := httptest.NewRequest("GET", "/products", nil)
+			req3.Header.Set("X-API-Version", "2024-06-01")
+			rec3 := httptest.NewRecorder()
+			router.ServeHTTP(rec3, req3)
+			Expect(rec3.Code).To(Equal(200))
+
+			var products2 []map[string]interface{}
+			json.Unmarshal(rec3.Body.Bytes(), &products2)
+			Expect(products2[0]).NotTo(HaveKey("currency"))
+			Expect(products2[0]).NotTo(HaveKey("description"))
+
+			// Test HEAD version
+			req4 := httptest.NewRequest("GET", "/users", nil)
+			req4.Header.Set("X-API-Version", "head")
+			rec4 := httptest.NewRecorder()
+			router.ServeHTTP(rec4, req4)
+			Expect(rec4.Code).To(Equal(200))
+
+			var usersHead []map[string]interface{}
+			json.Unmarshal(rec4.Body.Bytes(), &usersHead)
+			Expect(usersHead[0]).To(HaveKey("full_name"))
+			Expect(usersHead[0]).To(HaveKey("email"))
+			Expect(usersHead[0]).To(HaveKey("phone"))
 		})
 	})
 })

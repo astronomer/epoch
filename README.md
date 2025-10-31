@@ -8,15 +8,17 @@ Epoch lets you version your Go APIs the way Stripe does - write your handlers on
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Why Epoch?
-- **One operation, multiple transformations** - `RenameField("old", "new")` generates request, response, AND error transformations
-- **Type-safe** - Compile-time checking with Go's type system
-- **Automatic error field transformation** - Field names in error messages automatically update for each version
-- **Path-based routing** - Explicit control over which endpoints each migration affects
+
+- **Type-based routing** - Explicit type registration at endpoint setup for predictable migrations
+- **Flow-based operations** - Clear separation: requests go Client→HEAD, responses go HEAD→Client
+- **Automatic bidirectional** - One operation generates both request and response transformations
+- **Field order preservation** - JSON responses maintain original field order using Sonic
+- **Cycle detection** - Built-in validation prevents circular migration dependencies
 
 ### Core Features
+
 - **Write once** - Implement handlers for your latest API version only
-- **Bidirectional migrations** - Declarative operations work in both directions automatically
-- **Field order preservation** - JSON responses maintain original field order
+- **Type-safe** - Register types at endpoint setup with compile-time checking
 - **No duplication** - No need to maintain multiple versions of the same endpoint
 - **Flexible versioning** - Support date-based (`2024-01-01`), semantic (`v1.0.0`), or string versions
 - **Gin integration** - Drop into existing Gin applications with minimal changes
@@ -51,8 +53,11 @@ func main() {
     
     migration := epoch.NewVersionChangeBuilder(v1, v2).
         Description("Add email to User").
-        ForPath("/users", "/users/:id").
-            AddField("email", "user@example.com").
+        ForType(User{}).
+            RequestToNextVersion().
+                AddField("email", "user@example.com").
+            ResponseToPreviousVersion().
+                RemoveField("email").
         Build()
 
     // Setup Epoch
@@ -70,9 +75,9 @@ func main() {
     r := gin.Default()
     r.Use(epochInstance.Middleware())
     
-    // Wrap handlers that need versioning
-    r.GET("/users/:id", epochInstance.WrapHandler(getUser))
-    r.POST("/users", epochInstance.WrapHandler(createUser))
+    // Register endpoints with type information
+    r.GET("/users/:id", epochInstance.WrapHandler(getUser).Returns(User{}).ToHandlerFunc())
+    r.POST("/users", epochInstance.WrapHandler(createUser).Accepts(User{}).Returns(User{}).ToHandlerFunc())
     
     r.Run(":8080")
 }
@@ -91,11 +96,10 @@ func createUser(c *gin.Context) {
 ```
 
 **What just happened?**
-- ✅ `ForPath()` explicitly defines which endpoints this migration applies to (path-based routing)
-- ✅ `AddField("email", "user@example.com")` automatically creates BOTH migrations:
-  - Request migration (v1→v2): adds `email` field if missing
-  - Response migration (v2→v1): removes `email` field
-- ✅ Error messages automatically transform field names for each version
+- ✅ `ForType(User{})` explicitly registers which type this migration applies to
+- ✅ `RequestToNextVersion().AddField()` handles Client→HEAD transformations
+- ✅ `ResponseToPreviousVersion().RemoveField()` handles HEAD→Client transformations
+- ✅ `WrapHandler().Returns(User{})` registers the endpoint with type information
 
 **Test it:**
 ```bash
@@ -108,145 +112,142 @@ curl http://localhost:8080/users/1 -H "X-API-Version: 2.0.0"
 # {"id":1,"name":"John","email":"john@example.com"}
 ```
 
-## Declarative Operations
+## Flow-Based Operations
 
-The new declarative API makes common migrations incredibly simple. Here are all available operations:
+The new framework uses **flow-based operations** that match the actual migration direction:
 
-### Field Operations
+### Request Operations (Client → HEAD)
+
+When a v1 client sends a request, it needs to be migrated TO the HEAD version:
 
 ```go
 migration := epoch.NewVersionChangeBuilder(v1, v2).
-    Description("Multiple field operations").
-    ForPath("/users", "/users/:id").
-        AddField("email", "default@example.com").      // Add field with default
-        RemoveField("temp_field").                     // Remove field
-        RenameField("name", "full_name").              // Rename field (+ auto error transform!)
-        MapEnumValues("status", map[string]string{    // Map enum values
-            "pending": "active",
-            "suspended": "inactive",
-        }).
-    Build()
+    ForType(User{}).
+        RequestToNextVersion().
+            AddField("email", "default@example.com").      // Add field for old clients
+            RemoveField("deprecated_field").               // Remove deprecated field
+            RenameField("name", "full_name").              // Rename old field to new
+        Build()
 ```
 
-> **Note:** `ForPath()` is required - it specifies which endpoints the migration applies to at runtime.
+### Response Operations (HEAD → Client)
 
-### What Happens Automatically
+When returning to a v1 client, response needs to be migrated FROM HEAD to v1:
 
-Each declarative operation generates **three transformations**:
+```go
+migration := epoch.NewVersionChangeBuilder(v1, v2).
+    ForType(User{}).
+        ResponseToPreviousVersion().
+            RemoveField("email").                          // Remove new fields
+            AddField("old_field", "default").              // Restore old fields
+            RenameField("full_name", "name").              // Rename back to old name
+        Build()
+```
 
-| Operation | Request (v1→v2) | Response (v2→v1) | Error Messages |
-|-----------|----------------|------------------|----------------|
-| `AddField("email", "default")` | Adds field if missing | Removes field | N/A |
-| `RemoveField("temp")` | Removes field | (Cannot restore) | N/A |
-| `RenameField("name", "full_name")` | Renames `name` → `full_name` | Renames `full_name` → `name` | Transforms "full_name" → "name" |
-| `MapEnumValues("status", {...})` | Maps values forward | Maps values backward | N/A |
+### Available Operations
 
-### Multiple Paths
+**Request Operations** (Client → HEAD):
+- `AddField(name, default)` - Add field if missing
+- `RemoveField(name)` - Remove field
+- `RenameField(from, to)` - Rename field
+- `Custom(func)` - Custom transformation logic
 
-Apply migrations to multiple paths in one change:
+**Response Operations** (HEAD → Client):
+- `AddField(name, default)` - Add field if missing
+- `RemoveField(name)` - Remove field
+- `RenameField(from, to)` - Rename field
+- `RemoveFieldIfDefault(name, default)` - Conditional removal
+- `Custom(func)` - Custom transformation logic
+
+## Type-Based Routing
+
+Epoch requires **explicit type registration** at endpoint setup:
+
+```go
+// Register endpoints with type information
+r.GET("/users/:id", 
+    epochInstance.WrapHandler(getUser).
+        Returns(User{}).                    // Response type
+        ToHandlerFunc())
+
+r.POST("/users", 
+    epochInstance.WrapHandler(createUser).
+        Accepts(User{}).                    // Request type
+        Returns(User{}).                    // Response type
+        ToHandlerFunc())
+
+// Array responses
+r.GET("/users",
+    epochInstance.WrapHandler(listUsers).
+        Returns([]User{}).                  // Returns array of Users
+        ToHandlerFunc())
+
+// Nested arrays
+r.GET("/orders",
+    epochInstance.WrapHandler(listOrders).
+        Returns(OrderResponse{}).
+        WithArrayItems("items", OrderItem{}).  // Nested array field
+        ToHandlerFunc())
+```
+
+## Multiple Types in One Migration
+
+You can migrate multiple types together:
 
 ```go
 migration := epoch.NewVersionChangeBuilder(v2, v3).
-    Description("Update User endpoints").
-    ForPath("/users", "/users/:id").
-        RenameField("name", "full_name").
-        AddField("phone", "").
-    ForPath("/products", "/products/:id").
-        AddField("currency", "USD").
-        AddField("description", "").
+    Description("Update User and Product").
+    ForType(User{}).
+        ResponseToPreviousVersion().
+            RenameField("full_name", "name").
+    ForType(Product{}).
+        ResponseToPreviousVersion().
+            RemoveField("currency").
     Build()
 ```
 
-### Custom Logic
+## Custom Transformations
 
-For complex transformations, mix declarative + custom:
+Mix declarative operations with custom logic:
 
 ```go
 migration := epoch.NewVersionChangeBuilder(v1, v2).
-    Description("Complex migration").
-    ForPath("/users", "/users/:id").
-        AddField("email", "default@example.com").
-        // Schema-specific custom logic
-        OnRequest(func(req *epoch.RequestInfo) error {
-            // Complex validation or transformation
-            return nil
-        }).
-    // Global custom logic
-    CustomRequest(func(req *epoch.RequestInfo) error {
-        // Applies to all schemas
-        return nil
-    }).
+    ForType(User{}).
+        RequestToNextVersion().
+            AddField("email", "default@example.com").
+            Custom(func(req *epoch.RequestInfo) error {
+                // Complex validation or transformation
+                if email, _ := req.GetFieldString("email"); email == "" {
+                    req.SetField("email", "user@example.com")
+                }
+                return nil
+            }).
     Build()
 ```
 
-## Core Concepts
+## Global Transformers
 
-### 1. Version Types
-
-**Date-based** (recommended for public APIs):
-```go
-v1, _ := epoch.NewDateVersion("2024-01-01")
-v2, _ := epoch.NewDateVersion("2024-06-15")
-```
-
-**Semantic versioning**:
-```go
-v1, _ := epoch.NewSemverVersion("1.0.0")
-v2, _ := epoch.NewSemverVersion("2.0.0")
-```
-
-**String-based**:
-```go
-v1 := epoch.NewStringVersion("alpha")
-v2 := epoch.NewStringVersion("beta")
-```
-
-### 2. Version Changes
-
-Define what changed between versions:
+Apply transformations to all types:
 
 ```go
-change := epoch.NewVersionChange(
-    "Description of change",
-    fromVersion,
-    toVersion,
-    // Instructions for migration
-    &epoch.AlterRequestInstruction{...},
-    &epoch.AlterResponseInstruction{...},
-)
-```
-
-### 3. Migration Instructions
-
-**AlterRequestInstruction** - Transform old requests to new format:
-```go
-&epoch.AlterRequestInstruction{
-    Schemas: []interface{}{User{}},
-    Transformer: func(req *epoch.RequestInfo) error {
-        // Use helper methods to modify request body
-        if !req.HasField("email") {
-            req.SetField("email", "default@example.com")
-        }
+migration := epoch.NewVersionChangeBuilder(v1, v2).
+    CustomRequest(func(req *epoch.RequestInfo) error {
+        // Applies to ALL request types
         return nil
-    },
-}
-```
-
-**AlterResponseInstruction** - Transform new responses to old format:
-```go
-&epoch.AlterResponseInstruction{
-    Schemas: []interface{}{User{}},
-    Transformer: func(resp *epoch.ResponseInfo) error {
-        // Use helper methods to modify response body
-        resp.DeleteField("new_field")
+    }).
+    CustomResponse(func(resp *epoch.ResponseInfo) error {
+        // Applies to ALL response types
         return nil
-    },
-}
+    }).
+    ForType(User{}).
+        ResponseToPreviousVersion().
+            RemoveField("email").
+    Build()
 ```
 
-### 4. Helper Methods
+## Helper Methods
 
-**RequestInfo and ResponseInfo** provide convenient methods for working with JSON data:
+**RequestInfo and ResponseInfo** provide convenient methods:
 
 ```go
 // Field access
@@ -265,7 +266,7 @@ err := resp.TransformArrayField("users", func(user *ast.Node) error {
 })
 ```
 
-**Global AST Helper Functions** for working with individual nodes:
+**Global AST Helper Functions**:
 
 ```go
 // Direct node manipulation (useful in TransformArrayField callbacks)
@@ -283,83 +284,50 @@ if epoch.IsNodeArray(node) { /* handle array */ }
 if epoch.IsNodeObject(node) { /* handle object */ }
 ```
 
-### 5. Version Detection
+## Version Detection
 
-Epoch automatically detects versions from **all locations** simultaneously:
-- **Headers**: `X-API-Version: 2024-01-01` (checked first, highest priority)
-- **URL path**: `/v2024-01-01/users` or `/2024-01-01/users` (checked second)
+Epoch automatically detects versions from:
+- **Headers**: `X-API-Version: 2024-01-01` (highest priority)
+- **URL path**: `/v2024-01-01/users` or `/v1/users`
 
-If both header and path contain a version, the header version takes priority.
+If both are present, header takes priority.
 
-Customize the header name:
-```go
-epoch.NewEpoch().
-    WithVersionParameter("X-API-Version").  // Custom header name (default: "X-API-Version")
-    Build()
-```
+### Partial Version Matching
 
-#### Partial Version Matching
-
-Epoch supports **major version shortcuts** in URL paths - specify just the major version and it automatically resolves to the latest minor/patch version:
+Specify major version only:
 
 ```go
-// Configure versions: 1.0.0, 1.1.0, 1.2.0, 2.0.0, 2.1.0
-epochInstance, _ := epoch.NewEpoch().
-    WithSemverVersions("1.0.0", "1.1.0", "1.2.0", "2.0.0", "2.1.0").
-    WithHeadVersion().
-    Build()
-
-// Setup routes using major version
-r.GET("/api/v1/users", epochInstance.WrapHandler(getUsers))  // Routes to v1.x
-r.GET("/api/v2/users", epochInstance.WrapHandler(getUsers))  // Routes to v2.x
+// Configure: 1.0.0, 1.1.0, 1.2.0, 2.0.0, 2.1.0
+r.GET("/api/v1/users", handler)  // Routes to latest v1.x (1.2.0)
+r.GET("/api/v2/users", handler)  // Routes to latest v2.x (2.1.0)
 ```
 
-**Request examples:**
 ```bash
-# Path with major version only → resolves to latest matching version
 curl http://localhost:8080/api/v1/users
 # Automatically uses v1.2.0 (latest v1.x)
-
-curl http://localhost:8080/api/v2/users  
-# Automatically uses v2.1.0 (latest v2.x)
-
-# Full version still works
-curl http://localhost:8080/api/v1.1.0/users
-# Uses exactly v1.1.0
-
-# Header takes priority over path
-curl http://localhost:8080/api/v1/users -H "X-API-Version: 2.0.0"
-# Uses v2.0.0 (from header, not path)
 ```
-
-This pattern makes it easy for clients to request "latest v1" without needing to know the exact minor/patch version.
 
 ## Builder API
 
 ```go
-builder := epoch.NewEpoch()
-
-// Add versions
-builder.WithVersions(v1, v2, v3)
-builder.WithDateVersions("2023-01-01", "2024-01-01")    // Convenience method
-builder.WithSemverVersions("1.0.0", "2.0.0")             // Convenience method
-builder.WithHeadVersion()                                 // Always latest
-
-// Add migrations
-builder.WithChanges(change1, change2, change3)
-
-// Configure version detection (optional)
-builder.WithVersionParameter("X-API-Version")        // Custom header name
-builder.WithVersionFormat(epoch.VersionFormatDate)   // Expected format
-
-// Build
-epochInstance, err := builder.Build()
+epochInstance, err := epoch.NewEpoch().
+    // Add versions
+    WithVersions(v1, v2, v3).
+    WithDateVersions("2023-01-01", "2024-01-01").
+    WithSemverVersions("1.0.0", "2.0.0").
+    WithHeadVersion().
+    // Add migrations
+    WithChanges(change1, change2, change3).
+    // Configure (optional)
+    WithVersionParameter("X-API-Version").
+    WithVersionFormat(epoch.VersionFormatDate).
+    WithDefaultVersion(v1).
+    Build()
 ```
 
 ## Examples
 
 ### Basic Example
-A minimal example showing simple version migration:
 ```bash
 cd examples/basic
 go run main.go
@@ -367,11 +335,11 @@ go run main.go
 
 Demonstrates:
 - Semantic versioning (v1.0.0, v2.0.0)
-- Single field addition (email)
-- Request/response transformations
+- Type registration with `.Returns()` and `.Accepts()`
+- Flow-based operations (`RequestToNextVersion`, `ResponseToPreviousVersion`)
+- Simple field addition
 
 ### Advanced Example
-A full REST API with complex migrations:
 ```bash
 cd examples/advanced
 go run main.go
@@ -379,111 +347,89 @@ go run main.go
 
 Demonstrates:
 - Date-based versioning
-- Multiple models (User, Product)
-- Field additions and renames
+- Multiple models (User, Product, Order)
+- Field additions and renames across versions
 - Array transformations
+- Nested array migrations with `WithArrayItems()`
 - Full CRUD operations
 
 ## How It Works
 
-1. **You write handlers for the HEAD (latest) version only**
-2. **Epoch middleware detects the requested API version** from headers or URL path
-3. **Request migration**: Transforms incoming request from old → new format
-4. **Your handler executes** with the migrated request
-5. **Response migration**: Transforms outgoing response from new → old format
-6. **Client receives response** in the format matching their requested version
+1. **Handler runs at HEAD version** - You implement handlers for the latest version only
+2. **Epoch detects requested version** - From `X-API-Version` header or URL path
+3. **Request migration** - Transforms incoming request: Client Version → HEAD
+4. **Handler executes** - With migrated request in HEAD format
+5. **Response migration** - Transforms outgoing response: HEAD → Client Version
+6. **Client receives** - Response in their requested version format
 
 ```
-Client (v1) → [v1 Request] → Migration → [v2 Request] → Handler (v2)
-                                                             ↓
-Client (v1) ← [v1 Response] ← Migration ← [v2 Response] ← Handler (v2)
+Client (v1) → [v1 Request] → Migration (v1→v2) → [v2 Request] → Handler (v2)
+                                                                      ↓
+Client (v1) ← [v1 Response] ← Migration (v2→v1) ← [v2 Response] ← Handler (v2)
 ```
 
 ## Best Practices
 
-### One VersionChange Per Schema
+### 1. Always Register Types
 
-Create separate `VersionChange` objects for different models/schemas. All migrations in a single `VersionChange` are applied together, so mixing multiple schemas can cause unwanted side effects.
+Always use `.Returns()` and `.Accepts()` to register endpoint types:
 
-**✅ Good:**
 ```go
-// Separate changes for different schemas
-userChange := epoch.NewVersionChange(
-    "Add email to User",
-    v1, v2,
-    &epoch.AlterResponseInstruction{
-        Schemas: []interface{}{User{}},
-        Transformer: func(resp *epoch.ResponseInfo) error {
-            // Only transforms User responses
-            resp.DeleteField("email")
-            return nil
-        },
-    },
-)
+// ✅ Good
+r.GET("/users/:id", epochInstance.WrapHandler(getUser).Returns(User{}).ToHandlerFunc())
 
-productChange := epoch.NewVersionChange(
-    "Add SKU to Product",
-    v1, v2,
-    &epoch.AlterResponseInstruction{
-        Schemas: []interface{}{Product{}},
-        Transformer: func(resp *epoch.ResponseInfo) error {
-            // Only transforms Product responses
-            resp.DeleteField("sku")
-            return nil
-        },
-    },
-)
+// ❌ Bad - no type registration
+r.GET("/users/:id", epochInstance.WrapHandler(getUser))
+```
 
-epoch.NewEpoch().
-    WithChanges(userChange, productChange).
+### 2. One Type Per ForType()
+
+Keep migrations focused on single types:
+
+```go
+// ✅ Good - separate migrations per type
+userChange := epoch.NewVersionChangeBuilder(v1, v2).
+    ForType(User{}).
+        ResponseToPreviousVersion().RemoveField("email").
+    Build()
+
+productChange := epoch.NewVersionChangeBuilder(v1, v2).
+    ForType(Product{}).
+        ResponseToPreviousVersion().RemoveField("sku").
+    Build()
+
+// ❌ Avoid - mixing types in operations can be confusing
+```
+
+### 3. Use Flow-Based Operations
+
+Use operations that match the actual migration direction:
+
+```go
+// ✅ Good - clear flow direction
+migration := epoch.NewVersionChangeBuilder(v1, v2).
+    ForType(User{}).
+        RequestToNextVersion().      // Client → HEAD
+            AddField("email", "default").
+        ResponseToPreviousVersion(). // HEAD → Client
+            RemoveField("email").
     Build()
 ```
-
-**❌ Avoid:**
-```go
-// Multiple schemas in one VersionChange - transformers run on ALL responses!
-change := epoch.NewVersionChange(
-    "Multiple changes",
-    v1, v2,
-    &epoch.AlterResponseInstruction{
-        Schemas: []interface{}{User{}},
-        Transformer: func(resp) { /* runs on User AND Product */ },
-    },
-    &epoch.AlterResponseInstruction{
-        Schemas: []interface{}{Product{}},
-        Transformer: func(resp) { /* runs on User AND Product */ },
-    },
-)
-```
-
-## Architecture: Middleware Approach
-
-Epoch uses a **middleware approach** for Go API versioning:
-
-**Go (Middleware)**:
-- Single router with runtime transformation
-- Integrates naturally with Gin's middleware chain
-- Lower memory footprint
-- Simpler mental model
-
-The approach achieves **transparent API versioning with automatic migrations** following Go idioms and best practices.
 
 ## Testing
 
 ```bash
 # Run all tests 
+make test-ginkgo
+
+# Or use go test
 go test ./epoch/...
 
 # Run with coverage
 go test ./epoch/... -coverprofile=coverage.out
 go tool cover -html=coverage.out
 
-# Run specific test suites
-go test ./epoch -run TestMigrationChain  # Cycle detection tests
-go test ./epoch -run TestIntegration     # Integration tests
-go test ./epoch -run TestBuilderAPI      # Declarative API tests
-
-# Verify examples compile and run
+# Verify examples compile
 cd examples/basic && go build
 cd examples/advanced && go build
 ```
@@ -498,4 +444,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-Inspired by Stripe-style API versioning - bringing elegant version management to the Go ecosystem.
+Inspired by Stripe-style API versioning and [Cadwyn](https://github.com/zmievsa/cadwyn) for Python.

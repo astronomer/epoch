@@ -14,7 +14,7 @@ test:
 test-ginkgo:
 	@echo "Running tests with Ginkgo..."
 	@if command -v ginkgo >/dev/null 2>&1; then \
-		ginkgo -r --race --cover --coverprofile=coverage.out --covermode=atomic -v ./epoch; \
+		cd epoch && ginkgo --race -v; \
 	else \
 		echo "Ginkgo not installed, falling back to go test..."; \
 		$(MAKE) test; \

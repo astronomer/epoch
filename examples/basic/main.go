@@ -21,7 +21,7 @@ func main() {
 	// v1.0.0: User has ID and Name
 	// v2.0.0: User adds Email field (with automatic bidirectional migration!)
 
-	fmt.Println("🚀 Starting Epoch Basic Example")
+	fmt.Println("🚀 Starting Epoch Basic Example - NEW Schema-Based API!")
 	fmt.Println("")
 	fmt.Println("📦 API Versions:")
 	fmt.Println("  • v1.0.0: User has id, name")
@@ -49,9 +49,9 @@ func main() {
 	// Add Epoch version detection middleware
 	r.Use(epochInstance.Middleware())
 
-	// Define routes with version-aware handlers
-	r.GET("/users/:id", epochInstance.WrapHandler(getUser))
-	r.POST("/users", epochInstance.WrapHandler(createUser))
+	// Define routes with version-aware handlers and type registration
+	r.GET("/users/:id", epochInstance.WrapHandler(getUser).Returns(User{}).ToHandlerFunc())
+	r.POST("/users", epochInstance.WrapHandler(createUser).Accepts(User{}).Returns(User{}).ToHandlerFunc())
 
 	// Print usage instructions
 	fmt.Println("💡 Try these commands:")
@@ -76,20 +76,23 @@ func main() {
 }
 
 // createV1ToV2Change defines the migration between v1.0.0 and v2.0.0
-// This uses the NEW declarative API which automatically generates:
-//  1. Request migration (v1 → v2): adds "email" field if missing
-//  2. Response migration (v2 → v1): removes "email" field
-//  3. Error transformation: updates field names in error messages
+// This uses the NEW flow-based API with only 2 directions (matching actual flow):
+//  1. RequestToNextVersion: Client→HEAD (ONLY direction requests flow)
+//  2. ResponseToPreviousVersion: HEAD→Client (ONLY direction responses flow)
 func createV1ToV2Change() *epoch.VersionChange {
 	v1, _ := epoch.NewSemverVersion("1.0.0")
 	v2, _ := epoch.NewSemverVersion("2.0.0")
 
 	return epoch.NewVersionChangeBuilder(v1, v2).
 		Description("Add email field to User").
-		// PATH-BASED ROUTING: Explicitly specify which endpoints this migration affects
-		ForPath("/users", "/users/:id").
-		// ✨ One line → Automatic bidirectional migration!
-		AddField("email", "default@example.com").
+		// TYPE-BASED ROUTING: Specify which types this migration affects
+		ForType(User{}).
+		// Requests: Client→HEAD (add email field for old clients)
+		RequestToNextVersion().
+		AddField("email", "default@example.com"). // Add default email for v1 clients
+		// Responses: HEAD→Client (remove email field for old clients)
+		ResponseToPreviousVersion().
+		RemoveField("email"). // Remove email from responses for v1 clients
 		Build()
 }
 
