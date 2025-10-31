@@ -157,18 +157,13 @@ func (b *versionChangeBuilder) Build() *VersionChange {
 								return err
 							}
 						} else {
-							// For objects, apply operations to the object and handle nested arrays
+							// For objects, apply operations to the object
 							// Response migration is always FROM HEAD version TO client version
 							if err := responseOpsCopy.Apply(resp.Body); err != nil {
 								return err
 							}
-
-							// Handle nested arrays within objects
-							if err := resp.TransformNestedArrays(func(node *ast.Node) error {
-								return responseOpsCopy.Apply(node)
-							}); err != nil {
-								return err
-							}
+							// Note: Nested arrays are now handled by VersionChange.MigrateResponse
+							// using type-aware transformNestedArrayItemsForSingleStep at each migration step
 						}
 					}
 

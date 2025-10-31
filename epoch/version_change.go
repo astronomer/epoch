@@ -179,6 +179,19 @@ func (vc *VersionChange) MigrateResponse(ctx context.Context, responseInfo *Resp
 				}
 			}
 		}
+
+		// After type-specific transformations, also transform nested arrays if defined
+		if len(responseInfo.nestedArrayTypes) > 0 {
+			// For each registered nested array, transform its items with type info
+			for fieldName, itemType := range responseInfo.nestedArrayTypes {
+				if err := vc.transformNestedArrayItemsForSingleStep(
+					ctx, responseInfo, fieldName, itemType,
+				); err != nil {
+					return fmt.Errorf("nested array migration failed for change '%s' (field: %s): %w",
+						vc.description, fieldName, err)
+				}
+			}
+		}
 	}
 
 	return nil
@@ -519,22 +532,12 @@ func (mc *MigrationChain) MigrateResponseForType(
 		return mc.transformTopLevelArrayItems(ctx, responseInfo, elementType, from, to)
 	}
 
-	// Set the known type directly - NO runtime matching needed
+	// Set the known type and nested array information - NO runtime matching needed
 	responseInfo.schemaMatched = true
 	responseInfo.matchedSchemaType = knownType
+	responseInfo.nestedArrayTypes = nestedArrays
 
-	// Apply nested array transformations FIRST if defined
-	if len(nestedArrays) > 0 {
-		for fieldName, itemType := range nestedArrays {
-			if err := mc.transformNestedArrayItems(
-				ctx, responseInfo, fieldName, itemType, from, to,
-			); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Then apply top-level migrations using the existing logic
+	// Apply top-level migrations - nested arrays will be transformed at each step
 	return mc.MigrateResponse(ctx, responseInfo, from, to)
 }
 
@@ -584,39 +587,46 @@ func (mc *MigrationChain) transformTopLevelArrayItems(
 	return nil
 }
 
-// transformNestedArrayItems applies migrations to items in a nested array field
-// For example, transforms UserResponse items inside UsersListResponse.users array
-func (mc *MigrationChain) transformNestedArrayItems(
+// transformNestedArrayItemsForSingleStep applies THIS version change's migrations
+// to items in a nested array field (single step, not multi-step)
+func (vc *VersionChange) transformNestedArrayItemsForSingleStep(
 	ctx context.Context,
 	responseInfo *ResponseInfo,
 	fieldName string,
 	itemType reflect.Type,
-	from, to *Version,
 ) error {
-	// Get the array field
 	if responseInfo.Body == nil {
 		return nil
 	}
 
 	arrayField := responseInfo.Body.Get(fieldName)
-	if arrayField == nil || !arrayField.Exists() {
-		return nil // Field doesn't exist
+	if arrayField == nil || !arrayField.Exists() || arrayField.TypeSafe() != ast.V_ARRAY {
+		return nil
 	}
 
-	if arrayField.TypeSafe() != ast.V_ARRAY {
-		return nil // Field exists but isn't an array
+	// Get instructions for the item type
+	instructions, exists := vc.alterResponseBySchemaInstructions[itemType]
+	if !exists {
+		return nil // No migrations defined for this item type in this version change
 	}
 
-	// Transform each item in the array
+	// Transform each array item with this version change's operations
 	return responseInfo.TransformArrayField(fieldName, func(item *ast.Node) error {
-		// Create temporary ResponseInfo for the array item
 		itemInfo := &ResponseInfo{
 			Body:              item,
 			schemaMatched:     true,
 			matchedSchemaType: itemType,
 		}
 
-		// Apply migrations for the item type
-		return mc.MigrateResponse(ctx, itemInfo, from, to)
+		// Apply only THIS version change's instructions (single step)
+		for _, instruction := range instructions {
+			if responseInfo.StatusCode >= 400 && !instruction.MigrateHTTPErrors {
+				continue
+			}
+			if err := instruction.Transformer(itemInfo); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
