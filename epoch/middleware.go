@@ -361,14 +361,23 @@ func (vah *VersionAwareHandler) handleWithMigration(c *gin.Context, requestedVer
 	vah.handler(c)
 
 	// 4. Migrate response using KNOWN type(s)
-	if endpointDef.ResponseType != nil {
+	// Always attempt migration for error responses (status >= 400) to transform field names
+	// even if no response type is registered. For error responses, use request type if available
+	// since validation errors reference request field names.
+	responseTypeForMigration := endpointDef.ResponseType
+	if responseTypeForMigration == nil && responseCapture.statusCode >= 400 && endpointDef.RequestType != nil {
+		// Use request type for error transformation
+		responseTypeForMigration = endpointDef.RequestType
+	}
+
+	if responseTypeForMigration != nil || responseCapture.statusCode >= 400 {
 		if err := vah.migrateResponse(c, requestedVersion, responseCapture,
-			endpointDef.ResponseType, endpointDef.NestedArrays); err != nil {
+			responseTypeForMigration, endpointDef.NestedArrays); err != nil {
 			c.JSON(500, gin.H{"error": "Response migration failed", "details": err.Error()})
 			return
 		}
 	} else {
-		// No response type registered, write response as-is
+		// No response type registered and not an error, write response as-is
 		c.Writer = responseCapture.ResponseWriter
 		if responseCapture.body != nil {
 			c.Data(responseCapture.statusCode, "application/json", responseCapture.body)
