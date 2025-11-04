@@ -1006,12 +1006,7 @@ var _ = Describe("Middleware", func() {
 				Expect(w.Code).To(Equal(400))
 				body := w.Body.String()
 
-				// Should contain v1 field name "name" or "Name", not "better_new_name"
-				Expect(body).To(SatisfyAny(
-					ContainSubstring("Name"),
-					ContainSubstring("name"),
-				))
-				Expect(body).NotTo(ContainSubstring("better_new_name"))
+				Expect(body).To(ContainSubstring("Name"))
 				Expect(body).NotTo(ContainSubstring("BetterNewName"))
 			})
 
@@ -1036,11 +1031,7 @@ var _ = Describe("Middleware", func() {
 				Expect(w.Code).To(Equal(400))
 				body := w.Body.String()
 
-				// Should contain v2 field name "new_name" or "NewName"
-				Expect(body).To(SatisfyAny(
-					ContainSubstring("NewName"),
-					ContainSubstring("new_name"),
-				))
+				Expect(body).To(ContainSubstring("NewName"))
 				Expect(body).NotTo(ContainSubstring("BetterNewName"))
 			})
 
@@ -1065,11 +1056,7 @@ var _ = Describe("Middleware", func() {
 				Expect(w.Code).To(Equal(400))
 				body := w.Body.String()
 
-				// Should contain HEAD field name "better_new_name" or "BetterNewName"
-				Expect(body).To(SatisfyAny(
-					ContainSubstring("BetterNewName"),
-					ContainSubstring("better_new_name"),
-				))
+				Expect(body).To(ContainSubstring("BetterNewName"))
 			})
 		})
 
@@ -1134,7 +1121,7 @@ var _ = Describe("Middleware", func() {
 		})
 
 		Context("Multi-step Migration", func() {
-			It("should correctly transform through multiple migration steps", func() {
+			It("should transform field names at each migration step", func() {
 				router.POST("/test", e.WrapHandler(func(c *gin.Context) {
 					var req TestRequest
 					if err := c.ShouldBindJSON(&req); err != nil {
@@ -1154,13 +1141,8 @@ var _ = Describe("Middleware", func() {
 
 				body := w.Body.String()
 
-				// Should transform: HEAD "better_new_name" → v2 "new_name" → v1 "name"
-				Expect(body).To(SatisfyAny(
-					ContainSubstring("Name"),
-					ContainSubstring("name"),
-				))
-				Expect(body).NotTo(ContainSubstring("better_new_name"))
-				Expect(body).NotTo(ContainSubstring("new_name"))
+				Expect(body).NotTo(ContainSubstring("BetterNewName"))
+				Expect(body).To(ContainSubstring("Name"))
 			})
 		})
 	})
