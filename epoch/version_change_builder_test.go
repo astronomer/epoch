@@ -552,7 +552,7 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 					"better_new_name": "old_name",
 				}
 
-				err = transformArrayField(&node, "fields", fieldsNode, fieldMapping)
+				err = transformStringsInArrayField(&node, "fields", fieldsNode, fieldMapping)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Verify transformation
@@ -574,7 +574,7 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 					"better_new_name": "name",
 				}
 
-				err = transformArrayField(&node, "data", dataNode, fieldMapping)
+				err = transformStringsInArrayField(&node, "data", dataNode, fieldMapping)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Verify string was transformed but other types preserved
@@ -597,7 +597,7 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 					"field1": "field2",
 				}
 
-				err = transformArrayField(&node, "fields", fieldsNode, fieldMapping)
+				err = transformStringsInArrayField(&node, "fields", fieldsNode, fieldMapping)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Should still be an empty array
@@ -618,7 +618,7 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 					"better_new_name": "old_name",
 				}
 
-				err = transformArrayField(&node, "items", itemsNode, fieldMapping)
+				err = transformStringsInArrayField(&node, "items", itemsNode, fieldMapping)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Verify objects in array were recursively transformed

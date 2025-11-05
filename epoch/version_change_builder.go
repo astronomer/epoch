@@ -421,7 +421,7 @@ func transformStringsInNode(node *ast.Node, fieldMapping map[string]string) erro
 
 			case ast.V_ARRAY:
 				// Check if array contains strings that need transformation
-				if err := transformArrayField(node, key, fieldNode, fieldMapping); err != nil {
+				if err := transformStringsInArrayField(node, key, fieldNode, fieldMapping); err != nil {
 					return err
 				}
 
@@ -449,8 +449,8 @@ func transformStringsInNode(node *ast.Node, fieldMapping map[string]string) erro
 	return nil
 }
 
-// transformArrayField handles transformation of array fields that may contain strings
-func transformArrayField(parentNode *ast.Node, key string, arrayNode *ast.Node, fieldMapping map[string]string) error {
+// transformStringsInArrayField handles transformation of array fields that may contain strings
+func transformStringsInArrayField(parentNode *ast.Node, key string, arrayNode *ast.Node, fieldMapping map[string]string) error {
 	length, err := arrayNode.Len()
 	if err != nil {
 		return err
