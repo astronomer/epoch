@@ -377,46 +377,119 @@ func (b *responseToPreviousVersionBuilder) Build() *VersionChange {
 // ============================================================================
 
 // transformErrorFieldNamesInResponse transforms field names in error messages
+// Works with any error response format by recursively processing all string fields
 func transformErrorFieldNamesInResponse(resp *ResponseInfo, fieldMapping map[string]string) error {
 	// Only transform validation errors (400 Bad Request)
 	if resp.StatusCode != 400 || resp.Body == nil {
 		return nil
 	}
 
-	errorNode := resp.Body.Get("error")
-	if errorNode == nil || !errorNode.Exists() {
+	// Recursively transform all string fields in the error response
+	return transformStringsInNode(resp.Body, fieldMapping)
+}
+
+// transformStringsInNode recursively transforms all string fields in an AST node
+// This works with any error format: {"error": "..."}, {"message": "..."}, RFC 7807, etc.
+func transformStringsInNode(node *ast.Node, fieldMapping map[string]string) error {
+	if node == nil || !node.Exists() {
 		return nil
 	}
 
-	// Handle simple string errors
-	if errorNode.TypeSafe() == ast.V_STRING {
-		errorStr, _ := errorNode.String()
-		transformedError := replaceFieldNamesInErrorString(errorStr, fieldMapping)
-		resp.SetField("error", transformedError)
-		return nil
-	}
+	nodeType := node.TypeSafe()
 
-	// Handle structured errors with message
-	if errorNode.TypeSafe() == ast.V_OBJECT {
-		messageNode := errorNode.Get("message")
-		if messageNode != nil && messageNode.Exists() {
-			messageStr, _ := messageNode.String()
-			transformedMessage := replaceFieldNamesInErrorString(messageStr, fieldMapping)
-
-			// Reconstruct error object
-			errorObj := map[string]interface{}{
-				"message": transformedMessage,
-			}
-
-			// Preserve code if it exists
-			codeNode := errorNode.Get("code")
-			if codeNode != nil && codeNode.Exists() {
-				code, _ := codeNode.String()
-				errorObj["code"] = code
-			}
-
-			resp.SetField("error", errorObj)
+	switch nodeType {
+	case ast.V_OBJECT:
+		// Get all keys and recursively transform each field
+		objMap, err := node.Map()
+		if err != nil {
+			return err
 		}
+
+		for key := range objMap {
+			fieldNode := node.Get(key)
+			if fieldNode == nil || !fieldNode.Exists() {
+				continue
+			}
+
+			fieldType := fieldNode.TypeSafe()
+			switch fieldType {
+			case ast.V_STRING:
+				// Transform string value
+				strVal, _ := fieldNode.String()
+				transformed := replaceFieldNamesInErrorString(strVal, fieldMapping)
+				node.SetAny(key, transformed)
+
+			case ast.V_ARRAY:
+				// Check if array contains strings that need transformation
+				if err := transformStringsInArrayField(node, key, fieldNode, fieldMapping); err != nil {
+					return err
+				}
+
+			case ast.V_OBJECT:
+				// Recursively process nested objects
+				transformStringsInNode(fieldNode, fieldMapping)
+			}
+		}
+
+	case ast.V_ARRAY:
+		// For arrays not in an object (root arrays), transform each element
+		length, err := node.Len()
+		if err != nil {
+			return err
+		}
+
+		for i := 0; i < length; i++ {
+			item := node.Index(i)
+			if item != nil && item.Exists() && item.TypeSafe() == ast.V_OBJECT {
+				transformStringsInNode(item, fieldMapping)
+			}
+		}
+	}
+
+	return nil
+}
+
+// transformStringsInArrayField handles transformation of array fields that may contain strings
+func transformStringsInArrayField(parentNode *ast.Node, key string, arrayNode *ast.Node, fieldMapping map[string]string) error {
+	length, err := arrayNode.Len()
+	if err != nil {
+		return err
+	}
+
+	// Check if any elements need transformation
+	needsTransform := false
+	newArray := make([]interface{}, length)
+
+	for i := 0; i < length; i++ {
+		item := arrayNode.Index(i)
+		if item == nil || !item.Exists() {
+			continue
+		}
+
+		itemType := item.TypeSafe()
+		if itemType == ast.V_STRING {
+			strVal, _ := item.String()
+			transformed := replaceFieldNamesInErrorString(strVal, fieldMapping)
+			newArray[i] = transformed
+			if transformed != strVal {
+				needsTransform = true
+			}
+		} else if itemType == ast.V_OBJECT {
+			// Recursively transform objects in arrays
+			transformStringsInNode(item, fieldMapping)
+			// Keep the original object node
+			val, _ := item.Interface()
+			newArray[i] = val
+		} else {
+			// Keep other types as-is
+			val, _ := item.Interface()
+			newArray[i] = val
+		}
+	}
+
+	// Only update the array if we transformed any strings
+	if needsTransform {
+		parentNode.SetAny(key, newArray)
 	}
 
 	return nil

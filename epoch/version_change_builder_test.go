@@ -213,4 +213,421 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 			Expect(migration).NotTo(BeNil())
 		})
 	})
+
+	Describe("Error Transformation Functions", func() {
+		Describe("toPascalCaseString", func() {
+			It("should convert snake_case to PascalCase", func() {
+				Expect(toPascalCaseString("user_name")).To(Equal("UserName"))
+				Expect(toPascalCaseString("first_name")).To(Equal("FirstName"))
+				Expect(toPascalCaseString("email_address")).To(Equal("EmailAddress"))
+			})
+
+			It("should handle single words", func() {
+				Expect(toPascalCaseString("name")).To(Equal("Name"))
+				Expect(toPascalCaseString("email")).To(Equal("Email"))
+			})
+
+			It("should handle empty strings", func() {
+				Expect(toPascalCaseString("")).To(Equal(""))
+			})
+
+			It("should handle common API naming conventions", func() {
+				Expect(toPascalCaseString("user_id")).To(Equal("UserId"))
+				Expect(toPascalCaseString("api_key")).To(Equal("ApiKey"))
+			})
+
+			It("should handle multiple underscores", func() {
+				Expect(toPascalCaseString("very_long_field_name")).To(Equal("VeryLongFieldName"))
+			})
+		})
+
+		Describe("replaceFieldNamesInErrorString", func() {
+			It("should replace field names in simple error messages", func() {
+				fieldMapping := map[string]string{
+					"better_new_name": "name",
+				}
+				input := "Field better_new_name is required"
+				output := replaceFieldNamesInErrorString(input, fieldMapping)
+				Expect(output).To(ContainSubstring("name"))
+				Expect(output).NotTo(ContainSubstring("better_new_name"))
+			})
+
+			It("should replace PascalCase field names", func() {
+				fieldMapping := map[string]string{
+					"better_new_name": "name",
+				}
+				input := "Field BetterNewName is required"
+				output := replaceFieldNamesInErrorString(input, fieldMapping)
+				Expect(output).To(ContainSubstring("Name"))
+				Expect(output).NotTo(ContainSubstring("BetterNewName"))
+			})
+
+			It("should replace quoted field names", func() {
+				fieldMapping := map[string]string{
+					"better_new_name": "old_name",
+				}
+				input := "Missing field 'better_new_name'"
+				output := replaceFieldNamesInErrorString(input, fieldMapping)
+				Expect(output).To(ContainSubstring("'old_name'"))
+				Expect(output).NotTo(ContainSubstring("'better_new_name'"))
+			})
+
+			It("should replace double-quoted field names", func() {
+				fieldMapping := map[string]string{
+					"new_field": "old_field",
+				}
+				input := `Field "new_field" is invalid`
+				output := replaceFieldNamesInErrorString(input, fieldMapping)
+				Expect(output).To(ContainSubstring(`"old_field"`))
+				Expect(output).NotTo(ContainSubstring(`"new_field"`))
+			})
+
+			It("should handle Gin validation error format", func() {
+				fieldMapping := map[string]string{
+					"better_new_name": "name",
+				}
+				input := "Key: 'User.BetterNewName' Error:Field validation for 'BetterNewName' failed"
+				output := replaceFieldNamesInErrorString(input, fieldMapping)
+				Expect(output).To(ContainSubstring("Key: 'User.Name'"))
+				Expect(output).NotTo(ContainSubstring("BetterNewName"))
+			})
+
+			It("should handle multiple field replacements", func() {
+				fieldMapping := map[string]string{
+					"new_email":   "email",
+					"new_address": "address",
+				}
+				input := "Fields new_email and new_address are required"
+				output := replaceFieldNamesInErrorString(input, fieldMapping)
+				Expect(output).To(ContainSubstring("email"))
+				Expect(output).To(ContainSubstring("address"))
+				Expect(output).NotTo(ContainSubstring("new_email"))
+				Expect(output).NotTo(ContainSubstring("new_address"))
+			})
+
+			It("should return unchanged string when no mappings match", func() {
+				fieldMapping := map[string]string{
+					"field1": "field2",
+				}
+				input := "This message has no matching fields"
+				output := replaceFieldNamesInErrorString(input, fieldMapping)
+				Expect(output).To(Equal(input))
+			})
+		})
+
+		Describe("transformStringsInNode", func() {
+			It("should transform string fields in simple objects", func() {
+				jsonData := `{"error": "Field BetterNewName is required"}`
+				node, err := sonic.Get([]byte(jsonData))
+				Expect(err).NotTo(HaveOccurred())
+				err = node.Load()
+				Expect(err).NotTo(HaveOccurred())
+
+				fieldMapping := map[string]string{
+					"better_new_name": "name",
+				}
+
+				err = transformStringsInNode(&node, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+
+				errorNode := node.Get("error")
+				errorStr, _ := errorNode.String()
+				Expect(errorStr).To(ContainSubstring("Name"))
+				Expect(errorStr).NotTo(ContainSubstring("BetterNewName"))
+			})
+
+			It("should transform nested object string fields", func() {
+				jsonData := `{
+					"error": {
+						"message": "Field BetterNewName is required",
+						"details": "The BetterNewName field cannot be empty"
+					}
+				}`
+				node, err := sonic.Get([]byte(jsonData))
+				Expect(err).NotTo(HaveOccurred())
+				err = node.Load()
+				Expect(err).NotTo(HaveOccurred())
+
+				fieldMapping := map[string]string{
+					"better_new_name": "name",
+				}
+
+				err = transformStringsInNode(&node, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+
+				messageNode := node.Get("error").Get("message")
+				messageStr, _ := messageNode.String()
+				Expect(messageStr).To(ContainSubstring("Name"))
+
+				detailsNode := node.Get("error").Get("details")
+				detailsStr, _ := detailsNode.String()
+				Expect(detailsStr).To(ContainSubstring("Name"))
+			})
+
+			It("should transform strings in arrays", func() {
+				jsonData := `{"fields": ["BetterNewName", "OtherField"]}`
+				node, err := sonic.Get([]byte(jsonData))
+				Expect(err).NotTo(HaveOccurred())
+				err = node.Load()
+				Expect(err).NotTo(HaveOccurred())
+
+				fieldMapping := map[string]string{
+					"better_new_name": "name",
+				}
+
+				err = transformStringsInNode(&node, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+
+				fieldsNode := node.Get("fields")
+				Expect(fieldsNode.Exists()).To(BeTrue())
+
+				// Check that array was transformed
+				raw, _ := fieldsNode.Raw()
+				Expect(raw).To(ContainSubstring("Name"))
+				Expect(raw).NotTo(ContainSubstring("BetterNewName"))
+			})
+
+			It("should handle RFC 7807 Problem Details format", func() {
+				jsonData := `{
+					"type": "https://example.com/probs/validation-error",
+					"title": "Validation Error",
+					"status": 400,
+					"detail": "The field BetterNewName is required",
+					"instance": "/api/users"
+				}`
+				node, err := sonic.Get([]byte(jsonData))
+				Expect(err).NotTo(HaveOccurred())
+				err = node.Load()
+				Expect(err).NotTo(HaveOccurred())
+
+				fieldMapping := map[string]string{
+					"better_new_name": "name",
+				}
+
+				err = transformStringsInNode(&node, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+
+				detailNode := node.Get("detail")
+				detailStr, _ := detailNode.String()
+				Expect(detailStr).To(ContainSubstring("Name"))
+				Expect(detailStr).NotTo(ContainSubstring("BetterNewName"))
+			})
+
+			It("should preserve non-string fields", func() {
+				jsonData := `{
+					"message": "Field BetterNewName is required",
+					"statusCode": 400,
+					"timestamp": 1234567890,
+					"success": false
+				}`
+				node, err := sonic.Get([]byte(jsonData))
+				Expect(err).NotTo(HaveOccurred())
+				err = node.Load()
+				Expect(err).NotTo(HaveOccurred())
+
+				fieldMapping := map[string]string{
+					"better_new_name": "name",
+				}
+
+				err = transformStringsInNode(&node, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+
+				// String field should be transformed
+				messageNode := node.Get("message")
+				messageStr, _ := messageNode.String()
+				Expect(messageStr).To(ContainSubstring("Name"))
+
+				// Non-string fields should be preserved
+				statusNode := node.Get("statusCode")
+				statusInt, _ := statusNode.Int64()
+				Expect(statusInt).To(Equal(int64(400)))
+
+				timestampNode := node.Get("timestamp")
+				Expect(timestampNode.Exists()).To(BeTrue())
+
+				successNode := node.Get("success")
+				successBool, _ := successNode.Bool()
+				Expect(successBool).To(BeFalse())
+			})
+		})
+
+		Describe("transformErrorFieldNamesInResponse", func() {
+			It("should transform 400 error responses", func() {
+				jsonData := `{"error": "Field BetterNewName is required"}`
+				node, err := sonic.Get([]byte(jsonData))
+				Expect(err).NotTo(HaveOccurred())
+				err = node.Load()
+				Expect(err).NotTo(HaveOccurred())
+
+				resp := &ResponseInfo{
+					Body:       &node,
+					StatusCode: 400,
+				}
+
+				fieldMapping := map[string]string{
+					"better_new_name": "name",
+				}
+
+				err = transformErrorFieldNamesInResponse(resp, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+
+				errorNode := resp.Body.Get("error")
+				errorStr, _ := errorNode.String()
+				Expect(errorStr).To(ContainSubstring("Name"))
+			})
+
+			It("should not transform non-400 responses", func() {
+				jsonData := `{"error": "Field BetterNewName is required"}`
+				node, err := sonic.Get([]byte(jsonData))
+				Expect(err).NotTo(HaveOccurred())
+				err = node.Load()
+				Expect(err).NotTo(HaveOccurred())
+
+				resp := &ResponseInfo{
+					Body:       &node,
+					StatusCode: 500, // Not a 400
+				}
+
+				fieldMapping := map[string]string{
+					"better_new_name": "name",
+				}
+
+				err = transformErrorFieldNamesInResponse(resp, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Should remain unchanged
+				errorNode := resp.Body.Get("error")
+				errorStr, _ := errorNode.String()
+				Expect(errorStr).To(ContainSubstring("BetterNewName"))
+			})
+
+			It("should handle nil body gracefully", func() {
+				resp := &ResponseInfo{
+					Body:       nil,
+					StatusCode: 400,
+				}
+
+				fieldMapping := map[string]string{
+					"better_new_name": "name",
+				}
+
+				err := transformErrorFieldNamesInResponse(resp, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should handle empty field mapping", func() {
+				jsonData := `{"error": "Some error message"}`
+				node, err := sonic.Get([]byte(jsonData))
+				Expect(err).NotTo(HaveOccurred())
+				err = node.Load()
+				Expect(err).NotTo(HaveOccurred())
+
+				resp := &ResponseInfo{
+					Body:       &node,
+					StatusCode: 400,
+				}
+
+				fieldMapping := map[string]string{} // Empty mapping
+
+				err = transformErrorFieldNamesInResponse(resp, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Should remain unchanged
+				errorNode := resp.Body.Get("error")
+				errorStr, _ := errorNode.String()
+				Expect(errorStr).To(Equal("Some error message"))
+			})
+		})
+
+		Describe("transformArrayField", func() {
+			It("should transform string arrays", func() {
+				jsonData := `{"fields": ["BetterNewName", "OtherField", "Name"]}`
+				node, err := sonic.Get([]byte(jsonData))
+				Expect(err).NotTo(HaveOccurred())
+				err = node.Load()
+				Expect(err).NotTo(HaveOccurred())
+
+				fieldsNode := node.Get("fields")
+				fieldMapping := map[string]string{
+					"better_new_name": "old_name",
+				}
+
+				err = transformStringsInArrayField(&node, "fields", fieldsNode, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify transformation
+				updatedFieldsNode := node.Get("fields")
+				raw, _ := updatedFieldsNode.Raw()
+				Expect(raw).To(ContainSubstring("OldName"))
+				Expect(raw).NotTo(ContainSubstring("BetterNewName"))
+			})
+
+			It("should handle mixed-type arrays", func() {
+				jsonData := `{"data": ["BetterNewName", 123, true, {"field": "value"}]}`
+				node, err := sonic.Get([]byte(jsonData))
+				Expect(err).NotTo(HaveOccurred())
+				err = node.Load()
+				Expect(err).NotTo(HaveOccurred())
+
+				dataNode := node.Get("data")
+				fieldMapping := map[string]string{
+					"better_new_name": "name",
+				}
+
+				err = transformStringsInArrayField(&node, "data", dataNode, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify string was transformed but other types preserved
+				updatedDataNode := node.Get("data")
+				raw, _ := updatedDataNode.Raw()
+				Expect(raw).To(ContainSubstring("Name"))
+				Expect(raw).To(ContainSubstring("123"))
+				Expect(raw).To(ContainSubstring("true"))
+			})
+
+			It("should handle empty arrays", func() {
+				jsonData := `{"fields": []}`
+				node, err := sonic.Get([]byte(jsonData))
+				Expect(err).NotTo(HaveOccurred())
+				err = node.Load()
+				Expect(err).NotTo(HaveOccurred())
+
+				fieldsNode := node.Get("fields")
+				fieldMapping := map[string]string{
+					"field1": "field2",
+				}
+
+				err = transformStringsInArrayField(&node, "fields", fieldsNode, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Should still be an empty array
+				updatedFieldsNode := node.Get("fields")
+				length, _ := updatedFieldsNode.Len()
+				Expect(length).To(Equal(0))
+			})
+
+			It("should recursively transform objects in arrays", func() {
+				jsonData := `{"items": [{"name": "BetterNewName"}, {"name": "OtherField"}]}`
+				node, err := sonic.Get([]byte(jsonData))
+				Expect(err).NotTo(HaveOccurred())
+				err = node.Load()
+				Expect(err).NotTo(HaveOccurred())
+
+				itemsNode := node.Get("items")
+				fieldMapping := map[string]string{
+					"better_new_name": "old_name",
+				}
+
+				err = transformStringsInArrayField(&node, "items", itemsNode, fieldMapping)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify objects in array were recursively transformed
+				// String replacement converts BetterNewName → OldName (PascalCase)
+				updatedItemsNode := node.Get("items")
+				raw, _ := updatedItemsNode.Raw()
+				Expect(raw).To(ContainSubstring("OldName"))
+				Expect(raw).NotTo(ContainSubstring("BetterNewName"))
+			})
+		})
+	})
 })
