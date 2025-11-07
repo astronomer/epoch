@@ -309,7 +309,7 @@ func TestVersionTransformer_CloneSchema(t *testing.T) {
 		Required: []string{"field1"},
 	}
 
-	clone := cloneSchema(original)
+	clone := CloneSchema(original)
 
 	// Verify clone is different object
 	if clone == original {
