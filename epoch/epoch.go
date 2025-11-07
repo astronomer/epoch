@@ -283,19 +283,7 @@ func (cb *EpochBuilder) Build() (*Epoch, error) {
 		return nil, fmt.Errorf("at least one version must be specified")
 	}
 
-	// Associate changes with their from-versions
-	// This is needed for schema generation to find applicable changes
-	for _, change := range cb.changes {
-		// Find the version that this change migrates from
-		for _, version := range cb.versions {
-			if version.Equal(change.FromVersion()) {
-				version.Changes = append(version.Changes, change)
-				break
-			}
-		}
-	}
-
-	// Create version bundle
+	// Create version bundle (without changes associated yet to avoid validation errors)
 	versionBundle, err := NewVersionBundle(cb.versions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create version bundle: %w", err)
@@ -305,6 +293,18 @@ func (cb *EpochBuilder) Build() (*Epoch, error) {
 	migrationChain, err := NewMigrationChain(cb.changes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create migration chain: %w", err)
+	}
+
+	// Associate changes with their from-versions AFTER validation and cycle detection
+	// This is needed for schema generation to find applicable changes
+	for _, change := range cb.changes {
+		// Find the version that this change migrates from
+		for _, version := range cb.versions {
+			if version.Equal(change.FromVersion()) {
+				version.Changes = append(version.Changes, change)
+				break
+			}
+		}
 	}
 
 	return &Epoch{
