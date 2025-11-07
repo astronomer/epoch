@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"reflect"
 	"time"
 
 	"github.com/astronomer/epoch/epoch"
@@ -88,58 +89,138 @@ func main() {
 		TypeRegistry:  epochInstance.EndpointRegistry(),
 		OutputFormat:  "yaml",
 	})
-	_ = generator // Will be used in future examples
 
 	fmt.Println("✓ Created OpenAPI schema generator")
 	fmt.Println()
 
-	// For this example, we'll generate schemas without a base spec
-	// In a real scenario, you'd load your existing OpenAPI spec from swag
-	fmt.Println("📝 Schema Generation Process:")
-	fmt.Println("  1. TypeParser uses reflection to introspect Go structs")
-	fmt.Println("  2. Extracts JSON tags, binding tags, validate tags")
-	fmt.Println("  3. Generates OpenAPI schemas with proper constraints")
-	fmt.Println("  4. Applies version transformations (add/remove/rename fields)")
-	fmt.Println("  5. Creates versioned component schemas")
+	// Generate schemas for each type and version
+	fmt.Println("📝 Generating schemas for UserResponse type...")
 	fmt.Println()
 
-	// Demonstrate type parsing
-	fmt.Println("🔍 Example: Parsing UserResponse type")
-	fmt.Println("   Go Struct:")
-	fmt.Println("     type UserResponse struct {")
-	fmt.Println("       ID       int    `json:\"id,omitempty\" validate:\"required\"`")
-	fmt.Println("       FullName string `json:\"full_name\" validate:\"required\"`")
-	fmt.Println("       Email    string `json:\"email,omitempty\" validate:\"required,email\"`")
-	fmt.Println("     }")
-	fmt.Println()
-	fmt.Println("   Generated OpenAPI Schema (HEAD):")
-	fmt.Println("     UserResponse:")
-	fmt.Println("       type: object")
-	fmt.Println("       required: [full_name, email]")
-	fmt.Println("       properties:")
-	fmt.Println("         id:")
-	fmt.Println("           type: integer")
-	fmt.Println("         full_name:")
-	fmt.Println("           type: string")
-	fmt.Println("         email:")
-	fmt.Println("           type: string")
-	fmt.Println("           format: email")
+	// Generate for HEAD version
+	headVersion := epochInstance.VersionBundle().GetHeadVersion()
+	headSchema, err := generator.GetSchemaForType(
+		reflect.TypeOf(UserResponse{}),
+		headVersion,
+		openapi.SchemaDirectionResponse,
+	)
+	if err != nil {
+		log.Fatalf("Failed to generate HEAD schema: %v", err)
+	}
+
+	fmt.Println("HEAD Version Schema:")
+	fmt.Printf("  Properties: %d\n", len(headSchema.Properties))
+	for name := range headSchema.Properties {
+		fmt.Printf("    - %s\n", name)
+	}
 	fmt.Println()
 
-	fmt.Println("🔄 Version Transformations:")
-	fmt.Println("   v1 (2024-01-01): Only id + name (full_name→name, no email)")
-	fmt.Println("   v2 (2024-06-01): id + name + email + status")
-	fmt.Println("   v3 (2025-01-01): id + full_name + email + phone + status")
-	fmt.Println("   HEAD: All fields (same as v3)")
+	// Generate for v1
+	v1Schema, err := generator.GetSchemaForType(
+		reflect.TypeOf(UserResponse{}),
+		v1,
+		openapi.SchemaDirectionResponse,
+	)
+	if err != nil {
+		log.Fatalf("Failed to generate v1 schema: %v", err)
+	}
+
+	fmt.Println("v1 (2024-01-01) Schema:")
+	fmt.Printf("  Properties: %d\n", len(v1Schema.Properties))
+	for name := range v1Schema.Properties {
+		fmt.Printf("    - %s\n", name)
+	}
 	fmt.Println()
 
-	fmt.Println("✓ Schema generation feature successfully demonstrated!")
+	// Generate for v2
+	v2Schema, err := generator.GetSchemaForType(
+		reflect.TypeOf(UserResponse{}),
+		v2,
+		openapi.SchemaDirectionResponse,
+	)
+	if err != nil {
+		log.Fatalf("Failed to generate v2 schema: %v", err)
+	}
+
+	fmt.Println("v2 (2024-06-01) Schema:")
+	fmt.Printf("  Properties: %d\n", len(v2Schema.Properties))
+	for name := range v2Schema.Properties {
+		fmt.Printf("    - %s\n", name)
+	}
 	fmt.Println()
-	fmt.Println("📚 Next Steps:")
-	fmt.Println("  1. Integrate with your existing spec generation pipeline")
-	fmt.Println("  2. Call generator.GenerateVersionedSpecs(baseSpec) after swag generation")
-	fmt.Println("  3. Write versioned specs to files (e.g., api_v1.yaml, api_v2.yaml)")
-	fmt.Println("  4. Use versioned specs to generate language-specific clients")
+
+	// Generate for v3
+	v3Schema, err := generator.GetSchemaForType(
+		reflect.TypeOf(UserResponse{}),
+		v3,
+		openapi.SchemaDirectionResponse,
+	)
+	if err != nil {
+		log.Fatalf("Failed to generate v3 schema: %v", err)
+	}
+
+	fmt.Println("v3 (2025-01-01) Schema:")
+	fmt.Printf("  Properties: %d\n", len(v3Schema.Properties))
+	for name := range v3Schema.Properties {
+		fmt.Printf("    - %s\n", name)
+	}
+	fmt.Println()
+
+	// Verify transformations
+	fmt.Println("✅ Verification:")
+	success := true
+
+	// v1 should have id, name, phone (no email, no status, no created_at)
+	if _, has := v1Schema.Properties["email"]; has {
+		fmt.Println("  ✗ v1 should not have email field")
+		success = false
+	} else {
+		fmt.Println("  ✓ v1 correctly excludes email field")
+	}
+
+	if _, has := v1Schema.Properties["status"]; has {
+		fmt.Println("  ✗ v1 should not have status field")
+		success = false
+	} else {
+		fmt.Println("  ✓ v1 correctly excludes status field")
+	}
+
+	// v2 should have renamed field
+	if _, has := v2Schema.Properties["name"]; has {
+		fmt.Println("  ✓ v2 has 'name' field (renamed from full_name)")
+	} else {
+		fmt.Println("  ✗ v2 should have 'name' field")
+		success = false
+	}
+
+	if _, has := v2Schema.Properties["full_name"]; has {
+		fmt.Println("  ✗ v2 should not have 'full_name' field (renamed to name)")
+		success = false
+	} else {
+		fmt.Println("  ✓ v2 correctly renamed full_name to name")
+	}
+
+	if _, has := v2Schema.Properties["phone"]; has {
+		fmt.Println("  ✗ v2 should not have phone field")
+		success = false
+	} else {
+		fmt.Println("  ✓ v2 correctly excludes phone field")
+	}
+
+	fmt.Println()
+
+	if success {
+		fmt.Println("🎉 All schema transformations working correctly!")
+	} else {
+		fmt.Println("⚠️  Some schema transformations failed")
+	}
+
+	fmt.Println()
+	fmt.Println("📚 This example demonstrates:")
+	fmt.Println("  ✓ Automatic schema generation from Go types")
+	fmt.Println("  ✓ Version-specific schema transformations")
+	fmt.Println("  ✓ Field additions, removals, and renames")
+	fmt.Println("  ✓ Validation of generated schemas")
 	fmt.Println()
 	fmt.Println("See epoch/openapi/README.md for full documentation")
 }
