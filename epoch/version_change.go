@@ -37,6 +37,11 @@ type VersionChange struct {
 	globalRequestInstructions  []*AlterRequestInstruction
 	globalResponseInstructions []*AlterResponseInstruction
 
+	// Operation metadata for OpenAPI schema generation
+	// These store the actual field operation lists (Add/Remove/Rename) for each type
+	requestOperationsByType  map[reflect.Type]RequestToNextVersionOperationList
+	responseOperationsByType map[reflect.Type]ResponseToPreviousVersionOperationList
+
 	// Version information
 	fromVersion *Version
 	toVersion   *Version
@@ -53,6 +58,8 @@ func NewVersionChange(description string, fromVersion, toVersion *Version, instr
 		alterResponseBySchemaInstructions:      make(map[reflect.Type][]*AlterResponseInstruction),
 		globalRequestInstructions:              make([]*AlterRequestInstruction, 0),
 		globalResponseInstructions:             make([]*AlterResponseInstruction, 0),
+		requestOperationsByType:                make(map[reflect.Type]RequestToNextVersionOperationList),
+		responseOperationsByType:               make(map[reflect.Type]ResponseToPreviousVersionOperationList),
 	}
 
 	vc.extractInstructionsIntoContainers()
@@ -220,6 +227,20 @@ func (vc *VersionChange) IsHiddenFromChangelog() bool {
 // SetHiddenFromChangelog sets whether this change should be hidden from changelogs
 func (vc *VersionChange) SetHiddenFromChangelog(hidden bool) {
 	vc.isHiddenFromChangelog = hidden
+}
+
+// GetRequestOperationsByType returns the request operations for a specific type
+// This is used by OpenAPI schema generation to apply field operations to schemas
+func (vc *VersionChange) GetRequestOperationsByType(targetType reflect.Type) (RequestToNextVersionOperationList, bool) {
+	ops, exists := vc.requestOperationsByType[targetType]
+	return ops, exists
+}
+
+// GetResponseOperationsByType returns the response operations for a specific type
+// This is used by OpenAPI schema generation to apply field operations to schemas
+func (vc *VersionChange) GetResponseOperationsByType(targetType reflect.Type) (ResponseToPreviousVersionOperationList, bool) {
+	ops, exists := vc.responseOperationsByType[targetType]
+	return ops, exists
 }
 
 // MigrationChain manages a sequence of version changes

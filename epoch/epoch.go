@@ -47,6 +47,16 @@ func (c *Epoch) Middleware() gin.HandlerFunc {
 	return middleware.Middleware()
 }
 
+// VersionBundle returns the version bundle (for OpenAPI schema generation)
+func (c *Epoch) VersionBundle() *VersionBundle {
+	return c.versionBundle
+}
+
+// EndpointRegistry returns the endpoint registry (for OpenAPI schema generation)
+func (c *Epoch) EndpointRegistry() *EndpointRegistry {
+	return c.endpointRegistry
+}
+
 // HandlerWrapper wraps a handler and collects type information for endpoint registration
 type HandlerWrapper struct {
 	epoch        *Epoch
@@ -271,6 +281,18 @@ func (cb *EpochBuilder) Build() (*Epoch, error) {
 
 	if len(cb.versions) == 0 {
 		return nil, fmt.Errorf("at least one version must be specified")
+	}
+
+	// Associate changes with their from-versions
+	// This is needed for schema generation to find applicable changes
+	for _, change := range cb.changes {
+		// Find the version that this change migrates from
+		for _, version := range cb.versions {
+			if version.Equal(change.FromVersion()) {
+				version.Changes = append(version.Changes, change)
+				break
+			}
+		}
 	}
 
 	// Create version bundle

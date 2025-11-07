@@ -195,7 +195,24 @@ func (b *versionChangeBuilder) Build() *VersionChange {
 		})
 	}
 
-	return NewVersionChange(b.description, b.fromVersion, b.toVersion, instructions...)
+	// Create the VersionChange
+	vc := NewVersionChange(b.description, b.fromVersion, b.toVersion, instructions...)
+
+	// Populate operation metadata for OpenAPI schema generation
+	// This allows the schema generator to extract field operations (Add/Remove/Rename)
+	for _, tb := range b.typeOps {
+		for _, targetType := range tb.targetTypes {
+			// Store the operation lists for this type
+			if len(tb.requestToNextVersionOps) > 0 {
+				vc.requestOperationsByType[targetType] = tb.requestToNextVersionOps
+			}
+			if len(tb.responseToPreviousVersionOps) > 0 {
+				vc.responseOperationsByType[targetType] = tb.responseToPreviousVersionOps
+			}
+		}
+	}
+
+	return vc
 }
 
 // typeBuilder builds operations for specific types
