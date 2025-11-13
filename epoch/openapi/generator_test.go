@@ -177,9 +177,13 @@ func TestSchemaGenerator_CloneSpec(t *testing.T) {
 		t.Errorf("Info.Title doesn't match: got %s, want %s", clone.Info.Title, original.Info.Title)
 	}
 
-	// Check that components.schemas is a new map (should be empty)
-	if len(clone.Components.Schemas) != 0 {
-		t.Errorf("Expected empty schemas in clone, got %d", len(clone.Components.Schemas))
+	// Check that components.schemas are preserved from base spec
+	if len(clone.Components.Schemas) != 1 {
+		t.Errorf("Expected 1 schema in clone, got %d", len(clone.Components.Schemas))
+	}
+
+	if clone.Components.Schemas["TestType"] == nil {
+		t.Error("Expected 'TestType' schema to be preserved")
 	}
 }
 
@@ -248,6 +252,132 @@ func TestSchemaGenerator_Integration(t *testing.T) {
 
 	if schema.Properties["name"] == nil {
 		t.Error("Expected 'name' property")
+	}
+}
+
+// TestSchemaGenerator_SmartMerging tests that base schemas are preserved and transformations applied
+func TestSchemaGenerator_SmartMerging(t *testing.T) {
+	// Setup versions
+	v1, _ := epoch.NewDateVersion("2024-01-01")
+	headVersion := epoch.NewHeadVersion()
+	versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
+
+	// Create version change: remove 'email' field in v1
+	change := epoch.NewVersionChangeBuilder(v1, headVersion).
+		Description("Add email field").
+		ForType(TestUserResponse{}).
+		ResponseToPreviousVersion().
+		RemoveField("email").
+		Build()
+
+	v1.Changes = []epoch.VersionChangeInterface{change}
+
+	// Create registry
+	registry := epoch.NewEndpointRegistry()
+	registry.Register("GET", "/users/:id", &epoch.EndpointDefinition{
+		Method:       "GET",
+		PathPattern:  "/users/:id",
+		ResponseType: reflect.TypeOf(TestUserResponse{}),
+	})
+
+	// Create base spec with schema that has descriptions
+	baseSpec := &openapi3.T{
+		OpenAPI: "3.0.3",
+		Info: &openapi3.Info{
+			Title:   "Test API",
+			Version: "1.0.0",
+		},
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{
+				"TestUserResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"id": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type:        &openapi3.Types{"integer"},
+							Description: "User ID from base spec",
+						}),
+						"name": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type:        &openapi3.Types{"string"},
+							Description: "User name from base spec",
+						}),
+						"email": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type:        &openapi3.Types{"string"},
+							Description: "User email from base spec",
+						}),
+					},
+				}),
+				"ErrorResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"message": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type:        &openapi3.Types{"string"},
+							Description: "Error message",
+						}),
+					},
+				}),
+			},
+		},
+	}
+
+	// Create generator
+	config := SchemaGeneratorConfig{
+		VersionBundle: versionBundle,
+		TypeRegistry:  registry,
+	}
+	generator := NewSchemaGenerator(config)
+
+	// Generate HEAD version spec
+	headSpec, err := generator.GenerateSpecForVersion(baseSpec, headVersion)
+	if err != nil {
+		t.Fatalf("Failed to generate HEAD spec: %v", err)
+	}
+
+	// Verify HEAD spec has bare schema name
+	if headSpec.Components.Schemas["TestUserResponse"] == nil {
+		t.Error("HEAD spec should have TestUserResponse")
+	}
+
+	// Verify description is preserved
+	headSchema := headSpec.Components.Schemas["TestUserResponse"].Value
+	if headSchema.Properties["id"].Value.Description != "User ID from base spec" {
+		t.Error("Description should be preserved from base spec")
+	}
+
+	// Verify unmanaged schema is preserved
+	if headSpec.Components.Schemas["ErrorResponse"] == nil {
+		t.Error("HEAD spec should have ErrorResponse (unmanaged schema)")
+	}
+
+	// Generate v1 spec
+	v1Spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+	if err != nil {
+		t.Fatalf("Failed to generate v1 spec: %v", err)
+	}
+
+	// Verify v1 spec has versioned schema name only
+	if v1Spec.Components.Schemas["TestUserResponseV20240101"] == nil {
+		t.Error("v1 spec should have TestUserResponseV20240101")
+	}
+
+	// Verify bare name is NOT in v1 spec
+	if v1Spec.Components.Schemas["TestUserResponse"] != nil {
+		t.Error("v1 spec should NOT have bare TestUserResponse (only versioned)")
+	}
+
+	// Verify transformation was applied (email removed)
+	v1Schema := v1Spec.Components.Schemas["TestUserResponseV20240101"].Value
+	if v1Schema.Properties["email"] != nil {
+		t.Error("email field should be removed in v1")
+	}
+
+	// Verify description is still preserved after transformation
+	if v1Schema.Properties["id"].Value.Description != "User ID from base spec" {
+		t.Error("Description should be preserved after transformation")
+	}
+
+	// Verify unmanaged schema is preserved in v1
+	if v1Spec.Components.Schemas["ErrorResponse"] == nil {
+		t.Error("v1 spec should have ErrorResponse (unmanaged schema)")
 	}
 }
 

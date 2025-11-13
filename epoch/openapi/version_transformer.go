@@ -31,7 +31,7 @@ func (vt *VersionTransformer) TransformSchemaForVersion(
 	direction SchemaDirection,
 ) (*openapi3.Schema, error) {
 	// Clone the schema to avoid modifying the original
-	schema := cloneSchema(baseSchema)
+	schema := CloneSchema(baseSchema)
 
 	if targetVersion.IsHead {
 		// No transformation needed for HEAD version
@@ -398,8 +398,8 @@ func (vt *VersionTransformer) RenameFieldInSchema(schema *openapi3.Schema, oldNa
 	}
 }
 
-// cloneSchema creates a deep copy of an OpenAPI schema
-func cloneSchema(original *openapi3.Schema) *openapi3.Schema {
+// CloneSchema creates a deep copy of an OpenAPI schema
+func CloneSchema(original *openapi3.Schema) *openapi3.Schema {
 	if original == nil {
 		return nil
 	}
@@ -453,7 +453,14 @@ func cloneSchema(original *openapi3.Schema) *openapi3.Schema {
 	if original.Properties != nil {
 		clone.Properties = make(map[string]*openapi3.SchemaRef, len(original.Properties))
 		for k, v := range original.Properties {
-			clone.Properties[k] = v // Note: shallow copy of SchemaRef
+			// Deep clone each property's SchemaRef
+			if v.Value != nil {
+				clone.Properties[k] = openapi3.NewSchemaRef("", CloneSchema(v.Value))
+			} else if v.Ref != "" {
+				clone.Properties[k] = &openapi3.SchemaRef{Ref: v.Ref}
+			} else {
+				clone.Properties[k] = v
+			}
 		}
 	}
 

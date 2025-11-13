@@ -387,27 +387,16 @@ generate-client-v1:
 - VersionTransformer for bidirectional schema transformations
 - SchemaGenerator with version orchestration
 - Writer for YAML/JSON output
-- Comprehensive unit tests
-- Integration example
-- Documentation
 
-### ⚠️ Known Issues
+### 📋 Future Enhancements
 
-The `kin-openapi` library was recently updated to v0.133.0, which introduced breaking API changes:
+Optional improvements for future releases:
 
-1. `Schema.Type` changed from `string` to `*openapi3.Types`
-2. `Schema.AdditionalProperties` changed type
-3. Need to use `Type.Is(string)` instead of direct string comparison
-
-**Resolution needed**: Update all type comparisons and schema constructions to use the new API.
-
-### 🔜 Next Steps
-
-1. Fix compatibility with kin-openapi v0.133.0 API
-2. Complete version transformer operation extraction
-3. Run full integration tests with examples/advanced types
-4. Add Makefile integration examples
-5. Create client generation guide
+1. Add Makefile integration examples
+2. Create client generation guide with language-specific examples
+3. Support for more complex schema features (oneOf, anyOf, allOf)
+4. Performance optimizations for large schemas
+5. Schema diff visualization tools
 
 ## Troubleshooting
 
