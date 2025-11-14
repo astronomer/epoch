@@ -21,6 +21,18 @@ type SchemaGeneratorConfig struct {
 	// ComponentNamePrefix is added to all generated component names (e.g., "Astro")
 	// Results in component names like "AstroUser" instead of "User"
 	ComponentNamePrefix string
+
+	// SchemaNameMapper maps Go type names to OpenAPI schema names.
+	// Use this when your base spec uses different naming conventions.
+	// Common use case: Swag adds package prefixes to schema names.
+	//
+	// Example: func(name string) string { return "versionedapi." + name }
+	// Default: Identity function (returns name unchanged)
+	//
+	// Behavior:
+	// - If schema with mapped name exists in base spec → transforms it in place
+	// - If schema doesn't exist → generates from scratch using Go type name + version suffix
+	SchemaNameMapper func(typeName string) string
 }
 
 // SchemaDirection indicates whether we're generating request or response schemas

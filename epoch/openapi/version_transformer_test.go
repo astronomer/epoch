@@ -84,7 +84,7 @@ func TestVersionTransformer_TransformSchemaForVersion_ResponseRemoveField(t *tes
 		Build()
 
 	// Build version bundle with HEAD
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v2, v1})
+	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 	v2.Changes = []epoch.VersionChangeInterface{change}
 
 	transformer := NewVersionTransformer(vb)
@@ -142,7 +142,7 @@ func TestVersionTransformer_TransformSchemaForVersion_ResponseRenameField(t *tes
 		RenameField("name", "full_name").
 		Build()
 
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v2, v1})
+	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 	v2.Changes = []epoch.VersionChangeInterface{change}
 
 	transformer := NewVersionTransformer(vb)
@@ -198,7 +198,7 @@ func TestVersionTransformer_TransformSchemaForVersion_ResponseAddField(t *testin
 		RemoveField("status").
 		Build()
 
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v2, v1})
+	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 	v2.Changes = []epoch.VersionChangeInterface{change}
 
 	transformer := NewVersionTransformer(vb)
@@ -247,7 +247,7 @@ func TestVersionTransformer_TransformSchemaForVersion_MultipleChanges(t *testing
 	// v1 is oldest (no changes), v2 has the change
 	v2.Changes = []epoch.VersionChangeInterface{change}
 
-	vb, err := epoch.NewVersionBundle([]*epoch.Version{v2, v1})
+	vb, err := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 	if err != nil {
 		t.Fatalf("failed to create version bundle: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestVersionTransformer_ChangeAppliesToType(t *testing.T) {
 		RemoveField("email").
 		Build()
 
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v2, v1})
+	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 	transformer := NewVersionTransformer(vb)
 
 	// Should apply to TestUser
@@ -505,7 +505,7 @@ func TestVersionTransformer_NoOperationsForType(t *testing.T) {
 		RemoveField("field").
 		Build()
 
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v2, v1})
+	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 	v2.Changes = []epoch.VersionChangeInterface{change}
 
 	transformer := NewVersionTransformer(vb)

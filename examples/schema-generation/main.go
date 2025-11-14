@@ -279,7 +279,7 @@ type VerificationResults struct {
 }
 
 func main() {
-	fmt.Println("=== Epoch OpenAPI Schema Generation Example ===\n")
+	fmt.Println("=== Epoch OpenAPI Schema Generation Example ===")
 
 	// Define versions
 	v1, _ := epoch.NewDateVersion("2024-01-01")
@@ -305,8 +305,8 @@ func main() {
 
 	// Create Epoch instance
 	epochInstance, err := epoch.NewEpoch().
-		WithVersions(v1, v2, v3).
 		WithHeadVersion().
+		WithVersions(v1, v2, v3). // Versions in ascending order (oldest first)
 		WithChanges(v1ToV2, v2ToV3).
 		WithTypes(
 			CreateUserRequest{},
@@ -364,8 +364,8 @@ func main() {
 	}
 	fmt.Printf("  ✓ Generated %d versioned specs\n", len(versionedSpecs))
 
-	// Create output directory
-	fromScratchDir := "output/from_scratch"
+	// Create output directory relative to this example
+	fromScratchDir := filepath.Join("examples", "schema-generation", "output", "from_scratch")
 	if err := os.MkdirAll(fromScratchDir, 0755); err != nil {
 		log.Fatalf("Failed to create output directory: %v", err)
 	}
@@ -390,8 +390,8 @@ func main() {
 	}
 	fmt.Printf("  ✓ Generated %d versioned specs with smart merging\n", len(versionedSpecsWithBase))
 
-	// Create output directory
-	withExistingDir := "output/with_existing_spec"
+	// Create output directory relative to this example
+	withExistingDir := filepath.Join("examples", "schema-generation", "output", "with_existing_spec")
 	if err := os.MkdirAll(withExistingDir, 0755); err != nil {
 		log.Fatalf("Failed to create output directory: %v", err)
 	}
@@ -752,7 +752,7 @@ func main() {
 		fmt.Println("⚠️  Some tests failed. Check output above for details.")
 	}
 
-	fmt.Println("📁 Generated files: examples/schema-generation/output/")
+	fmt.Printf("📁 Generated files in: %s\n", filepath.Join("examples", "schema-generation", "output"))
 	fmt.Println()
 	fmt.Println("📚 This example demonstrates:")
 	fmt.Println("  ✓ Smart schema merging with base spec metadata")
@@ -762,4 +762,7 @@ func main() {
 	fmt.Println("  ✓ Full spec preservation (paths, security, tags)")
 	fmt.Println()
 	fmt.Println("See epoch/openapi/README.md for full documentation")
+	fmt.Println()
+	fmt.Println("💡 For Swag integration examples, see swag_integration_test.go")
+	fmt.Println("   Run: go test -v -run TestSwagIntegration")
 }
