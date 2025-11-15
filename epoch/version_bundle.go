@@ -64,9 +64,10 @@ func NewVersionBundle(versions []*Version) (*VersionBundle, error) {
 		}
 	}
 
-	// Validate that the oldest version (last in array) has no changes
-	if numVersions > 0 {
-		oldestVersion := regularVersions[numVersions-1]
+	// Validate that the oldest version (first in array) has no changes
+	// Exception: if there's only one version, it can have changes (to HEAD)
+	if numVersions > 1 {
+		oldestVersion := regularVersions[0]
 		if len(oldestVersion.Changes) > 0 {
 			return nil, fmt.Errorf("the oldest version '%s' cannot have version changes (it's the baseline with nothing to migrate from)",
 				oldestVersion.String())

@@ -203,7 +203,7 @@ func TestSchemaGenerator_Integration(t *testing.T) {
 		Build()
 
 	// Create Epoch instance
-	versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{v2, v1})
+	versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 
 	// Create registry
 	registry := epoch.NewEndpointRegistry()
@@ -354,24 +354,23 @@ func TestSchemaGenerator_SmartMerging(t *testing.T) {
 		t.Fatalf("Failed to generate v1 spec: %v", err)
 	}
 
-	// Verify v1 spec has versioned schema name only
-	if v1Spec.Components.Schemas["TestUserResponseV20240101"] == nil {
-		t.Error("v1 spec should have TestUserResponseV20240101")
-	}
-
-	// Verify bare name is NOT in v1 spec
-	if v1Spec.Components.Schemas["TestUserResponse"] != nil {
-		t.Error("v1 spec should NOT have bare TestUserResponse (only versioned)")
+	// NEW BEHAVIOR: Schema exists in base spec, so it's transformed in place
+	// Verify v1 spec has the schema with the SAME name (transformed in place)
+	if v1Spec.Components.Schemas["TestUserResponse"] == nil {
+		t.Error("v1 spec should have TestUserResponse (transformed in place)")
 	}
 
 	// Verify transformation was applied (email removed)
-	v1Schema := v1Spec.Components.Schemas["TestUserResponseV20240101"].Value
+	v1Schema := v1Spec.Components.Schemas["TestUserResponse"].Value
+	if v1Schema == nil {
+		t.Fatal("v1 schema value is nil")
+	}
 	if v1Schema.Properties["email"] != nil {
 		t.Error("email field should be removed in v1")
 	}
 
 	// Verify description is still preserved after transformation
-	if v1Schema.Properties["id"].Value.Description != "User ID from base spec" {
+	if v1Schema.Properties["id"] != nil && v1Schema.Properties["id"].Value.Description != "User ID from base spec" {
 		t.Error("Description should be preserved after transformation")
 	}
 
@@ -401,5 +400,339 @@ func BenchmarkTypeParser_ParseStruct(b *testing.B) {
 			b.Fatal(err)
 		}
 		tp.Reset()
+	}
+}
+
+// Test types for Swag integration tests
+type UpdateExampleRequest struct {
+	BetterNewName string `json:"betterNewName"`
+	Timezone      string `json:"timezone"`
+}
+
+type ExistingRequest struct {
+	Field1 string `json:"field1"`
+}
+
+type MissingRequest struct {
+	Field2 string `json:"field2"`
+}
+
+// Test 1: Transform existing Swag schemas with package prefix
+func TestSchemaGenerator_TransformSwagSchemas(t *testing.T) {
+	// Create base spec with Swag-style naming
+	baseSpec := &openapi3.T{
+		OpenAPI: "3.0.3",
+		Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{
+				"versionedapi.UpdateExampleRequest": openapi3.NewSchemaRef("", &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"betterNewName": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type: &openapi3.Types{"string"},
+						}),
+						"timezone": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type: &openapi3.Types{"string"},
+						}),
+					},
+				}),
+			},
+		},
+	}
+
+	// Setup versions and migrations
+	v1, _ := epoch.NewSemverVersion("1.0")
+	headVersion := epoch.NewHeadVersion()
+
+	change := epoch.NewVersionChangeBuilder(v1, headVersion).
+		Description("Add betterNewName and timezone fields").
+		ForType(UpdateExampleRequest{}).
+		ResponseToPreviousVersion().
+		RenameField("betterNewName", "name").
+		RemoveField("timezone").
+		Build()
+
+	vb, err := epoch.NewVersionBundle([]*epoch.Version{headVersion, v1})
+	if err != nil {
+		t.Fatalf("Failed to create version bundle: %v", err)
+	}
+	v1.Changes = []epoch.VersionChangeInterface{change}
+
+	// Configure with schema name mapper
+	registry := epoch.NewEndpointRegistry()
+	registry.Register("POST", "/examples", &epoch.EndpointDefinition{
+		Method:      "POST",
+		PathPattern: "/examples",
+		RequestType: reflect.TypeOf(UpdateExampleRequest{}),
+	})
+
+	config := SchemaGeneratorConfig{
+		VersionBundle: vb,
+		TypeRegistry:  registry,
+		SchemaNameMapper: func(name string) string {
+			return "versionedapi." + name
+		},
+	}
+
+	generator := NewSchemaGenerator(config)
+
+	// Generate v1.0 spec
+	v1Spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+	if err != nil {
+		t.Fatalf("Failed to generate v1 spec: %v", err)
+	}
+
+	// Verify: v1 schema transformed in place with correct fields
+	v1Schema := v1Spec.Components.Schemas["versionedapi.UpdateExampleRequest"]
+	if v1Schema == nil {
+		t.Fatal("v1 schema not found")
+	}
+	if v1Schema.Value == nil {
+		t.Fatal("v1 schema value is nil")
+	}
+
+	// Should have "name" (renamed from betterNewName)
+	if v1Schema.Value.Properties["name"] == nil {
+		t.Error("v1 schema should have 'name' field")
+	}
+	// Should NOT have "betterNewName"
+	if v1Schema.Value.Properties["betterNewName"] != nil {
+		t.Error("v1 schema should NOT have 'betterNewName' field")
+	}
+	// Should NOT have "timezone" (removed)
+	if v1Schema.Value.Properties["timezone"] != nil {
+		t.Error("v1 schema should NOT have 'timezone' field")
+	}
+
+	// Generate HEAD spec
+	headSpec, err := generator.GenerateSpecForVersion(baseSpec, headVersion)
+	if err != nil {
+		t.Fatalf("Failed to generate head spec: %v", err)
+	}
+
+	// Verify: HEAD schema is unchanged (no transformations)
+	headSchema := headSpec.Components.Schemas["versionedapi.UpdateExampleRequest"]
+	if headSchema == nil {
+		t.Fatal("HEAD schema not found")
+	}
+	if headSchema.Value.Properties["betterNewName"] == nil {
+		t.Error("HEAD schema should have 'betterNewName' field")
+	}
+	if headSchema.Value.Properties["timezone"] == nil {
+		t.Error("HEAD schema should have 'timezone' field")
+	}
+}
+
+// Test 2: Fallback to generation when schema doesn't exist
+func TestSchemaGenerator_FallbackToGeneration(t *testing.T) {
+	// Empty base spec (no schemas)
+	baseSpec := &openapi3.T{
+		OpenAPI: "3.0.3",
+		Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{},
+		},
+	}
+
+	v1, _ := epoch.NewSemverVersion("1.0")
+	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
+
+	registry := epoch.NewEndpointRegistry()
+	registry.Register("POST", "/examples", &epoch.EndpointDefinition{
+		Method:      "POST",
+		PathPattern: "/examples",
+		RequestType: reflect.TypeOf(UpdateExampleRequest{}),
+	})
+
+	config := SchemaGeneratorConfig{
+		VersionBundle: vb,
+		TypeRegistry:  registry,
+		SchemaNameMapper: func(name string) string {
+			return "versionedapi." + name
+		},
+	}
+
+	generator := NewSchemaGenerator(config)
+	v1Spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+	if err != nil {
+		t.Fatalf("Failed to generate v1 spec: %v", err)
+	}
+
+	// Should generate schema from scratch with versioned name
+	generatedSchema := v1Spec.Components.Schemas["UpdateExampleRequestV10"]
+	if generatedSchema == nil {
+		t.Error("Generated schema not found")
+	}
+	if generatedSchema != nil && generatedSchema.Value == nil {
+		t.Error("Generated schema value is nil")
+	}
+}
+
+// Test 3: Mixed scenario - some schemas exist, some don't
+func TestSchemaGenerator_MixedScenario(t *testing.T) {
+	baseSpec := &openapi3.T{
+		OpenAPI: "3.0.3",
+		Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{
+				// Only one schema exists
+				"versionedapi.ExistingRequest": openapi3.NewSchemaRef("", &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"field1": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type: &openapi3.Types{"string"},
+						}),
+					},
+				}),
+				// MissingRequest is NOT in base spec
+			},
+		},
+	}
+
+	v1, _ := epoch.NewSemverVersion("1.0")
+	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
+
+	registry := epoch.NewEndpointRegistry()
+	registry.Register("POST", "/existing", &epoch.EndpointDefinition{
+		Method:      "POST",
+		PathPattern: "/existing",
+		RequestType: reflect.TypeOf(ExistingRequest{}),
+	})
+	registry.Register("POST", "/missing", &epoch.EndpointDefinition{
+		Method:      "POST",
+		PathPattern: "/missing",
+		RequestType: reflect.TypeOf(MissingRequest{}),
+	})
+
+	config := SchemaGeneratorConfig{
+		VersionBundle: vb,
+		TypeRegistry:  registry,
+		SchemaNameMapper: func(name string) string {
+			return "versionedapi." + name
+		},
+	}
+
+	generator := NewSchemaGenerator(config)
+	v1Spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+	if err != nil {
+		t.Fatalf("Failed to generate v1 spec: %v", err)
+	}
+
+	// ExistingRequest: should be transformed in place
+	if v1Spec.Components.Schemas["versionedapi.ExistingRequest"] == nil {
+		t.Error("ExistingRequest should be transformed in place")
+	}
+
+	// MissingRequest: should be generated with versioned name
+	if v1Spec.Components.Schemas["MissingRequestV10"] == nil {
+		t.Error("MissingRequest should be generated with versioned name")
+	}
+}
+
+// Test 4: No package prefix (identity mapper)
+func TestSchemaGenerator_NoPackagePrefix(t *testing.T) {
+	baseSpec := &openapi3.T{
+		OpenAPI: "3.0.3",
+		Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{
+				"UpdateExampleRequest": openapi3.NewSchemaRef("", &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"name": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type: &openapi3.Types{"string"},
+						}),
+					},
+				}), // No prefix
+			},
+		},
+	}
+
+	v1, _ := epoch.NewSemverVersion("1.0")
+	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
+
+	registry := epoch.NewEndpointRegistry()
+	registry.Register("POST", "/examples", &epoch.EndpointDefinition{
+		Method:      "POST",
+		PathPattern: "/examples",
+		RequestType: reflect.TypeOf(UpdateExampleRequest{}),
+	})
+
+	config := SchemaGeneratorConfig{
+		VersionBundle: vb,
+		TypeRegistry:  registry,
+		// SchemaNameMapper is nil (defaults to identity)
+	}
+
+	generator := NewSchemaGenerator(config)
+	v1Spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+	if err != nil {
+		t.Fatalf("Failed to generate v1 spec: %v", err)
+	}
+
+	// Should transform with same name
+	if v1Spec.Components.Schemas["UpdateExampleRequest"] == nil {
+		t.Error("UpdateExampleRequest should be transformed with same name")
+	}
+}
+
+// Test 5: Preserves descriptions and metadata from base spec
+func TestSchemaGenerator_PreservesMetadata(t *testing.T) {
+	baseSpec := &openapi3.T{
+		OpenAPI: "3.0.3",
+		Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{
+				"versionedapi.TestUserResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
+					Type:        &openapi3.Types{"object"},
+					Description: "User response from Swag",
+					Properties: map[string]*openapi3.SchemaRef{
+						"name": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type:        &openapi3.Types{"string"},
+							Description: "User name from Swag",
+						}),
+						"id": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type:        &openapi3.Types{"integer"},
+							Description: "User ID from Swag",
+						}),
+					},
+				}),
+			},
+		},
+	}
+
+	v1, _ := epoch.NewSemverVersion("1.0")
+	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
+
+	registry := epoch.NewEndpointRegistry()
+	registry.Register("GET", "/users", &epoch.EndpointDefinition{
+		Method:       "GET",
+		PathPattern:  "/users",
+		ResponseType: reflect.TypeOf(TestUserResponse{}),
+	})
+
+	config := SchemaGeneratorConfig{
+		VersionBundle: vb,
+		TypeRegistry:  registry,
+		SchemaNameMapper: func(name string) string {
+			return "versionedapi." + name
+		},
+	}
+
+	generator := NewSchemaGenerator(config)
+	v1Spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+	if err != nil {
+		t.Fatalf("Failed to generate v1 spec: %v", err)
+	}
+
+	schema := v1Spec.Components.Schemas["versionedapi.TestUserResponse"]
+	if schema == nil {
+		t.Fatal("Schema not found")
+	}
+	if schema.Value.Description != "User response from Swag" {
+		t.Errorf("Expected description 'User response from Swag', got '%s'", schema.Value.Description)
+	}
+	if schema.Value.Properties["name"] != nil && schema.Value.Properties["name"].Value.Description != "User name from Swag" {
+		t.Error("Field description not preserved")
 	}
 }

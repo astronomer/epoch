@@ -86,19 +86,20 @@ func (vt *VersionTransformer) getVersionChanges(
 			return changes // Version not found
 		}
 
-		// Walk forward collecting changes
-		for i := startIdx; i > 0; i-- {
+		// Walk forward collecting changes (ascending order: v1, v2, v3)
+		// Apply changes from versions after target toward HEAD
+		for i := startIdx + 1; i < len(versions); i++ {
 			currentVer := versions[i]
-			nextVer := versions[i-1]
+			prevVer := versions[i-1]
 
-			// Get changes from current to next
+			// Get changes from previous version to current
 			for _, vc := range currentVer.Changes {
 				if epochVC, ok := vc.(*epoch.VersionChange); ok {
 					// Check if this change applies to our type
 					if vt.changeAppliesToType(epochVC, targetType, SchemaDirectionRequest) {
 						changes = append(changes, versionChange{
-							fromVersion: currentVer,
-							toVersion:   nextVer,
+							fromVersion: prevVer,
+							toVersion:   currentVer,
 							operation:   epochVC,
 							targetType:  targetType,
 						})
@@ -122,18 +123,28 @@ func (vt *VersionTransformer) getVersionChanges(
 			return changes // Version not found
 		}
 
-		// Walk backward collecting changes (HEAD is at index 0)
-		for i := 0; i <= endIdx; i++ {
+		// Walk backward collecting changes (ascending order: v1, v2, v3, with HEAD conceptually after)
+		// Apply changes from newest versions back toward AND INCLUDING target
+		for i := len(versions) - 1; i >= endIdx; i-- {
 			currentVer := versions[i]
 
-			// Get changes that migrate FROM this version
+			// Determine the "previous" version (towards older versions)
+			// If we're at the target, there's no previous version in the chain
+			var prevVer *epoch.Version
+			if i > 0 {
+				prevVer = versions[i-1]
+			} else {
+				prevVer = currentVer // Special case: v1 has changes "to" itself conceptually
+			}
+
+			// Get changes that migrate FROM this version (but apply in reverse)
 			for _, vc := range currentVer.Changes {
 				if epochVC, ok := vc.(*epoch.VersionChange); ok {
 					// Check if this change applies to our type
 					if vt.changeAppliesToType(epochVC, targetType, SchemaDirectionResponse) {
 						changes = append(changes, versionChange{
 							fromVersion: currentVer,
-							toVersion:   epochVC.ToVersion(),
+							toVersion:   prevVer,
 							operation:   epochVC,
 							targetType:  targetType,
 						})
@@ -152,12 +163,14 @@ func (vt *VersionTransformer) changeAppliesToType(
 	targetType reflect.Type,
 	direction SchemaDirection,
 ) bool {
-	// Unwrap pointer
+	if targetType == nil {
+		return false
+	}
+
 	if targetType.Kind() == reflect.Ptr {
 		targetType = targetType.Elem()
 	}
 
-	// Use public getter methods to check if operations exist for this type
 	if direction == SchemaDirectionRequest {
 		_, exists := vc.GetRequestOperationsByType(targetType)
 		return exists
