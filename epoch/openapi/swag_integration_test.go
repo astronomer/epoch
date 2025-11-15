@@ -1,13 +1,40 @@
-package main
+package openapi
 
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/astronomer/epoch/epoch"
-	"github.com/astronomer/epoch/epoch/openapi"
 	"github.com/getkin/kin-openapi/openapi3"
 )
+
+// Test types for Swag integration tests
+type swagTestCreateUserRequest struct {
+	FullName string `json:"full_name" binding:"required,max=100"`
+	Email    string `json:"email" binding:"required,email"`
+	Phone    string `json:"phone,omitempty"`
+	Status   string `json:"status" binding:"required,oneof=active inactive pending suspended"`
+}
+
+type swagTestUserResponse struct {
+	ID        int        `json:"id,omitempty" validate:"required"`
+	FullName  string     `json:"full_name" validate:"required"`
+	Email     string     `json:"email,omitempty" validate:"required,email"`
+	Phone     string     `json:"phone,omitempty"`
+	Status    string     `json:"status,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty" format:"date-time"`
+}
+
+type swagTestOrganizationResponse struct {
+	ID        string            `json:"id" validate:"required" example:"clmaxoarx000008l2c5ayb9pt"`
+	Name      string            `json:"name" validate:"required" example:"My organization"`
+	Product   string            `json:"product,omitempty" enums:"HOSTED,HYBRID" example:"HOSTED"`
+	Status    string            `json:"status,omitempty" enums:"ACTIVE,INACTIVE,SUSPENDED" example:"ACTIVE"`
+	CreatedAt *time.Time        `json:"createdAt" validate:"required" format:"date-time"`
+	UpdatedAt *time.Time        `json:"updatedAt" validate:"required" format:"date-time"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+}
 
 // TestSwagIntegration_Debug prints out what each version actually contains
 func TestSwagIntegration_Debug(t *testing.T) {
@@ -19,7 +46,7 @@ func TestSwagIntegration_Debug(t *testing.T) {
 	// Define version migrations
 	v1ToV2 := epoch.NewVersionChangeBuilder(v1, v2).
 		Description("Add email and status fields to User").
-		ForType(UserResponse{}, CreateUserRequest{}).
+		ForType(swagTestUserResponse{}, swagTestCreateUserRequest{}).
 		ResponseToPreviousVersion().
 		RemoveField("email").
 		RemoveField("status").
@@ -27,7 +54,7 @@ func TestSwagIntegration_Debug(t *testing.T) {
 
 	v2ToV3 := epoch.NewVersionChangeBuilder(v2, v3).
 		Description("Rename name to full_name, add phone").
-		ForType(UserResponse{}, CreateUserRequest{}).
+		ForType(swagTestUserResponse{}, swagTestCreateUserRequest{}).
 		ResponseToPreviousVersion().
 		RenameField("full_name", "name").
 		RemoveField("phone").
@@ -37,7 +64,7 @@ func TestSwagIntegration_Debug(t *testing.T) {
 		WithHeadVersion().
 		WithVersions(v1, v2, v3). // Versions in ascending order (oldest first)
 		WithChanges(v1ToV2, v2ToV3).
-		WithTypes(UserResponse{}).
+		WithTypes(swagTestUserResponse{}).
 		Build()
 
 	if err != nil {
@@ -47,7 +74,7 @@ func TestSwagIntegration_Debug(t *testing.T) {
 	epochInstance.EndpointRegistry().Register("GET", "/users/:id", &epoch.EndpointDefinition{
 		Method:       "GET",
 		PathPattern:  "/users/:id",
-		ResponseType: reflect.TypeOf(UserResponse{}),
+		ResponseType: reflect.TypeOf(swagTestUserResponse{}),
 	})
 
 	swagSpec := &openapi3.T{
@@ -55,7 +82,7 @@ func TestSwagIntegration_Debug(t *testing.T) {
 		Info:    &openapi3.Info{Title: "Test API", Version: "1.0.0"},
 		Components: &openapi3.Components{
 			Schemas: openapi3.Schemas{
-				"versionedapi.UserResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
+				"versionedapi.swagTestUserResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
 					Type: &openapi3.Types{"object"},
 					Properties: map[string]*openapi3.SchemaRef{
 						"id":         openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
@@ -70,7 +97,7 @@ func TestSwagIntegration_Debug(t *testing.T) {
 		},
 	}
 
-	generator := openapi.NewSchemaGenerator(openapi.SchemaGeneratorConfig{
+	generator := NewSchemaGenerator(SchemaGeneratorConfig{
 		VersionBundle:    epochInstance.VersionBundle(),
 		TypeRegistry:     epochInstance.EndpointRegistry(),
 		OutputFormat:     "yaml",
@@ -90,7 +117,7 @@ func TestSwagIntegration_Debug(t *testing.T) {
 			t.Logf("%s: not found", versionStr)
 			continue
 		}
-		schema := spec.Components.Schemas["versionedapi.UserResponse"]
+		schema := spec.Components.Schemas["versionedapi.swagTestUserResponse"]
 		if schema != nil && schema.Value != nil {
 			var fields []string
 			for fieldName := range schema.Value.Properties {
@@ -125,7 +152,7 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 	// Define version migrations (same as main.go)
 	v1ToV2 := epoch.NewVersionChangeBuilder(v1, v2).
 		Description("Add email and status fields to User").
-		ForType(UserResponse{}, CreateUserRequest{}).
+		ForType(swagTestUserResponse{}, swagTestCreateUserRequest{}).
 		ResponseToPreviousVersion().
 		RemoveField("email").
 		RemoveField("status").
@@ -133,7 +160,7 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 
 	v2ToV3 := epoch.NewVersionChangeBuilder(v2, v3).
 		Description("Rename name to full_name, add phone").
-		ForType(UserResponse{}, CreateUserRequest{}).
+		ForType(swagTestUserResponse{}, swagTestCreateUserRequest{}).
 		ResponseToPreviousVersion().
 		RenameField("full_name", "name").
 		RemoveField("phone").
@@ -145,9 +172,9 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 		WithVersions(v1, v2, v3). // Versions in ascending order (oldest first)
 		WithChanges(v1ToV2, v2ToV3).
 		WithTypes(
-			CreateUserRequest{},
-			UserResponse{},
-			OrganizationResponse{},
+			swagTestCreateUserRequest{},
+			swagTestUserResponse{},
+			swagTestOrganizationResponse{},
 		).
 		Build()
 
@@ -159,18 +186,18 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 	epochInstance.EndpointRegistry().Register("GET", "/users/:id", &epoch.EndpointDefinition{
 		Method:       "GET",
 		PathPattern:  "/users/:id",
-		ResponseType: reflect.TypeOf(UserResponse{}),
+		ResponseType: reflect.TypeOf(swagTestUserResponse{}),
 	})
 	epochInstance.EndpointRegistry().Register("POST", "/users", &epoch.EndpointDefinition{
 		Method:       "POST",
 		PathPattern:  "/users",
-		RequestType:  reflect.TypeOf(CreateUserRequest{}),
-		ResponseType: reflect.TypeOf(UserResponse{}),
+		RequestType:  reflect.TypeOf(swagTestCreateUserRequest{}),
+		ResponseType: reflect.TypeOf(swagTestUserResponse{}),
 	})
 	epochInstance.EndpointRegistry().Register("GET", "/organizations/:id", &epoch.EndpointDefinition{
 		Method:       "GET",
 		PathPattern:  "/organizations/:id",
-		ResponseType: reflect.TypeOf(OrganizationResponse{}),
+		ResponseType: reflect.TypeOf(swagTestOrganizationResponse{}),
 	})
 
 	// Create Swag-style base spec with package-prefixed schemas
@@ -185,7 +212,7 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 		Components: &openapi3.Components{
 			Schemas: openapi3.Schemas{
 				// Swag generates schemas with package prefix
-				"versionedapi.UserResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
+				"versionedapi.swagTestUserResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
 					Type:        &openapi3.Types{"object"},
 					Description: "User response (from Swag)",
 					Properties: map[string]*openapi3.SchemaRef{
@@ -216,7 +243,7 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 						}),
 					},
 				}),
-				"versionedapi.CreateUserRequest": openapi3.NewSchemaRef("", &openapi3.Schema{
+				"versionedapi.swagTestCreateUserRequest": openapi3.NewSchemaRef("", &openapi3.Schema{
 					Type:        &openapi3.Types{"object"},
 					Description: "Create user request (from Swag)",
 					Properties: map[string]*openapi3.SchemaRef{
@@ -234,7 +261,7 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 						}),
 					},
 				}),
-				"versionedapi.OrganizationResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
+				"versionedapi.swagTestOrganizationResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
 					Type:        &openapi3.Types{"object"},
 					Description: "Organization response (from Swag)",
 					Properties: map[string]*openapi3.SchemaRef{
@@ -254,7 +281,7 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 	}
 
 	// Configure generator with SchemaNameMapper for Swag
-	generator := openapi.NewSchemaGenerator(openapi.SchemaGeneratorConfig{
+	generator := NewSchemaGenerator(SchemaGeneratorConfig{
 		VersionBundle: epochInstance.VersionBundle(),
 		TypeRegistry:  epochInstance.EndpointRegistry(),
 		OutputFormat:  "yaml",
@@ -283,9 +310,9 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 		}
 
 		// Schema should exist with Swag name (transformed in place)
-		schema := headSpec.Components.Schemas["versionedapi.UserResponse"]
+		schema := headSpec.Components.Schemas["versionedapi.swagTestUserResponse"]
 		if schema == nil {
-			t.Fatal("versionedapi.UserResponse schema not found in HEAD")
+			t.Fatal("versionedapi.swagTestUserResponse schema not found in HEAD")
 		}
 
 		if schema.Value == nil {
@@ -310,9 +337,9 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 		}
 
 		// Schema should be transformed in place (same name)
-		schema := v3Spec.Components.Schemas["versionedapi.UserResponse"]
+		schema := v3Spec.Components.Schemas["versionedapi.swagTestUserResponse"]
 		if schema == nil {
-			t.Fatal("versionedapi.UserResponse schema not found in v3")
+			t.Fatal("versionedapi.swagTestUserResponse schema not found in v3")
 		}
 
 		if schema.Value == nil {
@@ -336,9 +363,9 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 			t.Fatal("v2 spec not found")
 		}
 
-		schema := v2Spec.Components.Schemas["versionedapi.UserResponse"]
+		schema := v2Spec.Components.Schemas["versionedapi.swagTestUserResponse"]
 		if schema == nil {
-			t.Fatal("versionedapi.UserResponse schema not found in v2")
+			t.Fatal("versionedapi.swagTestUserResponse schema not found in v2")
 		}
 
 		if schema.Value == nil {
@@ -371,9 +398,9 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 			t.Fatal("v1 spec not found")
 		}
 
-		schema := v1Spec.Components.Schemas["versionedapi.UserResponse"]
+		schema := v1Spec.Components.Schemas["versionedapi.swagTestUserResponse"]
 		if schema == nil {
-			t.Fatal("versionedapi.UserResponse schema not found in v1")
+			t.Fatal("versionedapi.swagTestUserResponse schema not found in v1")
 		}
 
 		if schema.Value == nil {
@@ -402,15 +429,15 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 	t.Run("schema_names_preserved_from_swag", func(t *testing.T) {
 		for versionStr, spec := range versionedSpecs {
 			// All versions should have the Swag-prefixed name
-			if spec.Components.Schemas["versionedapi.UserResponse"] == nil {
-				t.Errorf("%s: expected schema 'versionedapi.UserResponse' to exist", versionStr)
+			if spec.Components.Schemas["versionedapi.swagTestUserResponse"] == nil {
+				t.Errorf("%s: expected schema 'versionedapi.swagTestUserResponse' to exist", versionStr)
 			}
 
 			// Should NOT have versioned names like UserResponseV20240101
 			for name := range spec.Components.Schemas {
-				if name != "versionedapi.UserResponse" &&
-					name != "versionedapi.CreateUserRequest" &&
-					name != "versionedapi.OrganizationResponse" {
+				if name != "versionedapi.swagTestUserResponse" &&
+					name != "versionedapi.swagTestCreateUserRequest" &&
+					name != "versionedapi.swagTestOrganizationResponse" {
 					t.Errorf("%s: unexpected schema name %s (should preserve Swag names)", versionStr, name)
 				}
 			}
@@ -427,7 +454,7 @@ func TestSwagIntegration_PreservesMetadata(t *testing.T) {
 	// Simple migration that removes one field
 	change := epoch.NewVersionChangeBuilder(v1, headVersion).
 		Description("Add email field").
-		ForType(UserResponse{}).
+		ForType(swagTestUserResponse{}).
 		ResponseToPreviousVersion().
 		RemoveField("email").
 		Build()
@@ -436,7 +463,7 @@ func TestSwagIntegration_PreservesMetadata(t *testing.T) {
 		WithHeadVersion().
 		WithVersions(v1). // Only one version, so order doesn't matter
 		WithChanges(change).
-		WithTypes(UserResponse{}).
+		WithTypes(swagTestUserResponse{}).
 		Build()
 
 	if err != nil {
@@ -446,7 +473,7 @@ func TestSwagIntegration_PreservesMetadata(t *testing.T) {
 	epochInstance.EndpointRegistry().Register("GET", "/users/:id", &epoch.EndpointDefinition{
 		Method:       "GET",
 		PathPattern:  "/users/:id",
-		ResponseType: reflect.TypeOf(UserResponse{}),
+		ResponseType: reflect.TypeOf(swagTestUserResponse{}),
 	})
 
 	// Create Swag spec with rich metadata
@@ -459,7 +486,7 @@ func TestSwagIntegration_PreservesMetadata(t *testing.T) {
 		},
 		Components: &openapi3.Components{
 			Schemas: openapi3.Schemas{
-				"versionedapi.UserResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
+				"versionedapi.swagTestUserResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
 					Type:        &openapi3.Types{"object"},
 					Description: "User response with rich metadata from Swag",
 					Properties: map[string]*openapi3.SchemaRef{
@@ -485,7 +512,7 @@ func TestSwagIntegration_PreservesMetadata(t *testing.T) {
 		},
 	}
 
-	generator := openapi.NewSchemaGenerator(openapi.SchemaGeneratorConfig{
+	generator := NewSchemaGenerator(SchemaGeneratorConfig{
 		VersionBundle: epochInstance.VersionBundle(),
 		TypeRegistry:  epochInstance.EndpointRegistry(),
 		OutputFormat:  "yaml",
@@ -502,7 +529,7 @@ func TestSwagIntegration_PreservesMetadata(t *testing.T) {
 	// Test HEAD: all metadata preserved
 	t.Run("HEAD_preserves_all_metadata", func(t *testing.T) {
 		headSpec := versionedSpecs["head"]
-		schema := headSpec.Components.Schemas["versionedapi.UserResponse"]
+		schema := headSpec.Components.Schemas["versionedapi.swagTestUserResponse"]
 
 		if schema.Value.Description != "User response with rich metadata from Swag" {
 			t.Errorf("HEAD: schema description not preserved, got: %s", schema.Value.Description)
@@ -521,7 +548,7 @@ func TestSwagIntegration_PreservesMetadata(t *testing.T) {
 	// Test v1: metadata preserved even after field removal
 	t.Run("v1_preserves_metadata_after_transformation", func(t *testing.T) {
 		v1Spec := versionedSpecs["2024-01-01"]
-		schema := v1Spec.Components.Schemas["versionedapi.UserResponse"]
+		schema := v1Spec.Components.Schemas["versionedapi.swagTestUserResponse"]
 
 		// Schema description should be preserved
 		if schema.Value.Description != "User response with rich metadata from Swag" {

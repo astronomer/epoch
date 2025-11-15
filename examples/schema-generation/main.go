@@ -365,7 +365,7 @@ func main() {
 	fmt.Printf("  ✓ Generated %d versioned specs\n", len(versionedSpecs))
 
 	// Create output directory relative to this example
-	fromScratchDir := filepath.Join("examples", "schema-generation", "output", "from_scratch")
+	fromScratchDir := filepath.Join("output", "from_scratch")
 	if err := os.MkdirAll(fromScratchDir, 0755); err != nil {
 		log.Fatalf("Failed to create output directory: %v", err)
 	}
@@ -391,7 +391,7 @@ func main() {
 	fmt.Printf("  ✓ Generated %d versioned specs with smart merging\n", len(versionedSpecsWithBase))
 
 	// Create output directory relative to this example
-	withExistingDir := filepath.Join("examples", "schema-generation", "output", "with_existing_spec")
+	withExistingDir := filepath.Join("output", "with_existing_spec")
 	if err := os.MkdirAll(withExistingDir, 0755); err != nil {
 		log.Fatalf("Failed to create output directory: %v", err)
 	}
@@ -761,8 +761,4 @@ func main() {
 	fmt.Println("  ✓ Correct naming conventions (HEAD vs versioned)")
 	fmt.Println("  ✓ Full spec preservation (paths, security, tags)")
 	fmt.Println()
-	fmt.Println("See epoch/openapi/README.md for full documentation")
-	fmt.Println()
-	fmt.Println("💡 For Swag integration examples, see swag_integration_test.go")
-	fmt.Println("   Run: go test -v -run TestSwagIntegration")
 }
