@@ -26,6 +26,11 @@ func NewSchemaGenerator(config SchemaGeneratorConfig) *SchemaGenerator {
 		config.OutputFormat = "yaml"
 	}
 
+	// Default SchemaNameMapper to identity function
+	if config.SchemaNameMapper == nil {
+		config.SchemaNameMapper = func(name string) string { return name }
+	}
+
 	return &SchemaGenerator{
 		config:      &config,
 		typeParser:  NewTypeParser(),
@@ -61,11 +66,12 @@ func (sg *SchemaGenerator) GenerateVersionedSpecs(baseSpec *openapi3.T) (map[str
 }
 
 // GenerateSpecForVersion generates an OpenAPI spec for a specific version
+// Uses smart transform: transforms existing schemas, generates missing ones
 func (sg *SchemaGenerator) GenerateSpecForVersion(baseSpec *openapi3.T, version *epoch.Version) (*openapi3.T, error) {
 	// Clone the base spec
 	spec := sg.cloneSpec(baseSpec)
 
-	// Ensure components exist (schemas already copied via cloneSpec)
+	// Ensure components exist
 	if spec.Components == nil {
 		spec.Components = &openapi3.Components{}
 	}
@@ -73,64 +79,76 @@ func (sg *SchemaGenerator) GenerateSpecForVersion(baseSpec *openapi3.T, version 
 		spec.Components.Schemas = openapi3.Schemas{}
 	}
 
-	// Track managed base schema names (to remove from non-HEAD versions)
-	managedBaseNames := make(map[string]bool)
-
 	// Get all registered types
 	types := sg.getRegisteredTypes()
-	versionSuffix := sg.getVersionSuffix(version)
 
-	// Generate schemas for each type with smart merging
-	// Note: We use SchemaDirectionResponse for all types. The transformer will
-	// automatically use the appropriate operations (request or response) based on
-	// what's defined for each type in the version changes.
+	// Process each registered type
 	for _, typ := range types {
-		typeName := typ.Name()
-		managedBaseNames[typeName] = true
-
-		// Generate schema with smart merging (uses base schema if available)
-		schema, err := sg.generateSchemaForTypeAndVersion(baseSpec, typ, version)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate schema for %s: %w", typeName, err)
-		}
-
-		if schema != nil {
-			spec.Components.Schemas[typeName+versionSuffix] = openapi3.NewSchemaRef("", schema)
-		}
-	}
-
-	// Handle nested type components with smart merging
-	for name, schemaRef := range sg.typeParser.GetComponents() {
-		managedBaseNames[name] = true
-		componentName := name
-		if !version.IsHead {
-			componentName += sg.getVersionSuffix(version)
-		}
-
-		// Merge with base schema if it exists (keeps extra properties from base)
-		if baseSchema := sg.getBaseSchema(baseSpec, name); baseSchema != nil && schemaRef.Value != nil {
-			if baseSchema.Properties == nil {
-				baseSchema.Properties = make(map[string]*openapi3.SchemaRef)
-			}
-			// Overlay generated properties onto base schema properties
-			for k, v := range schemaRef.Value.Properties {
-				baseSchema.Properties[k] = v
-			}
-			spec.Components.Schemas[componentName] = openapi3.NewSchemaRef("", baseSchema)
-		} else {
-			spec.Components.Schemas[componentName] = schemaRef
-		}
-	}
-
-	// Remove managed base schema names from non-HEAD versions
-	// (HEAD keeps bare names, old versions only have versioned names)
-	if !version.IsHead {
-		for baseName := range managedBaseNames {
-			delete(spec.Components.Schemas, baseName)
+		if err := sg.processTypeForVersion(baseSpec, spec, typ, version); err != nil {
+			return nil, err
 		}
 	}
 
 	return spec, nil
+}
+
+// processTypeForVersion handles a single type with smart transform logic
+func (sg *SchemaGenerator) processTypeForVersion(
+	baseSpec *openapi3.T,
+	spec *openapi3.T,
+	typ reflect.Type,
+	version *epoch.Version,
+) error {
+	goTypeName := typ.Name()
+
+	// Map to schema name in spec (e.g., "versionedapi.UpdateExampleRequest")
+	mappedSchemaName := sg.config.SchemaNameMapper(goTypeName)
+
+	// Try to find existing schema in base spec
+	existingSchema := sg.findSchemaInSpec(baseSpec, mappedSchemaName)
+
+	if existingSchema != nil {
+		// TRANSFORM PATH: Schema exists, transform it in place
+		transformedSchema, err := sg.transformer.TransformSchemaForVersion(
+			existingSchema, typ, version, SchemaDirectionResponse)
+		if err != nil {
+			return fmt.Errorf("failed to transform schema %s: %w", mappedSchemaName, err)
+		}
+
+		// Replace with same name (preserves endpoint references)
+		spec.Components.Schemas[mappedSchemaName] = openapi3.NewSchemaRef("", transformedSchema)
+	} else {
+		// FALLBACK PATH: Schema doesn't exist, generate from scratch
+		generatedSchema, err := sg.GetSchemaForType(typ, version, SchemaDirectionResponse)
+		if err != nil {
+			return fmt.Errorf("failed to generate schema for %s: %w", goTypeName, err)
+		}
+
+		// Use versioned name for generated schemas
+		schemaKey := goTypeName
+		if !version.IsHead {
+			schemaKey += sg.getVersionSuffix(version)
+		}
+		spec.Components.Schemas[schemaKey] = openapi3.NewSchemaRef("", generatedSchema)
+	}
+
+	return nil
+}
+
+// findSchemaInSpec looks for a schema by name in the base spec
+// Returns cloned schema if found, nil if not found
+func (sg *SchemaGenerator) findSchemaInSpec(spec *openapi3.T, schemaName string) *openapi3.Schema {
+	if spec == nil || spec.Components == nil || spec.Components.Schemas == nil {
+		return nil
+	}
+
+	schemaRef, exists := spec.Components.Schemas[schemaName]
+	if !exists || schemaRef.Value == nil {
+		return nil
+	}
+
+	// Return a clone to avoid modifying the original
+	return CloneSchema(schemaRef.Value)
 }
 
 // GetSchemaForType generates a schema for a specific type at a specific version and direction
@@ -282,34 +300,6 @@ func (sg *SchemaGenerator) copySchemas(originalComponents *openapi3.Components) 
 		}
 	}
 	return schemas
-}
-
-// getBaseSchema retrieves and clones a schema from the base spec
-// Returns nil if schema doesn't exist
-func (sg *SchemaGenerator) getBaseSchema(baseSpec *openapi3.T, schemaName string) *openapi3.Schema {
-	if baseSpec.Components == nil || baseSpec.Components.Schemas == nil {
-		return nil
-	}
-	if schemaRef, exists := baseSpec.Components.Schemas[schemaName]; exists && schemaRef.Value != nil {
-		return CloneSchema(schemaRef.Value)
-	}
-	return nil
-}
-
-// generateSchemaForTypeAndVersion generates a schema for a type, using base schema if available
-// Note: We always use SchemaDirectionResponse. The transformer will automatically apply the
-// appropriate operations (request or response) based on what's defined for the type.
-func (sg *SchemaGenerator) generateSchemaForTypeAndVersion(
-	baseSpec *openapi3.T, typ reflect.Type, version *epoch.Version,
-) (*openapi3.Schema, error) {
-	// Try to get base schema first (preserves descriptions from swag)
-	if baseSchema := sg.getBaseSchema(baseSpec, typ.Name()); baseSchema != nil {
-		// Use base schema and apply transformations
-		return sg.transformer.TransformSchemaForVersion(baseSchema, typ, version, SchemaDirectionResponse)
-	}
-
-	// Fallback: generate from scratch using reflection
-	return sg.GetSchemaForType(typ, version, SchemaDirectionResponse)
 }
 
 // WriteVersionedSpecs writes all versioned specs to files
