@@ -123,21 +123,25 @@ func (vt *VersionTransformer) getVersionChanges(
 			return changes // Version not found
 		}
 
-		// Walk backward collecting changes (ascending order: v1, v2, v3, with HEAD conceptually after)
-		// Apply changes from newest versions back toward AND INCLUDING target
+		// Walk backward collecting changes from all versions >= target
+		// Changes are attached to the "FROM" version (e.g., v1→v2 change is on v1)
+		// We process them in reverse to transform schemas backward from HEAD to target
 		for i := len(versions) - 1; i >= endIdx; i-- {
 			currentVer := versions[i]
 
-			// Determine the "previous" version (towards older versions)
-			// If we're at the target, there's no previous version in the chain
+			// Determine previous version for the transformation
+			// This handles the case where we're at the oldest version (endIdx=0)
 			var prevVer *epoch.Version
 			if i > 0 {
 				prevVer = versions[i-1]
 			} else {
-				prevVer = currentVer // Special case: v1 has changes "to" itself conceptually
+				// At oldest version: if it has changes (against validation), we still process them
+				// The prevVer doesn't matter since changes describe transition away from this version
+				prevVer = currentVer
 			}
 
-			// Get changes that migrate FROM this version (but apply in reverse)
+			// Process changes on currentVer (which describe transitions FROM currentVer)
+			// These are applied in reverse for response transformation
 			for _, vc := range currentVer.Changes {
 				if epochVC, ok := vc.(*epoch.VersionChange); ok {
 					// Check if this change applies to our type

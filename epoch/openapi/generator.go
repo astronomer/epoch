@@ -89,13 +89,6 @@ func (sg *SchemaGenerator) GenerateSpecForVersion(baseSpec *openapi3.T, version 
 		}
 	}
 
-	// Handle nested type components
-	for name, schemaRef := range sg.typeParser.GetComponents() {
-		if err := sg.processComponentForVersion(baseSpec, spec, name, schemaRef, version); err != nil {
-			return nil, err
-		}
-	}
-
 	return spec, nil
 }
 
@@ -156,57 +149,6 @@ func (sg *SchemaGenerator) findSchemaInSpec(spec *openapi3.T, schemaName string)
 
 	// Return a clone to avoid modifying the original
 	return CloneSchema(schemaRef.Value)
-}
-
-// processComponentForVersion handles nested component schemas
-func (sg *SchemaGenerator) processComponentForVersion(
-	baseSpec *openapi3.T,
-	spec *openapi3.T,
-	componentName string,
-	schemaRef *openapi3.SchemaRef,
-	version *epoch.Version,
-) error {
-	// Map component name
-	mappedName := sg.config.SchemaNameMapper(componentName)
-
-	// Check if exists in base spec
-	existingSchema := sg.findSchemaInSpec(baseSpec, mappedName)
-
-	if existingSchema != nil {
-		// Transform existing
-		if schemaRef.Value != nil {
-			// Get type for the component (may need registry lookup)
-			// For now, use a generic approach
-			transformed, err := sg.transformer.TransformSchemaForVersion(
-				existingSchema, nil, version, SchemaDirectionResponse)
-			if err != nil {
-				return fmt.Errorf("failed to transform component %s: %w", mappedName, err)
-			}
-			spec.Components.Schemas[mappedName] = openapi3.NewSchemaRef("", transformed)
-		}
-	} else {
-		// Generate new with version suffix
-		outputName := componentName
-		if !version.IsHead {
-			outputName += sg.getVersionSuffix(version)
-		}
-
-		// Merge with base schema if it exists under original name
-		if baseSchema := sg.getBaseSchema(baseSpec, componentName); baseSchema != nil && schemaRef.Value != nil {
-			if baseSchema.Properties == nil {
-				baseSchema.Properties = make(map[string]*openapi3.SchemaRef)
-			}
-			// Overlay generated properties onto base schema properties
-			for k, v := range schemaRef.Value.Properties {
-				baseSchema.Properties[k] = v
-			}
-			spec.Components.Schemas[outputName] = openapi3.NewSchemaRef("", baseSchema)
-		} else {
-			spec.Components.Schemas[outputName] = schemaRef
-		}
-	}
-
-	return nil
 }
 
 // GetSchemaForType generates a schema for a specific type at a specific version and direction
@@ -358,18 +300,6 @@ func (sg *SchemaGenerator) copySchemas(originalComponents *openapi3.Components) 
 		}
 	}
 	return schemas
-}
-
-// getBaseSchema retrieves and clones a schema from the base spec
-// Returns nil if schema doesn't exist
-func (sg *SchemaGenerator) getBaseSchema(baseSpec *openapi3.T, schemaName string) *openapi3.Schema {
-	if baseSpec.Components == nil || baseSpec.Components.Schemas == nil {
-		return nil
-	}
-	if schemaRef, exists := baseSpec.Components.Schemas[schemaName]; exists && schemaRef.Value != nil {
-		return CloneSchema(schemaRef.Value)
-	}
-	return nil
 }
 
 // WriteVersionedSpecs writes all versioned specs to files
