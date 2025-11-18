@@ -164,10 +164,18 @@ type Response struct {
 ### Basic Integration
 
 ```go
-import "github.com/astronomer/epoch/epoch/openapi"
+import (
+    "fmt"
+    "log"
+    
+    "github.com/astronomer/epoch/epoch"
+    "github.com/astronomer/epoch/epoch/openapi"
+    "github.com/getkin/kin-openapi/openapi3"
+)
 
 // After creating your Epoch instance
 epochInstance, _ := epoch.NewEpoch().
+    WithHeadVersion().
     WithVersions(v1, v2, v3).
     WithChanges(userV1ToV2, userV2ToV3).
     WithTypes(UserResponse{}, CreateUserRequest{}).
@@ -175,13 +183,18 @@ epochInstance, _ := epoch.NewEpoch().
 
 // Create schema generator
 generator := openapi.NewSchemaGenerator(openapi.SchemaGeneratorConfig{
-    VersionBundle: epochInstance.VersionBundle,
-    TypeRegistry:  epochInstance.TypeRegistry,
+    VersionBundle: epochInstance.VersionBundle(),  // Note: method call
+    TypeRegistry:  epochInstance.EndpointRegistry(),  // Note: changed from TypeRegistry
     OutputFormat:  "yaml", // or "json"
 })
 
 // Load your existing OpenAPI spec (from swag or other tools)
-baseSpec, _ := loadOpenAPISpec("docs/api.yaml")
+loader := openapi3.NewLoader()
+loader.IsExternalRefsAllowed = true
+baseSpec, err := loader.LoadFromFile("docs/api.yaml")
+if err != nil {
+    log.Fatalf("Failed to load base spec: %v", err)
+}
 
 // Generate versioned specs
 versionedSpecs, err := generator.GenerateVersionedSpecs(baseSpec)
@@ -190,66 +203,101 @@ if err != nil {
 }
 
 // Write specs to files
-for version, spec := range versionedSpecs {
-    filename := fmt.Sprintf("docs/api_%s.yaml", version)
-    generator.WriteVersionedSpecs(map[string]*openapi3.T{version: spec}, filename)
+filenamePattern := "docs/api_%s.yaml"
+if err := generator.WriteVersionedSpecs(versionedSpecs, filenamePattern); err != nil {
+    log.Fatalf("Failed to write specs: %v", err)
+}
+
+fmt.Println("✓ Generated versioned OpenAPI specs")
+```
+
+### Swag Integration Guide
+
+This section provides a complete workflow for integrating Epoch's OpenAPI schema generator with Swag.
+
+#### Step 1: Add Swag Annotations
+
+Annotate handlers with Swag comments and register types with Epoch:
+
+```go
+// @Summary Get user by ID
+// @Success 200 {object} UserResponse
+// @Router /users/{id} [get]
+func (h *Handler) GetUser(c *gin.Context) {
+    epochInstance.WrapHandler(h.getUserImpl).
+        Returns(UserResponse{}).  // Must match @Success type
+        ToHandlerFunc()(c)
 }
 ```
 
-### Integration with Existing Spec Pipeline
+Types in `@Success`, `@Param body` annotations must match `.Returns()` and `.Accepts()` calls.
+
+#### Step 2: Generate Base Spec with Swag
+
+Run Swag to generate your base OpenAPI specification:
+
+```bash
+# Install swag if needed
+go install github.com/swaggo/swag/cmd/swag@latest
+
+# Generate OpenAPI spec (creates docs/swagger.json and docs/swagger.yaml)
+swag init -g cmd/api/main.go -o docs/swagger --parseDependency --parseInternal
+```
+
+This creates a base spec with:
+- All your endpoints (paths and operations)
+- Schema definitions with package prefixes (e.g., `versionedapi.UserResponse`)
+- Parameter definitions
+- Security schemes
+
+**Key Detail**: Swag names schemas using the package name as a prefix. For example, if your types are in the `versionedapi` package, the schema will be named `versionedapi.UserResponse`.
+
+#### Step 3: Configure Epoch Schema Generator
+
+Create a schema generation command:
 
 ```go
-// In your cmd/spec/main.go (after swag generation and v2→v3 conversion)
+// Configure with SchemaNameMapper to match Swag's naming
+generator := openapi.NewSchemaGenerator(openapi.SchemaGeneratorConfig{
+    VersionBundle: epochInstance.VersionBundle(),
+    TypeRegistry:  epochInstance.EndpointRegistry(),
+    OutputFormat:  "yaml",
+    SchemaNameMapper: func(typeName string) string {
+        return "versionedapi." + typeName  // Match Swag's package prefix
+    },
+})
 
-func generateEpochVersionedSpecs(logger *logging.Logger) error {
-    // Define your versions and migrations
-    v1, _ := epoch.NewDateVersion("2024-01-01")
-    v2, _ := epoch.NewDateVersion("2024-06-01")
-    
-    change := epoch.NewVersionChangeBuilder(v1, v2).
-        ForType(UserResponse{}).
-        ResponseToPreviousVersion().
-            RemoveField("email").
-        Build()
-    
-    // Create version bundle
-    versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{v2, v1})
-    v2.Changes = []epoch.VersionChangeInterface{change}
-    
-    // Create type registry (populated from your endpoint registrations)
-    registry := epoch.NewEndpointRegistry()
-    // ... register your endpoints ...
-    
-    // Create generator
-    generator := openapi.NewSchemaGenerator(openapi.SchemaGeneratorConfig{
-        VersionBundle: versionBundle,
-        TypeRegistry:  registry,
-        OutputFormat:  "yaml",
-    })
-    
-    // Load HEAD spec
-    baseSpec, err := loadOpenAPISpec("docs/public/v1alpha1/public_v1alpha1.yaml")
-    if err != nil {
-        return err
-    }
-    
-    // Generate versioned specs
-    versionedSpecs, err := generator.GenerateVersionedSpecs(baseSpec)
-    if err != nil {
-        return err
-    }
-    
-    // Write each version
-    for versionStr, spec := range versionedSpecs {
-        outPath := fmt.Sprintf("docs/public/v1alpha1/public_v1alpha1_%s.yaml", versionStr)
-        if err := writeOpenAPISpec(outPath, spec); err != nil {
-            return err
-        }
-        logger.Info("Generated versioned spec", "version", versionStr, "path", outPath)
-    }
-    
-    return nil
-}
+// Load base spec, generate, and write
+loader := openapi3.NewLoader()
+loader.IsExternalRefsAllowed = true
+baseSpec, _ := loader.LoadFromFile("docs/swagger/swagger.yaml")
+versionedSpecs, _ := generator.GenerateVersionedSpecs(baseSpec)
+generator.WriteVersionedSpecs(versionedSpecs, "docs/api/api_%s.yaml")
+```
+
+See "Basic Integration" section above for complete example with error handling and Epoch instance creation.
+
+#### Step 4: Generate Specs
+
+```bash
+go run cmd/schema/main.go
+# Outputs: docs/api/api_2024-01-01.yaml, api_2024-06-01.yaml, api_head.yaml, etc.
+```
+
+#### Common Issues
+
+**Schema Not Found**: Ensure `SchemaNameMapper` matches Swag's naming (check base spec with `grep "schemas:" docs/swagger/swagger.yaml`)
+
+**Type Not Registered**: Must call `.Returns()` or `.Accepts()` on `WrapHandler()`
+
+**Package Prefix Mismatch**: Update `SchemaNameMapper` to match what Swag generates (e.g., `"versionedapi." + typeName`)
+
+#### Makefile Integration
+
+```makefile
+generate-openapi:
+	swag init -g cmd/api/main.go -o docs/swagger --parseDependency
+	go run cmd/schema/main.go
 ```
 
 ## Smart Transform Behavior
@@ -266,158 +314,54 @@ func generateEpochVersionedSpecs(logger *logging.Logger) error {
    - ✅ Empty specs (generates schemas from scratch)
    - ✅ Mixed scenarios (some schemas exist, some don't)
 
-### Configuration
+### Schema Naming Conventions
 
-#### Basic Usage (No Package Prefix)
+The generator uses different naming strategies depending on whether schemas are transformed or generated:
 
-```go
-generator := openapi.NewSchemaGenerator(openapi.SchemaGeneratorConfig{
-    VersionBundle: epochInstance.VersionBundle(),
-    TypeRegistry:  epochInstance.EndpointRegistry(),
-    OutputFormat:  "yaml",
-    // SchemaNameMapper defaults to identity function
-})
-```
+**When transforming existing schemas** (found in base spec):
+- Uses the mapped schema name from `SchemaNameMapper`
+- Preserves the same name across all versions
+- Example: `versionedapi.UpdateExampleRequest` in all version files
 
-#### Swag Integration (Package Prefix)
+**When generating from scratch** (not found in base spec):
+- **HEAD version**: Uses bare type name (e.g., `UserResponse`)
+- **Versioned releases**: Uses type name + version suffix (e.g., `UserResponseV20240101`)
+- Version suffix format: `V` + date without hyphens (e.g., `V20240101`)
 
-When using Swag, schemas are named with package prefixes (e.g., `versionedapi.UpdateExampleRequest`). Configure the `SchemaNameMapper` to match:
+**Unmanaged schemas** (in base spec but not in TypeRegistry):
+- Preserved as-is in all versions
+- Examples: `ErrorResponse`, `PaginationMeta`, common utility types
+- Allows mixing Epoch-managed and standard schemas
 
-```go
-generator := openapi.NewSchemaGenerator(openapi.SchemaGeneratorConfig{
-    VersionBundle: epochInstance.VersionBundle(),
-    TypeRegistry:  epochInstance.EndpointRegistry(),
-    OutputFormat:  "yaml",
-    SchemaNameMapper: func(typeName string) string {
-        return "versionedapi." + typeName  // Match Swag's package prefix
-    },
-})
-```
+### Configuration Options
 
-#### Custom Naming Convention
+**`SchemaNameMapper`**: Maps Go type names to OpenAPI schema names (useful for Swag integration with package prefixes)
 
-```go
-SchemaNameMapper: func(typeName string) string {
-    // Any custom logic
-    return "myapp.models." + typeName
-}
-```
+**`ComponentNamePrefix`**: Adds prefix to version suffixes (e.g., `"Astro"` → `UserResponseAstroV20240101`)
 
-### How It Works
+**`OutputFormat`**: `"yaml"` or `"json"`
 
-**Example: Transforming a Swag Schema**
+**`IncludeMigrationMetadata`**: Adds `x-epoch-migrations` extensions to schemas
 
-Base spec (generated by Swag):
-```yaml
-components:
-  schemas:
-    versionedapi.UpdateExampleRequest:
-      properties:
-        betterNewName: { type: string }
-        timezone: { type: string }
-```
+### Two Generation Paths
 
-Epoch configuration:
-```go
-// Migration: v1.0 had "name" instead of "betterNewName", no timezone
-change := epoch.NewVersionChangeBuilder(v1, v2).
-    ForType(UpdateExampleRequest{}).
-    ResponseToPreviousVersion().
-    RenameField("betterNewName", "name").
-    RemoveField("timezone").
-    Build()
+**Path 1: Transform Existing Schema** (base spec has schema)
+- Preserves schema name across all versions via `SchemaNameMapper`
+- Transforms content per version based on migrations
+- Example: `versionedapi.UserResponse` in all versions, with different fields
 
-generator := openapi.NewSchemaGenerator(openapi.SchemaGeneratorConfig{
-    SchemaNameMapper: func(name string) string {
-        return "versionedapi." + name
-    },
-})
-```
-
-Generated v1.0 spec:
-```yaml
-components:
-  schemas:
-    versionedapi.UpdateExampleRequest:  # Same name, transformed content
-      properties:
-        name: { type: string }  # Renamed
-        # timezone removed
-```
+**Path 2: Generate From Scratch** (base spec missing schema)
+- HEAD: uses bare name (`UserResponse`)
+- Versioned: uses versioned name (`UserResponseV20240101`)
+- Content generated from Go types + migrations applied
 
 ## Version Transformations
 
-### How It Works
+**Response schemas** (HEAD → Client): Walk BACKWARD through version chain, applying `ResponseToPreviousVersion()` operations to represent what older clients receive.
 
-The generator applies Epoch version migrations to schemas:
+**Request schemas** (Client → HEAD): Walk FORWARD through version chain, applying `RequestToNextVersion()` operations to represent what older clients send.
 
-**For Response Schemas** (HEAD → Client):
-1. Start with HEAD version schema (parsed from Go struct)
-2. Walk BACKWARD through version chain
-3. Apply `ResponseToPreviousVersion()` operations in reverse
-4. Result: schema representing what older clients receive
-
-**For Request Schemas** (Client → HEAD):
-1. Start with HEAD version schema
-2. Walk FORWARD through version chain
-3. Apply `RequestToNextVersion()` operations in sequence
-4. Result: schema representing what older clients send
-
-### Example
-
-```go
-// HEAD version
-type UserResponse struct {
-    ID       int    `json:"id"`
-    FullName string `json:"full_name"`  // Renamed from "name" in v2
-    Email    string `json:"email"`       // Added in v2
-    Phone    string `json:"phone"`       // Added in v3
-}
-
-// Version migrations
-v1ToV2 := NewVersionChangeBuilder(v1, v2).
-    ForType(UserResponse{}).
-    ResponseToPreviousVersion().
-        RemoveField("email").  // v1 doesn't have email
-    Build()
-
-v2ToV3 := NewVersionChangeBuilder(v2, v3).
-    ForType(UserResponse{}).
-    ResponseToPreviousVersion().
-        RenameField("full_name", "name").  // v2 calls it "name"
-        RemoveField("phone").              // v2 doesn't have phone
-    Build()
-```
-
-**Generated Schemas**:
-
-```yaml
-# HEAD / v3
-UserResponseV20250101:
-  type: object
-  properties:
-    id: {type: integer}
-    full_name: {type: string}
-    email: {type: string}
-    phone: {type: string}
-
-# v2
-UserResponseV20240601:
-  type: object
-  properties:
-    id: {type: integer}
-    name: {type: string}        # Renamed from full_name
-    email: {type: string}
-    # phone removed
-
-# v1
-UserResponseV20240101:
-  type: object
-  properties:
-    id: {type: integer}
-    name: {type: string}
-    # email removed
-    # phone removed
-```
+Migrations stack: if v1→v2 removes email and v2→v3 renames name→full_name, then v1 sees both transformations applied (no email, uses name instead of full_name).
 
 ## Output Structure
 
@@ -431,98 +375,40 @@ docs/
         └── public_v1alpha1_2025-01-01.yaml   # v3 with transformed schemas
 ```
 
+## What Gets Preserved vs Transformed
+
+**Preserved across all versions:**
+- Paths, operations, security schemes, tags, descriptions
+- Parameters, headers, responses (non-schema components)
+- Unmanaged schemas (not in TypeRegistry): `ErrorResponse`, `PaginationMeta`, etc.
+
+**Transformed per version:**
+- Only schemas registered in Epoch's TypeRegistry via `.Returns()` / `.Accepts()`
+
+This lets you version your data models while keeping common error/pagination schemas and API docs unchanged.
+
 ## Client Generation
 
-Use versioned specs to generate language-specific clients:
+Use tools like `openapi-generator-cli` to generate language-specific clients from versioned specs:
 
-### TypeScript/JavaScript
+```bash
+# TypeScript
+openapi-generator-cli generate -i docs/api_2024-01-01.yaml -g typescript-axios -o clients/v1
 
-```json
-{
-  "scripts": {
-    "apigen:v1": "openapi-generator-cli generate -i ../../core/docs/public/v1alpha1/public_v1alpha1_2024-01-01.yaml -g typescript-axios -o src/generated/v1",
-    "apigen:v2": "openapi-generator-cli generate -i ../../core/docs/public/v1alpha1/public_v1alpha1_2024-06-01.yaml -g typescript-axios -o src/generated/v2",
-    "apigen:all": "npm run apigen:v1 && npm run apigen:v2"
-  }
-}
+# Go
+openapi-generator-cli generate -i docs/api_2024-01-01.yaml -g go -o clients/v1
+
+# Python
+openapi-generator-cli generate -i docs/api_2024-01-01.yaml -g python -o clients/v1
 ```
-
-### Go
-
-```makefile
-.PHONY: generate-client-v1
-generate-client-v1:
-	openapi-generator-cli generate \
-		-i ../core/docs/public/v1alpha1/public_v1alpha1_2024-01-01.yaml \
-		-g go \
-		-o v1/
-```
-
-### Python
-
-```makefile
-.PHONY: generate-client-v1
-generate-client-v1:
-	openapi-generator-cli generate \
-		-i ../core/docs/public/v1alpha1/public_v1alpha1_2024-01-01.yaml \
-		-g python \
-		-o v1/
-```
-
-## Current Status
-
-### ✅ Completed
-
-- Core package structure
-- TypeParser with full type support (primitives, structs, slices, maps, interfaces)
-- TagParser for validation constraints (binding + validate tags)
-- VersionTransformer for bidirectional schema transformations
-- SchemaGenerator with version orchestration
-- Writer for YAML/JSON output
-
-### 📋 Future Enhancements
-
-Optional improvements for future releases:
-
-1. Add Makefile integration examples
-2. Create client generation guide with language-specific examples
-3. Support for more complex schema features (oneOf, anyOf, allOf)
-4. Performance optimizations for large schemas
-5. Schema diff visualization tools
 
 ## Troubleshooting
 
-### "Component not found" errors
+**"Component not found"**: Register types via `WrapHandler().Returns(UserResponse{})`
 
-Make sure all types are registered via `WrapHandler().Returns()/.Accepts()`:
+**Missing validation constraints**: Use correct tag syntax: `binding:"required"` not `binding="required"`
 
-```go
-r.GET("/users/:id", epochInstance.WrapHandler(getUser).
-    Returns(UserResponse{}).  // ← Must register type
-    ToHandlerFunc())
-```
-
-### Missing validation constraints
-
-Check that struct tags use correct format:
-
-```go
-// ✅ Correct
-`json:"name" binding:"required,max=50"`
-
-// ❌ Wrong
-`json:"name" binding="required,max=50"`  // Wrong: = instead of :
-```
-
-### Schema not transforming
-
-Verify that VersionChange targets the correct type:
-
-```go
-// Must match exact type used in WrapHandler()
-ForType(UserResponse{})  // ✅ Correct
-ForType(&UserResponse{}) // ❌ Different type (pointer)
-```
+**Schema not transforming**: Ensure `ForType(UserResponse{})` matches the exact type in `WrapHandler()` (not pointer)
 
 ## Contributing
 
