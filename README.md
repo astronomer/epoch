@@ -161,34 +161,36 @@ migration := epoch.NewVersionChangeBuilder(v1, v2).
 
 ## Type-Based Routing
 
-Epoch requires **explicit type registration** at endpoint setup:
+Epoch requires **explicit type registration** at endpoint setup. When you call `ToHandlerFunc(method, path)`, it immediately registers the endpoint with its type information in Epoch's internal registry.
 
 ```go
-// Register endpoints with type information
+// Register endpoints with type information (method and path required for immediate registration)
 r.GET("/users/:id", 
     epochInstance.WrapHandler(getUser).
         Returns(User{}).                    // Response type
-        ToHandlerFunc())
+        ToHandlerFunc("GET", "/users/:id")) // Registers endpoint immediately
 
 r.POST("/users", 
     epochInstance.WrapHandler(createUser).
         Accepts(User{}).                    // Request type
         Returns(User{}).                    // Response type
-        ToHandlerFunc())
+        ToHandlerFunc("POST", "/users"))    // Registers endpoint immediately
 
 // Array responses
 r.GET("/users",
     epochInstance.WrapHandler(listUsers).
         Returns([]User{}).                  // Returns array of Users
-        ToHandlerFunc())
+        ToHandlerFunc("GET", "/users"))
 
 // Nested arrays
 r.GET("/orders",
     epochInstance.WrapHandler(listOrders).
         Returns(OrderResponse{}).
         WithArrayItems("items", OrderItem{}).  // Nested array field
-        ToHandlerFunc())
+        ToHandlerFunc("GET", "/orders"))
 ```
+
+**Important**: The method and path parameters passed to `ToHandlerFunc()` must match the route being registered. This enables immediate endpoint registration for features like OpenAPI schema generation.
 
 ## Multiple Types in One Migration
 
