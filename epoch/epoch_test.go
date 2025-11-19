@@ -267,4 +267,45 @@ var _ = Describe("Cadwyn", func() {
 			})
 		})
 	})
+
+	Describe("Automatic Type Registration", func() {
+		It("should register types immediately without HTTP request", func() {
+			type TestRequest struct {
+				Name string `json:"name"`
+			}
+			type TestResponse struct {
+				ID   int    `json:"id"`
+				Name string `json:"name"`
+			}
+
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			epochInstance, err := NewEpoch().
+				WithVersions(v1, v2).
+				WithHeadVersion().
+				Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			router := gin.New()
+			router.POST("/test",
+				epochInstance.WrapHandler(func(c *gin.Context) {
+					c.JSON(200, TestResponse{ID: 1, Name: "test"})
+				}).
+					Accepts(TestRequest{}).
+					Returns(TestResponse{}).
+					ToHandlerFunc("POST", "/test"))
+
+			// Verify registered WITHOUT making HTTP request
+			endpoints := epochInstance.EndpointRegistry().GetAll()
+			Expect(endpoints).To(HaveLen(1))
+
+			def, exists := endpoints["POST:/test"]
+			Expect(exists).To(BeTrue())
+			Expect(def.Method).To(Equal("POST"))
+			Expect(def.PathPattern).To(Equal("/test"))
+			Expect(def.RequestType.Name()).To(Equal("TestRequest"))
+			Expect(def.ResponseType.Name()).To(Equal("TestResponse"))
+		})
+	})
 })

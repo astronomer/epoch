@@ -76,8 +76,8 @@ func main() {
     r.Use(epochInstance.Middleware())
     
     // Register endpoints with type information
-    r.GET("/users/:id", epochInstance.WrapHandler(getUser).Returns(User{}).ToHandlerFunc())
-    r.POST("/users", epochInstance.WrapHandler(createUser).Accepts(User{}).Returns(User{}).ToHandlerFunc())
+    r.GET("/users/:id", epochInstance.WrapHandler(getUser).Returns(User{}).ToHandlerFunc("GET", "/users/:id"))
+    r.POST("/users", epochInstance.WrapHandler(createUser).Accepts(User{}).Returns(User{}).ToHandlerFunc("POST", "/users"))
     
     r.Run(":8080")
 }
@@ -156,7 +156,7 @@ migration := epoch.NewVersionChangeBuilder(v1, v2).
 - `AddField(name, default)` - Add field if missing
 - `RemoveField(name)` - Remove field
 - `RenameField(from, to)` - Rename field
-- `RemoveFieldIfDefault(name, default)` - Conditional removal
+- `RemoveFieldIfDefault(name, default)` - Conditional removalz
 - `Custom(func)` - Custom transformation logic
 
 ## Type-Based Routing
@@ -378,10 +378,10 @@ Always use `.Returns()` and `.Accepts()` to register endpoint types:
 
 ```go
 // ✅ Good
-r.GET("/users/:id", epochInstance.WrapHandler(getUser).Returns(User{}).ToHandlerFunc())
+r.GET("/users/:id", epochInstance.WrapHandler(getUser).Returns(User{}).ToHandlerFunc("GET", "/users/:id"))
 
 // ❌ Bad - no type registration
-r.GET("/users/:id", epochInstance.WrapHandler(getUser))
+r.GET("/users/:id", epochInstance.WrapHandler(getUser).ToHandlerFunc("GET", "/users/:id"))
 ```
 
 ### 2. One Type Per ForType()
