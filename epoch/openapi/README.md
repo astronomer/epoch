@@ -171,6 +171,7 @@ import (
     "github.com/astronomer/epoch/epoch"
     "github.com/astronomer/epoch/epoch/openapi"
     "github.com/getkin/kin-openapi/openapi3"
+    "github.com/gin-gonic/gin"
 )
 
 // After creating your Epoch instance
@@ -181,10 +182,23 @@ epochInstance, _ := epoch.NewEpoch().
     WithTypes(UserResponse{}, CreateUserRequest{}).
     Build()
 
+// IMPORTANT: Register your routes BEFORE generating schemas
+// This populates the endpoint registry with type information
+r := gin.Default()
+r.GET("/users/:id", 
+    epochInstance.WrapHandler(getUser).
+        Returns(UserResponse{}).
+        ToHandlerFunc("GET", "/users/:id"))  // Registers immediately
+r.POST("/users",
+    epochInstance.WrapHandler(createUser).
+        Accepts(CreateUserRequest{}).
+        Returns(UserResponse{}).
+        ToHandlerFunc("POST", "/users"))  // Registers immediately
+
 // Create schema generator
 generator := openapi.NewSchemaGenerator(openapi.SchemaGeneratorConfig{
-    VersionBundle: epochInstance.VersionBundle(),  // Note: method call
-    TypeRegistry:  epochInstance.EndpointRegistry(),  // Note: changed from TypeRegistry
+    VersionBundle: epochInstance.VersionBundle(),
+    TypeRegistry:  epochInstance.EndpointRegistry(),
     OutputFormat:  "yaml", // or "json"
 })
 
@@ -211,6 +225,11 @@ if err := generator.WriteVersionedSpecs(versionedSpecs, filenamePattern); err !=
 fmt.Println("✓ Generated versioned OpenAPI specs")
 ```
 
+**Key Points**:
+- Routes must be registered via `ToHandlerFunc(method, path)` **before** calling `GenerateVersionedSpecs()`
+- The method and path parameters enable immediate endpoint registration
+- This populates the TypeRegistry which the schema generator uses to find types
+
 ### Swag Integration Guide
 
 This section provides a complete workflow for integrating Epoch's OpenAPI schema generator with Swag.
@@ -223,14 +242,23 @@ Annotate handlers with Swag comments and register types with Epoch:
 // @Summary Get user by ID
 // @Success 200 {object} UserResponse
 // @Router /users/{id} [get]
-func (h *Handler) GetUser(c *gin.Context) {
-    epochInstance.WrapHandler(h.getUserImpl).
-        Returns(UserResponse{}).  // Must match @Success type
-        ToHandlerFunc()(c)
+func GetUser(c *gin.Context) {
+    // Implementation for HEAD version
+    user := UserResponse{ID: 1, Name: "John", Email: "john@example.com"}
+    c.JSON(200, user)
+}
+
+// Register in your router setup
+func setupRoutes(r *gin.Engine, epochInstance *epoch.Epoch) {
+    // Endpoint registration happens automatically via ToHandlerFunc
+    r.GET("/users/:id", 
+        epochInstance.WrapHandler(GetUser).
+            Returns(UserResponse{}).  // Must match @Success type
+            ToHandlerFunc("GET", "/users/:id"))  // Method and path for immediate registration
 }
 ```
 
-Types in `@Success`, `@Param body` annotations must match `.Returns()` and `.Accepts()` calls.
+**Important**: `ToHandlerFunc(method, path)` now requires method and path parameters for immediate endpoint registration. Types in `@Success`, `@Param body` annotations must match `.Returns()` and `.Accepts()` calls.
 
 #### Step 2: Generate Base Spec with Swag
 
@@ -254,9 +282,31 @@ This creates a base spec with:
 
 #### Step 3: Configure Epoch Schema Generator
 
-Create a schema generation command:
+Create a schema generation command that registers routes before generating schemas:
 
 ```go
+// Create Epoch instance
+epochInstance, _ := epoch.NewEpoch().
+    WithHeadVersion().
+    WithVersions(v1, v2, v3).
+    WithChanges(userV1ToV2, userV2ToV3).
+    WithTypes(UserResponse{}, CreateUserRequest{}).
+    Build()
+
+// IMPORTANT: Register routes to populate endpoint registry
+// This must happen BEFORE calling GenerateVersionedSpecs()
+r := gin.New()  // Don't need to actually run the server
+r.GET("/users/:id",
+    epochInstance.WrapHandler(handlers.GetUser).
+        Returns(UserResponse{}).
+        ToHandlerFunc("GET", "/users/:id"))
+r.POST("/users",
+    epochInstance.WrapHandler(handlers.CreateUser).
+        Accepts(CreateUserRequest{}).
+        Returns(UserResponse{}).
+        ToHandlerFunc("POST", "/users"))
+// ... register all your routes
+
 // Configure with SchemaNameMapper to match Swag's naming
 generator := openapi.NewSchemaGenerator(openapi.SchemaGeneratorConfig{
     VersionBundle: epochInstance.VersionBundle(),
@@ -275,7 +325,7 @@ versionedSpecs, _ := generator.GenerateVersionedSpecs(baseSpec)
 generator.WriteVersionedSpecs(versionedSpecs, "docs/api/api_%s.yaml")
 ```
 
-See "Basic Integration" section above for complete example with error handling and Epoch instance creation.
+**Critical**: Routes must be registered via `ToHandlerFunc(method, path)` before schema generation, as this populates the endpoint registry that maps types to endpoints.
 
 #### Step 4: Generate Specs
 
@@ -288,9 +338,14 @@ go run cmd/schema/main.go
 
 **Schema Not Found**: Ensure `SchemaNameMapper` matches Swag's naming (check base spec with `grep "schemas:" docs/swagger/swagger.yaml`)
 
-**Type Not Registered**: Must call `.Returns()` or `.Accepts()` on `WrapHandler()`
+**Type Not Registered**: 
+- Must call `.Returns()` or `.Accepts()` on `WrapHandler()`
+- Must call `.ToHandlerFunc(method, path)` with method and path parameters
+- Routes must be registered BEFORE calling `GenerateVersionedSpecs()`
 
 **Package Prefix Mismatch**: Update `SchemaNameMapper` to match what Swag generates (e.g., `"versionedapi." + typeName`)
+
+**Empty Registry**: If generating schemas in a separate script, make sure to register all routes in that script before generation
 
 #### Makefile Integration
 
@@ -404,11 +459,25 @@ openapi-generator-cli generate -i docs/api_2024-01-01.yaml -g python -o clients/
 
 ## Troubleshooting
 
-**"Component not found"**: Register types via `WrapHandler().Returns(UserResponse{})`
+**"Component not found"** or **"Type not registered"**: 
+- Ensure you call `ToHandlerFunc(method, path)` with both parameters for immediate registration
+- Must register routes BEFORE calling `GenerateVersionedSpecs()`
+- Example: `.Returns(UserResponse{}).ToHandlerFunc("GET", "/users/:id")`
 
-**Missing validation constraints**: Use correct tag syntax: `binding:"required"` not `binding="required"`
+**Missing validation constraints**: 
+- Use correct tag syntax: `binding:"required"` not `binding="required"`
 
-**Schema not transforming**: Ensure `ForType(UserResponse{})` matches the exact type in `WrapHandler()` (not pointer)
+**Schema not transforming**: 
+- Ensure `ForType(UserResponse{})` in migrations matches the exact type in `WrapHandler()` (not pointer)
+- Verify `SchemaNameMapper` output matches schema names in your base spec
+
+**Routes not being registered**:
+- The method and path in `ToHandlerFunc("GET", "/users/:id")` must match the route path
+- Common mistake: `r.GET("/users/:id", handler.ToHandlerFunc("GET", "/users/{id}"))` - use `:id` not `{id}`
+
+**Empty endpoint registry**:
+- Routes must be registered (via `ToHandlerFunc`) before generating schemas
+- If using a separate schema generation script, ensure routes are registered in that script too
 
 ## Contributing
 
