@@ -97,7 +97,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					"email":     user["email"],
 					"phone":     "+1-555-0100",
 				})
-			}).Accepts(User{}).Returns(User{}).ToHandlerFunc())
+			}).Accepts(User{}).Returns(User{}).ToHandlerFunc("POST", "/users"))
 
 			// Test with V1 client (no email)
 			reqBody := map[string]interface{}{
@@ -164,7 +164,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					"email":     "test@example.com",
 					"phone":     "+1-555-0100",
 				})
-			}).Accepts(User{}).Returns(User{}).ToHandlerFunc())
+			}).Accepts(User{}).Returns(User{}).ToHandlerFunc("POST", "/users"))
 
 			// V1 client sends "name"
 			reqBody := `{"name": "Alice Johnson"}`
@@ -215,7 +215,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					"email":     "bob@example.com",
 					"phone":     "+1-555-0200",
 				})
-			}).Returns(User{}).ToHandlerFunc())
+			}).Returns(User{}).ToHandlerFunc("GET", "/users/1"))
 
 			req := httptest.NewRequest("GET", "/users/1", nil)
 			req.Header.Set("X-API-Version", "1.0.0")
@@ -262,7 +262,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					{"id": 1, "full_name": "Alice", "email": "alice@example.com", "phone": "+1-555-0100"},
 					{"id": 2, "full_name": "Bob", "email": "bob@example.com", "phone": "+1-555-0200"},
 				})
-			}).Returns([]User{}).ToHandlerFunc())
+			}).Returns([]User{}).ToHandlerFunc("GET", "/users"))
 
 			// V1 client request
 			req := httptest.NewRequest("GET", "/users", nil)
@@ -316,7 +316,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					},
 					"total": 2,
 				})
-			}).Returns(UsersListResponse{}).WithArrayItems("users", User{}).ToHandlerFunc())
+			}).Returns(UsersListResponse{}).WithArrayItems("users", User{}).ToHandlerFunc("GET", "/users"))
 
 			req := httptest.NewRequest("GET", "/users", nil)
 			req.Header.Set("X-API-Version", "2024-01-01")
@@ -396,7 +396,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					"currency":    "USD",
 					"description": "High-performance laptop",
 				})
-			}).Accepts(Product{}).Returns(Product{}).ToHandlerFunc())
+			}).Accepts(Product{}).Returns(Product{}).ToHandlerFunc("POST", "/products"))
 
 			// V1 client (no currency, no description)
 			reqBody := `{"name": "Laptop", "price": 999.99}`
@@ -458,7 +458,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					"currency":    "USD",
 					"description": "Wireless mouse",
 				})
-			}).Returns(Product{}).ToHandlerFunc())
+			}).Returns(Product{}).ToHandlerFunc("GET", "/products/1"))
 
 			req := httptest.NewRequest("GET", "/products/1", nil)
 			req.Header.Set("X-API-Version", "2024-06-01")
@@ -519,7 +519,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					"email":     req["email"],
 					"phone":     "+1-555-0100",
 				})
-			}).Accepts(CreateUserRequest{}).Returns(User{}).ToHandlerFunc())
+			}).Accepts(CreateUserRequest{}).Returns(User{}).ToHandlerFunc("POST", "/users"))
 
 			// V1 client sends request without email
 			reqBody := `{"full_name": "Charlie"}`
@@ -570,7 +570,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				c.JSON(400, gin.H{
 					"error": "Field 'full_name' is required",
 				})
-			}).Returns(User{}).ToHandlerFunc())
+			}).Returns(User{}).ToHandlerFunc("GET", "/users/1"))
 
 			req := httptest.NewRequest("GET", "/users/1", nil)
 			req.Header.Set("X-API-Version", "2024-01-01")
@@ -654,7 +654,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 						return
 					}
 					c.JSON(200, gin.H{"message": "success"})
-				}).Accepts(ErrorTestRequest{}).ToHandlerFunc())
+				}).Accepts(ErrorTestRequest{}).ToHandlerFunc("POST", "/test"))
 
 				w := httptest.NewRecorder()
 				reqBody := strings.NewReader("{}")
@@ -679,7 +679,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 						return
 					}
 					c.JSON(200, gin.H{"message": "success"})
-				}).Accepts(ErrorTestRequest{}).ToHandlerFunc())
+				}).Accepts(ErrorTestRequest{}).ToHandlerFunc("POST", "/test"))
 
 				w := httptest.NewRecorder()
 				reqBody := strings.NewReader("{}")
@@ -704,7 +704,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 						return
 					}
 					c.JSON(200, gin.H{"message": "success"})
-				}).Accepts(ErrorTestRequest{}).ToHandlerFunc())
+				}).Accepts(ErrorTestRequest{}).ToHandlerFunc("POST", "/test"))
 
 				w := httptest.NewRecorder()
 				reqBody := strings.NewReader("{}")
@@ -727,7 +727,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					c.JSON(400, gin.H{
 						"error": "Missing fields: better_new_name",
 					})
-				}).Accepts(ErrorTestRequest{}).ToHandlerFunc())
+				}).Accepts(ErrorTestRequest{}).ToHandlerFunc("POST", "/test"))
 
 				w := httptest.NewRecorder()
 				req := httptest.NewRequest("POST", "/test", nil)
@@ -756,7 +756,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 							"code":    "VALIDATION_ERROR",
 						},
 					})
-				}).Accepts(ErrorTestRequest{}).ToHandlerFunc())
+				}).Accepts(ErrorTestRequest{}).ToHandlerFunc("POST", "/test"))
 
 				w := httptest.NewRecorder()
 				req := httptest.NewRequest("POST", "/test", nil)
@@ -790,7 +790,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 						return
 					}
 					c.JSON(200, gin.H{"message": "success"})
-				}).Accepts(ErrorTestRequest{}).ToHandlerFunc())
+				}).Accepts(ErrorTestRequest{}).ToHandlerFunc("POST", "/test"))
 
 				w := httptest.NewRecorder()
 				reqBody := strings.NewReader("{}")
@@ -816,7 +816,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 						"statusCode": 400,
 						"timestamp":  "2024-01-01T00:00:00Z",
 					})
-				}).Accepts(ErrorTestRequest{}).ToHandlerFunc())
+				}).Accepts(ErrorTestRequest{}).ToHandlerFunc("POST", "/test"))
 
 				// Test v1 client
 				reqBody := strings.NewReader("{}")
@@ -844,7 +844,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 						"detail":   "The field BetterNewName is required but was not provided",
 						"instance": "/test",
 					})
-				}).Accepts(ErrorTestRequest{}).ToHandlerFunc())
+				}).Accepts(ErrorTestRequest{}).ToHandlerFunc("POST", "/test"))
 
 				// Test v2 client
 				reqBody := strings.NewReader("{}")
@@ -875,7 +875,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 							},
 						},
 					})
-				}).Accepts(ErrorTestRequest{}).ToHandlerFunc())
+				}).Accepts(ErrorTestRequest{}).ToHandlerFunc("POST", "/test"))
 
 				// Test v1 client
 				reqBody := strings.NewReader("{}")
@@ -902,7 +902,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 						"hint":    "Please provide a value for BetterNewName",
 						"fields":  []string{"BetterNewName", "OtherField"},
 					})
-				}).Accepts(ErrorTestRequest{}).ToHandlerFunc())
+				}).Accepts(ErrorTestRequest{}).ToHandlerFunc("POST", "/test"))
 
 				// Test v1 client
 				reqBody := strings.NewReader("{}")
@@ -957,7 +957,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 
 			router.GET("/error", epochInstance.WrapHandler(func(c *gin.Context) {
 				c.JSON(400, gin.H{"error": "Bad request"})
-			}).Returns(User{}).ToHandlerFunc())
+			}).Returns(User{}).ToHandlerFunc("GET", "/error"))
 
 			req := httptest.NewRequest("GET", "/error", nil)
 			req.Header.Set("X-API-Version", "2024-01-01")
@@ -1009,7 +1009,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					"error":        "Bad request",
 					"version_info": "v2",
 				})
-			}).Returns(User{}).ToHandlerFunc())
+			}).Returns(User{}).ToHandlerFunc("GET", "/error"))
 
 			// Test V2 - should have version_info
 			req2 := httptest.NewRequest("GET", "/error", nil)
@@ -1068,7 +1068,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					"email":     "test@example.com",
 					"phone":     "+1-555-0100",
 				})
-			}).Returns(User{}).ToHandlerFunc())
+			}).Returns(User{}).ToHandlerFunc("GET", "/users/:id"))
 
 			req := httptest.NewRequest("GET", "/users/123", nil)
 			req.Header.Set("X-API-Version", "2024-01-01")
@@ -1116,7 +1116,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				c.JSON(200, []gin.H{
 					{"id": 1, "full_name": "Alice", "email": "alice@example.com", "phone": "+1-555-0100"},
 				})
-			}).Returns([]User{}).ToHandlerFunc())
+			}).Returns([]User{}).ToHandlerFunc("GET", "/users"))
 
 			// POST /users - accepts CreateUserRequest, returns User
 			router.POST("/users", epochInstance.WrapHandler(func(c *gin.Context) {
@@ -1131,7 +1131,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					"email":     req["email"],
 					"phone":     "+1-555-0200",
 				})
-			}).Accepts(CreateUserRequest{}).Returns(User{}).ToHandlerFunc())
+			}).Accepts(CreateUserRequest{}).Returns(User{}).ToHandlerFunc("POST", "/users"))
 
 			// Test GET
 			getReq := httptest.NewRequest("GET", "/users", nil)
@@ -1233,7 +1233,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			router.GET("/users", instance.WrapHandler(func(c *gin.Context) {
 				// Return JSON with non-alphabetical field order
 				c.Data(200, "application/json", []byte(`{"zebra": "first", "alpha": "second", "full_name": "John", "email": "john@example.com", "phone": "555-1234"}`))
-			}).Returns(User{}).ToHandlerFunc())
+			}).Returns(User{}).ToHandlerFunc("GET", "/users"))
 
 			req := httptest.NewRequest("GET", "/users", nil)
 			req.Header.Set("X-API-Version", "2024-01-01")
@@ -1400,7 +1400,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					{"id": 1, "full_name": "Alice Johnson", "email": "alice@example.com", "phone": "+1-555-0100"},
 					{"id": 2, "full_name": "Bob Smith", "email": "bob@example.com", "phone": "+1-555-0200"},
 				})
-			}).Returns([]User{}).ToHandlerFunc())
+			}).Returns([]User{}).ToHandlerFunc("GET", "/users"))
 
 			// Product endpoint
 			router.GET("/products", instance.WrapHandler(func(c *gin.Context) {
@@ -1408,7 +1408,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					{"id": 1, "name": "Laptop", "price": 999.99, "currency": "USD", "description": "High-performance"},
 					{"id": 2, "name": "Mouse", "price": 29.99, "currency": "USD", "description": "Wireless"},
 				})
-			}).Returns([]Product{}).ToHandlerFunc())
+			}).Returns([]Product{}).ToHandlerFunc("GET", "/products"))
 
 			// Test V1 users
 			req1 := httptest.NewRequest("GET", "/users", nil)

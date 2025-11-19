@@ -94,26 +94,11 @@ func (hw *HandlerWrapper) WithArrayItems(fieldName string, itemType interface{})
 	return hw
 }
 
-// ToHandlerFunc converts the wrapper into a gin.HandlerFunc
-// Gin routers expect gin.HandlerFunc, so call this method at the end of the chain
-// Example: r.GET("/users", epochInstance.WrapHandler(listUsers).Returns(UsersListResponse{}).ToHandlerFunc())
-func (hw *HandlerWrapper) ToHandlerFunc() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Register endpoint on first request (lazy registration)
-		hw.registerEndpointOnce(c)
-
-		// Delegate to version-aware handler
-		versionAwareHandler := NewVersionAwareHandler(hw.handler, hw.epoch.versionBundle, hw.epoch.migrationChain, hw.epoch.endpointRegistry)
-		versionAwareHandler.HandlerFunc()(c)
-	}
-}
-
-// registerEndpointOnce registers the endpoint with the registry (called on first request)
-func (hw *HandlerWrapper) registerEndpointOnce(c *gin.Context) {
-	// Build endpoint definition
+// buildEndpointDefinition creates an EndpointDefinition from the wrapper's state
+func (hw *HandlerWrapper) buildEndpointDefinition(method, pathPattern string) *EndpointDefinition {
 	def := &EndpointDefinition{
-		Method:      c.Request.Method,
-		PathPattern: c.FullPath(), // Gin's FullPath() includes the route pattern like "/users/:id"
+		Method:      method,
+		PathPattern: pathPattern,
 	}
 
 	if hw.request != nil {
@@ -141,8 +126,27 @@ func (hw *HandlerWrapper) registerEndpointOnce(c *gin.Context) {
 		}
 	}
 
-	// Register with the endpoint registry
-	hw.epoch.endpointRegistry.Register(def.Method, def.PathPattern, def)
+	return def
+}
+
+// ToHandlerFunc converts the wrapper into a gin.HandlerFunc
+// Registers types immediately for build-time schema generation
+// Example: r.POST("/users", epochInstance.WrapHandler(createUser).Returns(UserResponse{}).ToHandlerFunc("POST", "/users"))
+func (hw *HandlerWrapper) ToHandlerFunc(method, pathPattern string) gin.HandlerFunc {
+	// Build and register endpoint definition immediately
+	def := hw.buildEndpointDefinition(method, pathPattern)
+	hw.epoch.endpointRegistry.Register(method, pathPattern, def)
+
+	// Return handler that uses version-aware processing
+	return func(c *gin.Context) {
+		versionAwareHandler := NewVersionAwareHandler(
+			hw.handler,
+			hw.epoch.versionBundle,
+			hw.epoch.migrationChain,
+			hw.epoch.endpointRegistry,
+		)
+		versionAwareHandler.HandlerFunc()(c)
+	}
 }
 
 // GetVersionBundle returns the version bundle

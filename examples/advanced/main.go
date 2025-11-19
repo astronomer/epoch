@@ -357,20 +357,20 @@ func main() {
 		userRoutes.GET("", epochInstance.WrapHandler(listUsers).
 			Returns(UsersListResponse{}).
 			WithArrayItems("users", UserResponse{}).
-			ToHandlerFunc())
+			ToHandlerFunc("GET", "/users"))
 		userRoutes.GET("/:id", epochInstance.WrapHandler(getUser).
 			Returns(UserResponse{}).
-			ToHandlerFunc())
+			ToHandlerFunc("GET", "/users/:id"))
 		userRoutes.POST("", epochInstance.WrapHandler(createUser).
 			Accepts(CreateUserRequest{}).
 			Returns(UserResponse{}).
-			ToHandlerFunc())
+			ToHandlerFunc("POST", "/users"))
 		userRoutes.PUT("/:id", epochInstance.WrapHandler(updateUser).
 			Accepts(UpdateUserRequest{}).
 			Returns(UserResponse{}).
-			ToHandlerFunc())
+			ToHandlerFunc("PUT", "/users/:id"))
 		userRoutes.DELETE("/:id", epochInstance.WrapHandler(deleteUser).
-			ToHandlerFunc())
+			ToHandlerFunc("DELETE", "/users/:id"))
 	}
 
 	// Product endpoints with type registration
@@ -379,14 +379,14 @@ func main() {
 		productRoutes.GET("", epochInstance.WrapHandler(listProducts).
 			Returns(ProductsListResponse{}).
 			WithArrayItems("products", ProductResponse{}).
-			ToHandlerFunc())
+			ToHandlerFunc("GET", "/products"))
 		productRoutes.GET("/:id", epochInstance.WrapHandler(getProduct).
 			Returns(ProductResponse{}).
-			ToHandlerFunc())
+			ToHandlerFunc("GET", "/products/:id"))
 		productRoutes.POST("", epochInstance.WrapHandler(createProduct).
 			Accepts(CreateProductRequest{}).
 			Returns(ProductResponse{}).
-			ToHandlerFunc())
+			ToHandlerFunc("POST", "/products"))
 	}
 
 	// Order endpoints with type registration
@@ -395,18 +395,18 @@ func main() {
 		orderRoutes.GET("", epochInstance.WrapHandler(listOrders).
 			Returns(OrdersListResponse{}).
 			WithArrayItems("orders", OrderResponse{}).
-			ToHandlerFunc())
+			ToHandlerFunc("GET", "/orders"))
 		orderRoutes.POST("", epochInstance.WrapHandler(createOrder).
 			Accepts(CreateOrderRequest{}).
 			Returns(OrderResponse{}).
-			ToHandlerFunc())
+			ToHandlerFunc("POST", "/orders"))
 	}
 
 	// Examples endpoint with nested array type registration
 	r.GET("/examples", epochInstance.WrapHandler(listExamples).
 		Returns(ExamplesPaginated{}).
 		WithArrayItems("examples", ExampleItemResponse{}).
-		ToHandlerFunc())
+		ToHandlerFunc("GET", "/examples"))
 
 	// Meta endpoints (unversioned)
 	r.GET("/health", healthCheck)
@@ -424,13 +424,6 @@ func main() {
 
 	fmt.Println("🚀 Advanced Epoch Example")
 	fmt.Println("==============================================")
-	fmt.Println("This example demonstrates:")
-	fmt.Println("  • NEW Schema-based migrations (replaces path-based routing)")
-	fmt.Println("  • Cadwyn-inspired API with clear direction semantics")
-	fmt.Println("  • Unilateral operations (request-only, response-only, or both)")
-	fmt.Println("  • Runtime schema matching using reflection")
-	fmt.Println("  • Automatic error message field name transformation")
-	fmt.Println("")
 	fmt.Println("📅 API Versions:")
 	fmt.Println("  • 2024-01-01 (v1): Initial release (users with id, name, temp_field)")
 	fmt.Println("  • 2024-06-01 (v2): Added email and status, removed temp_field")
@@ -485,7 +478,7 @@ func main() {
 	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8085/products/1")
 	fmt.Println("  # Expected: {\"id\":1,\"name\":\"Laptop\",\"price\":999.99,\"description\":\"High-performance laptop\",\"currency\":\"USD\"}")
 	fmt.Println("")
-	fmt.Println("⚠️  5. ERROR MESSAGE FIELD NAME TRANSFORMATION (NEW!)")
+	fmt.Println("⚠️  5. ERROR MESSAGE FIELD NAME TRANSFORMATION")
 	fmt.Println("  Validation errors show field names matching the client's API version")
 	fmt.Println("")
 	fmt.Println("  # V1 API - Missing required 'name' field")
@@ -529,16 +522,6 @@ func main() {
 	fmt.Println("  # V3: Examples with 'display_name' field (renamed from 'title') + priority")
 	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8085/examples")
 	fmt.Println("  # Expected: {\"examples\":[{\"id\":1,\"display_name\":\"First Example\",\"category\":\"tutorial\",\"priority\":1,\"tags\":[...]}]}")
-	fmt.Println("")
-	fmt.Println("📋 NEW SCHEMA-BASED MIGRATION FEATURES:")
-	fmt.Println("  ✅ Schema-Based Routing: Migrations target Go struct types, not URL paths")
-	fmt.Println("  ✅ Cadwyn-Style API: Clear direction semantics (ToPreviousVersion vs ToNextVersion)")
-	fmt.Println("  ✅ Unilateral Operations: Request-only, response-only, or bidirectional")
-	fmt.Println("  ✅ Runtime Schema Matching: Automatic type detection using reflection")
-	fmt.Println("  ✅ AddField/RemoveField/RenameField: All operations with clear direction")
-	fmt.Println("  ✅ Error Transformation: Field names in validation errors")
-	fmt.Println("  ✅ Array Handling: List endpoints transform each item automatically")
-	fmt.Println("  ✅ Multi-Schema Support: One migration can target multiple struct types")
 	fmt.Println("")
 	fmt.Println("🌐 Server listening on http://localhost:8085")
 	fmt.Println("   Use X-API-Version header to specify version")

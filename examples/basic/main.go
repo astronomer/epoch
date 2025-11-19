@@ -50,8 +50,8 @@ func main() {
 	r.Use(epochInstance.Middleware())
 
 	// Define routes with version-aware handlers and type registration
-	r.GET("/users/:id", epochInstance.WrapHandler(getUser).Returns(User{}).ToHandlerFunc())
-	r.POST("/users", epochInstance.WrapHandler(createUser).Accepts(User{}).Returns(User{}).ToHandlerFunc())
+	r.GET("/users/:id", epochInstance.WrapHandler(getUser).Returns(User{}).ToHandlerFunc("GET", "/users/:id"))
+	r.POST("/users", epochInstance.WrapHandler(createUser).Accepts(User{}).Returns(User{}).ToHandlerFunc("POST", "/users"))
 
 	// Print usage instructions
 	fmt.Println("💡 Try these commands:")
