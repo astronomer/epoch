@@ -2,233 +2,157 @@ package openapi
 
 import (
 	"reflect"
-	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestTagParser_ParseJSONTag(t *testing.T) {
-	tp := NewTagParser()
+var _ = Describe("TagParser", func() {
+	var tp *TagParser
 
-	tests := []struct {
-		name          string
-		tag           string
-		wantFieldName string
-		wantOmitempty bool
-	}{
-		{
-			name:          "simple field name",
-			tag:           "user_id",
-			wantFieldName: "user_id",
-			wantOmitempty: false,
-		},
-		{
-			name:          "field name with omitempty",
-			tag:           "email,omitempty",
-			wantFieldName: "email",
-			wantOmitempty: true,
-		},
-		{
-			name:          "skip field",
-			tag:           "-",
-			wantFieldName: "-",
-			wantOmitempty: false,
-		},
-		{
-			name:          "empty tag",
-			tag:           "",
-			wantFieldName: "",
-			wantOmitempty: false,
-		},
-	}
+	BeforeEach(func() {
+		tp = NewTagParser()
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotFieldName, gotOmitempty := tp.ParseJSONTag(tt.tag)
-			if gotFieldName != tt.wantFieldName {
-				t.Errorf("ParseJSONTag() gotFieldName = %v, want %v", gotFieldName, tt.wantFieldName)
+	Describe("JSON Tags", func() {
+		It("should parse simple field name", func() {
+			fieldName, omitempty := tp.ParseJSONTag("user_id")
+			Expect(fieldName).To(Equal("user_id"))
+			Expect(omitempty).To(BeFalse())
+		})
+
+		It("should parse field name with omitempty", func() {
+			fieldName, omitempty := tp.ParseJSONTag("email,omitempty")
+			Expect(fieldName).To(Equal("email"))
+			Expect(omitempty).To(BeTrue())
+		})
+
+		It("should handle skip field tag", func() {
+			fieldName, omitempty := tp.ParseJSONTag("-")
+			Expect(fieldName).To(Equal("-"))
+			Expect(omitempty).To(BeFalse())
+		})
+
+		It("should handle empty tag", func() {
+			fieldName, omitempty := tp.ParseJSONTag("")
+			Expect(fieldName).To(Equal(""))
+			Expect(omitempty).To(BeFalse())
+		})
+	})
+
+	Describe("Validation Tags", func() {
+		Context("email format", func() {
+			It("should apply email format", func() {
+				schema := &openapi3.Schema{Type: &openapi3.Types{"string"}}
+				tp.ApplyValidationTags(schema, "email", "")
+				Expect(schema.Format).To(Equal("email"))
+			})
+		})
+
+		Context("max length", func() {
+			It("should apply max length constraint", func() {
+				schema := &openapi3.Schema{Type: &openapi3.Types{"string"}}
+				tp.ApplyValidationTags(schema, "max=50", "")
+				Expect(schema.MaxLength).NotTo(BeNil())
+				Expect(*schema.MaxLength).To(Equal(uint64(50)))
+			})
+		})
+
+		Context("min length", func() {
+			It("should apply min length constraint", func() {
+				schema := &openapi3.Schema{Type: &openapi3.Types{"string"}}
+				tp.ApplyValidationTags(schema, "min=1", "")
+				Expect(schema.MinLength).To(Equal(uint64(1)))
+			})
+		})
+
+		Context("enum values", func() {
+			It("should apply enum values from oneof", func() {
+				schema := &openapi3.Schema{Type: &openapi3.Types{"string"}}
+				tp.ApplyValidationTags(schema, "oneof=active inactive pending", "")
+				Expect(schema.Enum).To(HaveLen(3))
+			})
+		})
+
+		Context("validate tag", func() {
+			It("should apply validation from validate tag", func() {
+				schema := &openapi3.Schema{Type: &openapi3.Types{"string"}}
+				tp.ApplyValidationTags(schema, "", "required,email")
+				Expect(schema.Format).To(Equal("email"))
+			})
+		})
+	})
+
+	Describe("Common Tags", func() {
+		var testStructType reflect.Type
+
+		BeforeEach(func() {
+			type testStruct struct {
+				Field1 string `json:"field1" example:"test value"`
+				Field2 string `json:"field2" enums:"A,B,C"`
+				Field3 string `json:"field3" format:"date-time"`
+				Field4 string `json:"field4" description:"A test field"`
 			}
-			if gotOmitempty != tt.wantOmitempty {
-				t.Errorf("ParseJSONTag() gotOmitempty = %v, want %v", gotOmitempty, tt.wantOmitempty)
-			}
+			testStructType = reflect.TypeOf(testStruct{})
 		})
-	}
-}
 
-func TestTagParser_ApplyValidationTags(t *testing.T) {
-	tp := NewTagParser()
-
-	tests := []struct {
-		name        string
-		bindingTag  string
-		validateTag string
-		schemaType  string
-		check       func(*testing.T, *openapi3.Schema)
-	}{
-		{
-			name:       "email format",
-			bindingTag: "email",
-			schemaType: "string",
-			check: func(t *testing.T, s *openapi3.Schema) {
-				if s.Format != "email" {
-					t.Errorf("expected format=email, got %s", s.Format)
-				}
-			},
-		},
-		{
-			name:       "max length",
-			bindingTag: "max=50",
-			schemaType: "string",
-			check: func(t *testing.T, s *openapi3.Schema) {
-				if s.MaxLength == nil || *s.MaxLength != 50 {
-					t.Errorf("expected maxLength=50, got %v", s.MaxLength)
-				}
-			},
-		},
-		{
-			name:       "min length",
-			bindingTag: "min=1",
-			schemaType: "string",
-			check: func(t *testing.T, s *openapi3.Schema) {
-				if s.MinLength != 1 {
-					t.Errorf("expected minLength=1, got %d", s.MinLength)
-				}
-			},
-		},
-		{
-			name:       "enum values",
-			bindingTag: "oneof=active inactive pending",
-			schemaType: "string",
-			check: func(t *testing.T, s *openapi3.Schema) {
-				if len(s.Enum) != 3 {
-					t.Errorf("expected 3 enum values, got %d", len(s.Enum))
-				}
-			},
-		},
-		{
-			name:        "validate tag",
-			validateTag: "required,email",
-			schemaType:  "string",
-			check: func(t *testing.T, s *openapi3.Schema) {
-				if s.Format != "email" {
-					t.Errorf("expected format=email, got %s", s.Format)
-				}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			schema := &openapi3.Schema{Type: &openapi3.Types{tt.schemaType}}
-			tp.ApplyValidationTags(schema, tt.bindingTag, tt.validateTag)
-			tt.check(t, schema)
+		Context("example tag", func() {
+			It("should apply example value", func() {
+				field, _ := testStructType.FieldByName("Field1")
+				schema := &openapi3.Schema{Type: &openapi3.Types{"string"}}
+				tp.ApplyCommonTags(schema, field)
+				Expect(schema.Example).To(Equal("test value"))
+			})
 		})
-	}
-}
 
-func TestTagParser_ApplyCommonTags(t *testing.T) {
-	tp := NewTagParser()
-
-	type testStruct struct {
-		Field1 string `json:"field1" example:"test value"`
-		Field2 string `json:"field2" enums:"A,B,C"`
-		Field3 string `json:"field3" format:"date-time"`
-		Field4 string `json:"field4" description:"A test field"`
-	}
-
-	structType := reflect.TypeOf(testStruct{})
-
-	tests := []struct {
-		name      string
-		fieldName string
-		check     func(*testing.T, *openapi3.Schema)
-	}{
-		{
-			name:      "example tag",
-			fieldName: "Field1",
-			check: func(t *testing.T, s *openapi3.Schema) {
-				if s.Example != "test value" {
-					t.Errorf("expected example='test value', got %v", s.Example)
-				}
-			},
-		},
-		{
-			name:      "enums tag",
-			fieldName: "Field2",
-			check: func(t *testing.T, s *openapi3.Schema) {
-				if len(s.Enum) != 3 {
-					t.Errorf("expected 3 enum values, got %d", len(s.Enum))
-				}
-			},
-		},
-		{
-			name:      "format tag",
-			fieldName: "Field3",
-			check: func(t *testing.T, s *openapi3.Schema) {
-				if s.Format != "date-time" {
-					t.Errorf("expected format='date-time', got %s", s.Format)
-				}
-			},
-		},
-		{
-			name:      "description tag",
-			fieldName: "Field4",
-			check: func(t *testing.T, s *openapi3.Schema) {
-				if s.Description != "A test field" {
-					t.Errorf("expected description='A test field', got %s", s.Description)
-				}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			field, _ := structType.FieldByName(tt.fieldName)
-			schema := &openapi3.Schema{Type: &openapi3.Types{"string"}}
-			tp.ApplyCommonTags(schema, field)
-			tt.check(t, schema)
+		Context("enums tag", func() {
+			It("should apply enum values", func() {
+				field, _ := testStructType.FieldByName("Field2")
+				schema := &openapi3.Schema{Type: &openapi3.Types{"string"}}
+				tp.ApplyCommonTags(schema, field)
+				Expect(schema.Enum).To(HaveLen(3))
+			})
 		})
-	}
-}
 
-func TestTagParser_IsRequired(t *testing.T) {
-	tp := NewTagParser()
-
-	tests := []struct {
-		name        string
-		bindingTag  string
-		validateTag string
-		omitempty   bool
-		want        bool
-	}{
-		{
-			name:       "required in binding tag",
-			bindingTag: "required",
-			want:       true,
-		},
-		{
-			name:        "required in validate tag",
-			validateTag: "required",
-			want:        true,
-		},
-		{
-			name:       "omitempty overrides",
-			bindingTag: "required",
-			omitempty:  true,
-			want:       false,
-		},
-		{
-			name: "not required",
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tp.IsRequired(tt.bindingTag, tt.validateTag, tt.omitempty)
-			if got != tt.want {
-				t.Errorf("IsRequired() = %v, want %v", got, tt.want)
-			}
+		Context("format tag", func() {
+			It("should apply format", func() {
+				field, _ := testStructType.FieldByName("Field3")
+				schema := &openapi3.Schema{Type: &openapi3.Types{"string"}}
+				tp.ApplyCommonTags(schema, field)
+				Expect(schema.Format).To(Equal("date-time"))
+			})
 		})
-	}
-}
+
+		Context("description tag", func() {
+			It("should apply description", func() {
+				field, _ := testStructType.FieldByName("Field4")
+				schema := &openapi3.Schema{Type: &openapi3.Types{"string"}}
+				tp.ApplyCommonTags(schema, field)
+				Expect(schema.Description).To(Equal("A test field"))
+			})
+		})
+	})
+
+	Describe("Required Field Detection", func() {
+		It("should detect required from binding tag", func() {
+			isRequired := tp.IsRequired("required", "", false)
+			Expect(isRequired).To(BeTrue())
+		})
+
+		It("should detect required from validate tag", func() {
+			isRequired := tp.IsRequired("", "required", false)
+			Expect(isRequired).To(BeTrue())
+		})
+
+		It("should respect omitempty override", func() {
+			isRequired := tp.IsRequired("required", "", true)
+			Expect(isRequired).To(BeFalse())
+		})
+
+		It("should return false when not required", func() {
+			isRequired := tp.IsRequired("", "", false)
+			Expect(isRequired).To(BeFalse())
+		})
+	})
+})

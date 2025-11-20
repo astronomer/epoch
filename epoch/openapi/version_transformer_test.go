@@ -2,10 +2,11 @@ package openapi
 
 import (
 	"reflect"
-	"testing"
 
 	"github.com/astronomer/epoch/epoch"
 	"github.com/getkin/kin-openapi/openapi3"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 // Test types for version transformation tests
@@ -17,521 +18,605 @@ type TestUser struct {
 	Status string `json:"status"`
 }
 
-func TestVersionTransformer_NewVersionTransformer(t *testing.T) {
-	v1, _ := epoch.NewDateVersion("2024-01-01")
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
-
-	transformer := NewVersionTransformer(vb)
-
-	if transformer == nil {
-		t.Fatal("expected transformer to be created")
-	}
-
-	if transformer.versionBundle != vb {
-		t.Error("version bundle not set correctly")
-	}
-
-	if transformer.typeParser == nil {
-		t.Error("type parser not initialized")
-	}
-}
-
-func TestVersionTransformer_TransformSchemaForVersion_HeadVersion(t *testing.T) {
-	// Setup: Create HEAD version
-	head := epoch.NewHeadVersion()
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{head})
-	transformer := NewVersionTransformer(vb)
-
-	// Create a base schema
-	baseSchema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"id":    openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
-			"name":  openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-			"email": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-		},
-	}
-
-	// Transform for HEAD version (should return unchanged)
-	result, err := transformer.TransformSchemaForVersion(
-		baseSchema,
-		reflect.TypeOf(TestUser{}),
-		head,
-		SchemaDirectionResponse,
-	)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// HEAD version should not modify the schema
-	if len(result.Properties) != 3 {
-		t.Errorf("expected 3 properties, got %d", len(result.Properties))
-	}
-}
-
-func TestVersionTransformer_TransformSchemaForVersion_ResponseRemoveField(t *testing.T) {
-	// Setup: Create v1 and v2 with a migration that removes a field
-	v1, _ := epoch.NewDateVersion("2024-01-01")
-	v2, _ := epoch.NewDateVersion("2024-06-01")
-
-	// Create version change: v1 -> v2 adds email, so v2 -> v1 removes email
-	change := epoch.NewVersionChangeBuilder(v1, v2).
-		Description("Add email field").
-		ForType(TestUser{}).
-		ResponseToPreviousVersion().
-		RemoveField("email").
-		Build()
-
-	// Build version bundle with HEAD
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
-	v2.Changes = []epoch.VersionChangeInterface{change}
-
-	transformer := NewVersionTransformer(vb)
-
-	// Create base schema (HEAD version with all fields)
-	baseSchema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"id":    openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
-			"name":  openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-			"email": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-		},
-	}
-
-	// Transform for v1 (should remove email)
-	result, err := transformer.TransformSchemaForVersion(
-		baseSchema,
-		reflect.TypeOf(TestUser{}),
-		v1,
-		SchemaDirectionResponse,
-	)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Check that email was removed
-	if _, hasEmail := result.Properties["email"]; hasEmail {
-		t.Error("email field should be removed for v1")
-	}
-
-	// Check that other fields remain
-	if _, hasID := result.Properties["id"]; !hasID {
-		t.Error("id field should remain")
-	}
-	if _, hasName := result.Properties["name"]; !hasName {
-		t.Error("name field should remain")
-	}
-
-	if len(result.Properties) != 2 {
-		t.Errorf("expected 2 properties after removal, got %d", len(result.Properties))
-	}
-}
-
-func TestVersionTransformer_TransformSchemaForVersion_ResponseRenameField(t *testing.T) {
-	// Setup: Create v1 and v2 with a field rename
-	v1, _ := epoch.NewDateVersion("2024-01-01")
-	v2, _ := epoch.NewDateVersion("2024-06-01")
-
-	// v1 -> v2 renames "full_name" to "name", so v2 -> v1 renames "name" to "full_name"
-	change := epoch.NewVersionChangeBuilder(v1, v2).
-		Description("Rename name to full_name").
-		ForType(TestUser{}).
-		ResponseToPreviousVersion().
-		RenameField("name", "full_name").
-		Build()
-
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
-	v2.Changes = []epoch.VersionChangeInterface{change}
-
-	transformer := NewVersionTransformer(vb)
-
-	// Base schema has "name"
-	baseSchema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"id":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
-			"name": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-		},
-	}
-
-	// Transform for v1 (should rename name -> full_name)
-	result, err := transformer.TransformSchemaForVersion(
-		baseSchema,
-		reflect.TypeOf(TestUser{}),
-		v1,
-		SchemaDirectionResponse,
-	)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Check that "name" was removed
-	if _, hasName := result.Properties["name"]; hasName {
-		t.Error("name field should be renamed")
-	}
-
-	// Check that "full_name" exists
-	if _, hasFullName := result.Properties["full_name"]; !hasFullName {
-		t.Error("full_name field should exist after rename")
-	}
-
-	if len(result.Properties) != 2 {
-		t.Errorf("expected 2 properties, got %d", len(result.Properties))
-	}
-}
-
-func TestVersionTransformer_TransformSchemaForVersion_ResponseAddField(t *testing.T) {
-	// Setup: Create v1 and v2 with field addition
-	v1, _ := epoch.NewDateVersion("2024-01-01")
-	v2, _ := epoch.NewDateVersion("2024-06-01")
-
-	// v1 -> v2 adds "status", so response to v1 from v2 removes it
-	// But we can also test the opposite: adding a field when going to older version
-	// Actually, ResponseToPreviousVersion typically removes, so let's test that
-	change := epoch.NewVersionChangeBuilder(v1, v2).
-		Description("Add status field").
-		ForType(TestUser{}).
-		ResponseToPreviousVersion().
-		RemoveField("status").
-		Build()
-
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
-	v2.Changes = []epoch.VersionChangeInterface{change}
-
-	transformer := NewVersionTransformer(vb)
-
-	baseSchema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"id":     openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
-			"name":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-			"status": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-		},
-	}
-
-	result, err := transformer.TransformSchemaForVersion(
-		baseSchema,
-		reflect.TypeOf(TestUser{}),
-		v1,
-		SchemaDirectionResponse,
-	)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// status should be removed for v1
-	if _, hasStatus := result.Properties["status"]; hasStatus {
-		t.Error("status field should be removed for v1")
-	}
-}
-
-func TestVersionTransformer_TransformSchemaForVersion_MultipleChanges(t *testing.T) {
-	// Setup: Test that multiple field operations in one change work correctly
-	v1, _ := epoch.NewDateVersion("2024-01-01")
-	v2, _ := epoch.NewDateVersion("2024-06-01")
-
-	// v1 -> v2: adds email, phone, and status (so remove all three when going to v1)
-	change := epoch.NewVersionChangeBuilder(v1, v2).
-		Description("Add multiple fields").
-		ForType(TestUser{}).
-		ResponseToPreviousVersion().
-		RemoveField("email").
-		RemoveField("phone").
-		RemoveField("status").
-		Build()
-
-	// v1 is oldest (no changes), v2 has the change
-	v2.Changes = []epoch.VersionChangeInterface{change}
-
-	vb, err := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
-	if err != nil {
-		t.Fatalf("failed to create version bundle: %v", err)
-	}
-
-	transformer := NewVersionTransformer(vb)
-
-	// Base schema (v2/HEAD) has all fields
-	baseSchema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"id":     openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
-			"name":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-			"email":  openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-			"phone":  openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-			"status": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-		},
-	}
-
-	// Transform for v1 (should remove email, phone, status)
-	result, err := transformer.TransformSchemaForVersion(
-		baseSchema,
-		reflect.TypeOf(TestUser{}),
-		v1,
-		SchemaDirectionResponse,
-	)
-
-	if err != nil {
-		t.Fatalf("unexpected error for v1: %v", err)
-	}
-
-	// v1 should only have id and name (3 fields removed)
-	if len(result.Properties) != 2 {
-		t.Errorf("expected 2 properties for v1, got %d", len(result.Properties))
-		// Print what we got for debugging
-		for name := range result.Properties {
-			t.Logf("  has field: %s", name)
-		}
-	}
-
-	if _, hasEmail := result.Properties["email"]; hasEmail {
-		t.Error("v1 should not have email")
-	}
-	if _, hasPhone := result.Properties["phone"]; hasPhone {
-		t.Error("v1 should not have phone")
-	}
-	if _, hasStatus := result.Properties["status"]; hasStatus {
-		t.Error("v1 should not have status")
-	}
-}
-
-func TestVersionTransformer_CloneSchema(t *testing.T) {
-	original := &openapi3.Schema{
-		Type:        &openapi3.Types{"object"},
-		Format:      "custom",
-		Description: "Test schema",
-		Properties: map[string]*openapi3.SchemaRef{
-			"field1": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-		},
-		Required: []string{"field1"},
-	}
-
-	clone := CloneSchema(original)
-
-	// Verify clone is different object
-	if clone == original {
-		t.Error("clone should be a different object")
-	}
-
-	// Verify properties are copied
-	if clone.Format != original.Format {
-		t.Error("format not copied")
-	}
-	if clone.Description != original.Description {
-		t.Error("description not copied")
-	}
-	if len(clone.Properties) != len(original.Properties) {
-		t.Error("properties not copied correctly")
-	}
-	if len(clone.Required) != len(original.Required) {
-		t.Error("required array not copied correctly")
-	}
-
-	// Modify clone and verify original is unchanged
-	clone.Properties["field2"] = openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}})
-	if len(original.Properties) != 1 {
-		t.Error("modifying clone affected original")
-	}
-}
-
-func TestVersionTransformer_AddFieldToSchema(t *testing.T) {
-	v1, _ := epoch.NewDateVersion("2024-01-01")
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
-	transformer := NewVersionTransformer(vb)
-
-	schema := &openapi3.Schema{
-		Type:       &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{},
-	}
-
-	fieldSchema := openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}})
-
-	// Add field without required
-	transformer.AddFieldToSchema(schema, "test_field", fieldSchema, false)
-
-	if _, exists := schema.Properties["test_field"]; !exists {
-		t.Error("field not added to schema")
-	}
-
-	if len(schema.Required) != 0 {
-		t.Error("field should not be in required array")
-	}
-
-	// Add field with required
-	transformer.AddFieldToSchema(schema, "required_field", fieldSchema, true)
-
-	if len(schema.Required) != 1 {
-		t.Error("required field not added to required array")
-	}
-
-	if schema.Required[0] != "required_field" {
-		t.Error("wrong field name in required array")
-	}
-}
-
-func TestVersionTransformer_RemoveFieldFromSchema(t *testing.T) {
-	v1, _ := epoch.NewDateVersion("2024-01-01")
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
-	transformer := NewVersionTransformer(vb)
-
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"field1": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-			"field2": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
-		},
-		Required: []string{"field1", "field2"},
-	}
-
-	// Remove field
-	transformer.RemoveFieldFromSchema(schema, "field1")
-
-	if _, exists := schema.Properties["field1"]; exists {
-		t.Error("field should be removed from properties")
-	}
-
-	if len(schema.Required) != 1 {
-		t.Error("field should be removed from required array")
-	}
-
-	if schema.Required[0] != "field2" {
-		t.Error("wrong field remaining in required array")
-	}
-}
-
-func TestVersionTransformer_RenameFieldInSchema(t *testing.T) {
-	v1, _ := epoch.NewDateVersion("2024-01-01")
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
-	transformer := NewVersionTransformer(vb)
-
-	stringSchema := openapi3.NewSchemaRef("", &openapi3.Schema{
-		Type:   &openapi3.Types{"string"},
-		Format: "email",
+var _ = Describe("VersionTransformer", func() {
+	Describe("Initialization", func() {
+		It("should create a new VersionTransformer", func() {
+			v1, _ := epoch.NewDateVersion("2024-01-01")
+			vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
+
+			transformer := NewVersionTransformer(vb)
+
+			Expect(transformer).NotTo(BeNil())
+			Expect(transformer.versionBundle).To(Equal(vb))
+			Expect(transformer.typeParser).NotTo(BeNil())
+		})
 	})
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"old_name": stringSchema,
-			"field2":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
-		},
-		Required: []string{"old_name", "field2"},
-	}
+	Describe("Schema Transformations", func() {
+		Context("HEAD version", func() {
+			It("should return schema unchanged for HEAD version", func() {
+				head := epoch.NewHeadVersion()
+				vb, _ := epoch.NewVersionBundle([]*epoch.Version{head})
+				transformer := NewVersionTransformer(vb)
 
-	// Rename field
-	transformer.RenameFieldInSchema(schema, "old_name", "new_name")
+				baseSchema := &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"id":    openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+						"name":  openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+						"email": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+					},
+				}
 
-	// Old name should be gone
-	if _, exists := schema.Properties["old_name"]; exists {
-		t.Error("old field name should be removed")
-	}
+				result, err := transformer.TransformSchemaForVersion(
+					baseSchema,
+					reflect.TypeOf(TestUser{}),
+					head,
+					SchemaDirectionResponse,
+				)
 
-	// New name should exist with same schema
-	newField, exists := schema.Properties["new_name"]
-	if !exists {
-		t.Fatal("new field name should exist")
-	}
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Properties).To(HaveLen(3))
+			})
+		})
 
-	if newField.Value.Format != "email" {
-		t.Error("field schema not preserved during rename")
-	}
+		Context("Response transformations", func() {
+			It("should remove field when migrating to previous version", func() {
+				v1, _ := epoch.NewDateVersion("2024-01-01")
+				v2, _ := epoch.NewDateVersion("2024-06-01")
 
-	// Check required array
-	foundNewName := false
-	for _, req := range schema.Required {
-		if req == "old_name" {
-			t.Error("old name should not be in required array")
-		}
-		if req == "new_name" {
-			foundNewName = true
-		}
-	}
+				// Create version change: v1 -> v2 adds email
+				change := epoch.NewVersionChangeBuilder(v1, v2).
+					Description("Add email field").
+					ForType(TestUser{}).
+					ResponseToPreviousVersion().
+					RemoveField("email").
+					Build()
 
-	if !foundNewName {
-		t.Error("new name should be in required array")
-	}
-}
+				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
+				v2.Changes = []epoch.VersionChangeInterface{change}
 
-func TestVersionTransformer_ChangeAppliesToType(t *testing.T) {
-	v1, _ := epoch.NewDateVersion("2024-01-01")
-	v2, _ := epoch.NewDateVersion("2024-06-01")
+				transformer := NewVersionTransformer(vb)
 
-	// Create change that targets TestUser
-	change := epoch.NewVersionChangeBuilder(v1, v2).
-		Description("Test change").
-		ForType(TestUser{}).
-		ResponseToPreviousVersion().
-		RemoveField("email").
-		Build()
+				baseSchema := &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"id":    openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+						"name":  openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+						"email": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+					},
+				}
 
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
-	transformer := NewVersionTransformer(vb)
+				result, err := transformer.TransformSchemaForVersion(
+					baseSchema,
+					reflect.TypeOf(TestUser{}),
+					v1,
+					SchemaDirectionResponse,
+				)
 
-	// Should apply to TestUser
-	if !transformer.changeAppliesToType(change, reflect.TypeOf(TestUser{}), SchemaDirectionResponse) {
-		t.Error("change should apply to TestUser type")
-	}
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Properties["email"]).To(BeNil())
+				Expect(result.Properties["id"]).NotTo(BeNil())
+				Expect(result.Properties["name"]).NotTo(BeNil())
+				Expect(result.Properties).To(HaveLen(2))
+			})
 
-	// Should not apply to different type
-	type OtherType struct {
-		ID int
-	}
-	if transformer.changeAppliesToType(change, reflect.TypeOf(OtherType{}), SchemaDirectionResponse) {
-		t.Error("change should not apply to OtherType")
-	}
+			It("should rename field when specified", func() {
+				v1, _ := epoch.NewDateVersion("2024-01-01")
+				v2, _ := epoch.NewDateVersion("2024-06-01")
 
-	// Should not apply to request direction if change is for response
-	if transformer.changeAppliesToType(change, reflect.TypeOf(TestUser{}), SchemaDirectionRequest) {
-		t.Error("response change should not apply to request direction")
-	}
-}
+				// v1 -> v2 renames "full_name" to "name"
+				change := epoch.NewVersionChangeBuilder(v1, v2).
+					Description("Rename name to full_name").
+					ForType(TestUser{}).
+					ResponseToPreviousVersion().
+					RenameField("name", "full_name").
+					Build()
 
-func TestVersionTransformer_NoOperationsForType(t *testing.T) {
-	// Setup: Create change that doesn't target our test type
-	v1, _ := epoch.NewDateVersion("2024-01-01")
-	v2, _ := epoch.NewDateVersion("2024-06-01")
+				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
+				v2.Changes = []epoch.VersionChangeInterface{change}
 
-	type DifferentType struct {
-		Field string
-	}
+				transformer := NewVersionTransformer(vb)
 
-	change := epoch.NewVersionChangeBuilder(v1, v2).
-		Description("Change for different type").
-		ForType(DifferentType{}).
-		ResponseToPreviousVersion().
-		RemoveField("field").
-		Build()
+				baseSchema := &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"id":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+						"name": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+					},
+				}
 
-	vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
-	v2.Changes = []epoch.VersionChangeInterface{change}
+				result, err := transformer.TransformSchemaForVersion(
+					baseSchema,
+					reflect.TypeOf(TestUser{}),
+					v1,
+					SchemaDirectionResponse,
+				)
 
-	transformer := NewVersionTransformer(vb)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Properties["name"]).To(BeNil())
+				Expect(result.Properties["full_name"]).NotTo(BeNil())
+				Expect(result.Properties).To(HaveLen(2))
+			})
 
-	baseSchema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"id":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
-			"name": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
-		},
-	}
+			It("should handle field addition transformations", func() {
+				v1, _ := epoch.NewDateVersion("2024-01-01")
+				v2, _ := epoch.NewDateVersion("2024-06-01")
 
-	// Transform TestUser type (no operations target it)
-	result, err := transformer.TransformSchemaForVersion(
-		baseSchema,
-		reflect.TypeOf(TestUser{}),
-		v1,
-		SchemaDirectionResponse,
-	)
+				change := epoch.NewVersionChangeBuilder(v1, v2).
+					Description("Add status field").
+					ForType(TestUser{}).
+					ResponseToPreviousVersion().
+					RemoveField("status").
+					Build()
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
+				v2.Changes = []epoch.VersionChangeInterface{change}
 
-	// Schema should be unchanged since no operations apply
-	if len(result.Properties) != len(baseSchema.Properties) {
-		t.Error("schema should be unchanged when no operations apply")
-	}
-}
+				transformer := NewVersionTransformer(vb)
+
+				baseSchema := &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"id":     openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+						"name":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+						"status": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+					},
+				}
+
+				result, err := transformer.TransformSchemaForVersion(
+					baseSchema,
+					reflect.TypeOf(TestUser{}),
+					v1,
+					SchemaDirectionResponse,
+				)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Properties["status"]).To(BeNil())
+			})
+
+			It("should handle multiple changes in one migration", func() {
+				v1, _ := epoch.NewDateVersion("2024-01-01")
+				v2, _ := epoch.NewDateVersion("2024-06-01")
+
+				// v1 -> v2: adds email, phone, and status
+				change := epoch.NewVersionChangeBuilder(v1, v2).
+					Description("Add multiple fields").
+					ForType(TestUser{}).
+					ResponseToPreviousVersion().
+					RemoveField("email").
+					RemoveField("phone").
+					RemoveField("status").
+					Build()
+
+				v2.Changes = []epoch.VersionChangeInterface{change}
+
+				vb, err := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
+				Expect(err).NotTo(HaveOccurred())
+
+				transformer := NewVersionTransformer(vb)
+
+				baseSchema := &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"id":     openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+						"name":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+						"email":  openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+						"phone":  openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+						"status": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+					},
+				}
+
+				result, err := transformer.TransformSchemaForVersion(
+					baseSchema,
+					reflect.TypeOf(TestUser{}),
+					v1,
+					SchemaDirectionResponse,
+				)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Properties).To(HaveLen(2))
+				Expect(result.Properties["email"]).To(BeNil())
+				Expect(result.Properties["phone"]).To(BeNil())
+				Expect(result.Properties["status"]).To(BeNil())
+			})
+		})
+
+		Context("Request transformations", func() {
+			It("should add field when transforming request schema for older version", func() {
+				v1, _ := epoch.NewDateVersion("2024-01-01")
+				v2, _ := epoch.NewDateVersion("2024-06-01")
+
+				// v1 -> v2: add "email" field (v2/HEAD has it, v1 doesn't)
+				// When generating v1 request schema, we start from v2 and remove email
+				change := epoch.NewVersionChangeBuilder(v1, v2).
+					Description("Add email field").
+					ForType(TestUser{}).
+					RequestToNextVersion().
+					AddField("email", "unknown@example.com").
+					Build()
+
+				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
+				v2.Changes = []epoch.VersionChangeInterface{change}
+
+				transformer := NewVersionTransformer(vb)
+
+				// HEAD/v2 schema (has email)
+				baseSchema := &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"id":    openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+						"name":  openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+						"email": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+					},
+				}
+
+				// Transform for v1 (should remove email since v1 doesn't have it)
+				result, err := transformer.TransformSchemaForVersion(
+					baseSchema,
+					reflect.TypeOf(TestUser{}),
+					v1,
+					SchemaDirectionRequest,
+				)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Properties["email"]).To(BeNil())
+				Expect(result.Properties["id"]).NotTo(BeNil())
+				Expect(result.Properties["name"]).NotTo(BeNil())
+				Expect(result.Properties).To(HaveLen(2))
+			})
+
+			It("should rename field when transforming request schema", func() {
+				v1, _ := epoch.NewDateVersion("2024-01-01")
+				v2, _ := epoch.NewDateVersion("2024-06-01")
+
+				// v1 -> v2: rename "name" to "full_name"
+				// HEAD has "full_name", v1 has "name"
+				change := epoch.NewVersionChangeBuilder(v1, v2).
+					Description("Rename name to full_name").
+					ForType(TestUser{}).
+					RequestToNextVersion().
+					RenameField("name", "full_name").
+					Build()
+
+				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
+				v2.Changes = []epoch.VersionChangeInterface{change}
+
+				transformer := NewVersionTransformer(vb)
+
+				// HEAD/v2 schema has "full_name"
+				baseSchema := &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"id":        openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+						"full_name": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+					},
+				}
+
+				// Transform for v1 (should rename full_name -> name)
+				result, err := transformer.TransformSchemaForVersion(
+					baseSchema,
+					reflect.TypeOf(TestUser{}),
+					v1,
+					SchemaDirectionRequest,
+				)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Properties["full_name"]).To(BeNil())
+				Expect(result.Properties["name"]).NotTo(BeNil())
+				Expect(result.Properties).To(HaveLen(2))
+			})
+
+			It("should remove field when transforming request schema for older version", func() {
+				v1, _ := epoch.NewDateVersion("2024-01-01")
+				v2, _ := epoch.NewDateVersion("2024-06-01")
+
+				// v1 -> v2: remove deprecated field (v1 has it, v2 doesn't)
+				// This means RequestToNextVersion removes it when going from v1 to v2
+				change := epoch.NewVersionChangeBuilder(v1, v2).
+					Description("Remove deprecated field").
+					ForType(TestUser{}).
+					RequestToNextVersion().
+					RemoveField("deprecated_field").
+					Build()
+
+				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
+				v2.Changes = []epoch.VersionChangeInterface{change}
+
+				transformer := NewVersionTransformer(vb)
+
+				// HEAD/v2 schema (doesn't have deprecated_field)
+				baseSchema := &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"id":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+						"name": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+					},
+				}
+
+				// Transform for v1 (should add deprecated_field back since v1 has it)
+				result, err := transformer.TransformSchemaForVersion(
+					baseSchema,
+					reflect.TypeOf(TestUser{}),
+					v1,
+					SchemaDirectionRequest,
+				)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Properties["deprecated_field"]).NotTo(BeNil())
+				Expect(result.Properties["id"]).NotTo(BeNil())
+				Expect(result.Properties["name"]).NotTo(BeNil())
+				Expect(result.Properties).To(HaveLen(3))
+			})
+
+			It("should handle multiple request changes in one migration", func() {
+				v1, _ := epoch.NewDateVersion("2024-01-01")
+				v2, _ := epoch.NewDateVersion("2024-06-01")
+
+				// v1 -> v2: multiple changes
+				// - v1 has "old_status", v2 has "status" (rename)
+				// - v1 doesn't have "email", v2 has "email" (add)
+				// - v1 doesn't have "phone", v2 has "phone" (add)
+				change := epoch.NewVersionChangeBuilder(v1, v2).
+					Description("Multiple request changes").
+					ForType(TestUser{}).
+					RequestToNextVersion().
+					AddField("email", "unknown@example.com").
+					AddField("phone", "").
+					RenameField("old_status", "status").
+					Build()
+
+				v2.Changes = []epoch.VersionChangeInterface{change}
+
+				vb, err := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
+				Expect(err).NotTo(HaveOccurred())
+
+				transformer := NewVersionTransformer(vb)
+
+				// HEAD/v2 schema
+				baseSchema := &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"id":     openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+						"name":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+						"email":  openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+						"phone":  openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+						"status": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+					},
+				}
+
+				// Transform for v1 (should reverse all changes)
+				result, err := transformer.TransformSchemaForVersion(
+					baseSchema,
+					reflect.TypeOf(TestUser{}),
+					v1,
+					SchemaDirectionRequest,
+				)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Properties).To(HaveLen(3)) // id, name, old_status
+				Expect(result.Properties["email"]).To(BeNil())
+				Expect(result.Properties["phone"]).To(BeNil())
+				Expect(result.Properties["status"]).To(BeNil())
+				Expect(result.Properties["old_status"]).NotTo(BeNil())
+			})
+		})
+
+		Context("No operations for type", func() {
+			It("should return unchanged schema when no operations apply", func() {
+				v1, _ := epoch.NewDateVersion("2024-01-01")
+				v2, _ := epoch.NewDateVersion("2024-06-01")
+
+				type DifferentType struct {
+					Field string
+				}
+
+				change := epoch.NewVersionChangeBuilder(v1, v2).
+					Description("Change for different type").
+					ForType(DifferentType{}).
+					ResponseToPreviousVersion().
+					RemoveField("field").
+					Build()
+
+				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
+				v2.Changes = []epoch.VersionChangeInterface{change}
+
+				transformer := NewVersionTransformer(vb)
+
+				baseSchema := &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"id":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+						"name": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+					},
+				}
+
+				result, err := transformer.TransformSchemaForVersion(
+					baseSchema,
+					reflect.TypeOf(TestUser{}),
+					v1,
+					SchemaDirectionResponse,
+				)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Properties).To(HaveLen(len(baseSchema.Properties)))
+			})
+		})
+	})
+
+	Describe("Field Operations", func() {
+		var (
+			transformer *VersionTransformer
+			schema      *openapi3.Schema
+		)
+
+		BeforeEach(func() {
+			v1, _ := epoch.NewDateVersion("2024-01-01")
+			vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
+			transformer = NewVersionTransformer(vb)
+
+			schema = &openapi3.Schema{
+				Type:       &openapi3.Types{"object"},
+				Properties: map[string]*openapi3.SchemaRef{},
+			}
+		})
+
+		Context("Add field", func() {
+			It("should add field without required flag", func() {
+				fieldSchema := openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}})
+
+				transformer.AddFieldToSchema(schema, "test_field", fieldSchema, false)
+
+				Expect(schema.Properties["test_field"]).NotTo(BeNil())
+				Expect(schema.Required).To(HaveLen(0))
+			})
+
+			It("should add field with required flag", func() {
+				fieldSchema := openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}})
+
+				transformer.AddFieldToSchema(schema, "required_field", fieldSchema, true)
+
+				Expect(schema.Properties["required_field"]).NotTo(BeNil())
+				Expect(schema.Required).To(HaveLen(1))
+				Expect(schema.Required[0]).To(Equal("required_field"))
+			})
+		})
+
+		Context("Remove field", func() {
+			It("should remove field from properties and required array", func() {
+				schema.Properties = map[string]*openapi3.SchemaRef{
+					"field1": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+					"field2": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+				}
+				schema.Required = []string{"field1", "field2"}
+
+				transformer.RemoveFieldFromSchema(schema, "field1")
+
+				Expect(schema.Properties["field1"]).To(BeNil())
+				Expect(schema.Required).To(HaveLen(1))
+				Expect(schema.Required[0]).To(Equal("field2"))
+			})
+		})
+
+		Context("Rename field", func() {
+			It("should rename field preserving schema and required status", func() {
+				stringSchema := openapi3.NewSchemaRef("", &openapi3.Schema{
+					Type:   &openapi3.Types{"string"},
+					Format: "email",
+				})
+
+				schema.Properties = map[string]*openapi3.SchemaRef{
+					"old_name": stringSchema,
+					"field2":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+				}
+				schema.Required = []string{"old_name", "field2"}
+
+				transformer.RenameFieldInSchema(schema, "old_name", "new_name")
+
+				Expect(schema.Properties["old_name"]).To(BeNil())
+				Expect(schema.Properties["new_name"]).NotTo(BeNil())
+				Expect(schema.Properties["new_name"].Value.Format).To(Equal("email"))
+
+				foundNewName := false
+				for _, req := range schema.Required {
+					if req == "old_name" {
+						Fail("old name should not be in required array")
+					}
+					if req == "new_name" {
+						foundNewName = true
+					}
+				}
+				Expect(foundNewName).To(BeTrue())
+			})
+		})
+	})
+
+	Describe("Utilities", func() {
+		Context("CloneSchema", func() {
+			It("should create a deep copy of schema", func() {
+				original := &openapi3.Schema{
+					Type:        &openapi3.Types{"object"},
+					Format:      "custom",
+					Description: "Test schema",
+					Properties: map[string]*openapi3.SchemaRef{
+						"field1": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+					},
+					Required: []string{"field1"},
+				}
+
+				clone := CloneSchema(original)
+
+				// Verify clone is different object
+				Expect(clone).NotTo(BeIdenticalTo(original))
+
+				// Verify properties are copied
+				Expect(clone.Format).To(Equal(original.Format))
+				Expect(clone.Description).To(Equal(original.Description))
+				Expect(clone.Properties).To(HaveLen(len(original.Properties)))
+				Expect(clone.Required).To(HaveLen(len(original.Required)))
+
+				// Modify clone and verify original is unchanged
+				clone.Properties["field2"] = openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}})
+				Expect(original.Properties).To(HaveLen(1))
+			})
+		})
+
+		Context("changeAppliesToType", func() {
+			It("should return true when change targets the type and direction", func() {
+				v1, _ := epoch.NewDateVersion("2024-01-01")
+				v2, _ := epoch.NewDateVersion("2024-06-01")
+
+				change := epoch.NewVersionChangeBuilder(v1, v2).
+					Description("Test change").
+					ForType(TestUser{}).
+					ResponseToPreviousVersion().
+					RemoveField("email").
+					Build()
+
+				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
+				transformer := NewVersionTransformer(vb)
+
+				// Should apply to TestUser
+				Expect(transformer.changeAppliesToType(change, reflect.TypeOf(TestUser{}), SchemaDirectionResponse)).To(BeTrue())
+			})
+
+			It("should return false for different type", func() {
+				v1, _ := epoch.NewDateVersion("2024-01-01")
+				v2, _ := epoch.NewDateVersion("2024-06-01")
+
+				change := epoch.NewVersionChangeBuilder(v1, v2).
+					Description("Test change").
+					ForType(TestUser{}).
+					ResponseToPreviousVersion().
+					RemoveField("email").
+					Build()
+
+				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
+				transformer := NewVersionTransformer(vb)
+
+				type OtherType struct {
+					ID int
+				}
+
+				Expect(transformer.changeAppliesToType(change, reflect.TypeOf(OtherType{}), SchemaDirectionResponse)).To(BeFalse())
+			})
+
+			It("should return false for different direction", func() {
+				v1, _ := epoch.NewDateVersion("2024-01-01")
+				v2, _ := epoch.NewDateVersion("2024-06-01")
+
+				change := epoch.NewVersionChangeBuilder(v1, v2).
+					Description("Test change").
+					ForType(TestUser{}).
+					ResponseToPreviousVersion().
+					RemoveField("email").
+					Build()
+
+				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
+				transformer := NewVersionTransformer(vb)
+
+				Expect(transformer.changeAppliesToType(change, reflect.TypeOf(TestUser{}), SchemaDirectionRequest)).To(BeFalse())
+			})
+		})
+	})
+})

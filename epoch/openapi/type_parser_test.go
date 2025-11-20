@@ -2,341 +2,273 @@ package openapi
 
 import (
 	"reflect"
-	"testing"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestTypeParser_ParsePrimitiveTypes(t *testing.T) {
-	tp := NewTypeParser()
+var _ = Describe("TypeParser", func() {
+	var tp *TypeParser
 
-	tests := []struct {
-		name       string
-		typ        reflect.Type
-		wantType   string
-		wantFormat string
-	}{
-		{
-			name:     "string",
-			typ:      reflect.TypeOf(""),
-			wantType: "string",
-		},
-		{
-			name:       "int",
-			typ:        reflect.TypeOf(int(0)),
-			wantType:   "integer",
-			wantFormat: "int64",
-		},
-		{
-			name:       "int64",
-			typ:        reflect.TypeOf(int64(0)),
-			wantType:   "integer",
-			wantFormat: "int64",
-		},
-		{
-			name:       "int32",
-			typ:        reflect.TypeOf(int32(0)),
-			wantType:   "integer",
-			wantFormat: "int32",
-		},
-		{
-			name:       "float32",
-			typ:        reflect.TypeOf(float32(0)),
-			wantType:   "number",
-			wantFormat: "float",
-		},
-		{
-			name:       "float64",
-			typ:        reflect.TypeOf(float64(0)),
-			wantType:   "number",
-			wantFormat: "double",
-		},
-		{
-			name:     "bool",
-			typ:      reflect.TypeOf(false),
-			wantType: "boolean",
-		},
-		{
-			name:       "time.Time",
-			typ:        reflect.TypeOf(time.Time{}),
-			wantType:   "string",
-			wantFormat: "date-time",
-		},
-	}
+	BeforeEach(func() {
+		tp = NewTypeParser()
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			schemaRef, err := tp.ParseType(tt.typ)
-			if err != nil {
-				t.Fatalf("ParseType() error = %v", err)
+	Describe("Primitive Types", func() {
+		Context("string type", func() {
+			It("should parse string correctly", func() {
+				schemaRef, err := tp.ParseType(reflect.TypeOf(""))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(schemaRef.Value).NotTo(BeNil())
+				Expect(schemaRef.Value.Type.Is("string")).To(BeTrue())
+			})
+		})
+
+		Context("integer types", func() {
+			It("should parse int as integer with int64 format", func() {
+				schemaRef, err := tp.ParseType(reflect.TypeOf(int(0)))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(schemaRef.Value).NotTo(BeNil())
+				Expect(schemaRef.Value.Type.Is("integer")).To(BeTrue())
+				Expect(schemaRef.Value.Format).To(Equal("int64"))
+			})
+
+			It("should parse int64 as integer with int64 format", func() {
+				schemaRef, err := tp.ParseType(reflect.TypeOf(int64(0)))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(schemaRef.Value).NotTo(BeNil())
+				Expect(schemaRef.Value.Type.Is("integer")).To(BeTrue())
+				Expect(schemaRef.Value.Format).To(Equal("int64"))
+			})
+
+			It("should parse int32 as integer with int32 format", func() {
+				schemaRef, err := tp.ParseType(reflect.TypeOf(int32(0)))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(schemaRef.Value).NotTo(BeNil())
+				Expect(schemaRef.Value.Type.Is("integer")).To(BeTrue())
+				Expect(schemaRef.Value.Format).To(Equal("int32"))
+			})
+		})
+
+		Context("floating point types", func() {
+			It("should parse float32 as number with float format", func() {
+				schemaRef, err := tp.ParseType(reflect.TypeOf(float32(0)))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(schemaRef.Value).NotTo(BeNil())
+				Expect(schemaRef.Value.Type.Is("number")).To(BeTrue())
+				Expect(schemaRef.Value.Format).To(Equal("float"))
+			})
+
+			It("should parse float64 as number with double format", func() {
+				schemaRef, err := tp.ParseType(reflect.TypeOf(float64(0)))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(schemaRef.Value).NotTo(BeNil())
+				Expect(schemaRef.Value.Type.Is("number")).To(BeTrue())
+				Expect(schemaRef.Value.Format).To(Equal("double"))
+			})
+		})
+
+		Context("boolean type", func() {
+			It("should parse bool correctly", func() {
+				schemaRef, err := tp.ParseType(reflect.TypeOf(false))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(schemaRef.Value).NotTo(BeNil())
+				Expect(schemaRef.Value.Type.Is("boolean")).To(BeTrue())
+			})
+		})
+
+		Context("time type", func() {
+			It("should parse time.Time as string with date-time format", func() {
+				schemaRef, err := tp.ParseType(reflect.TypeOf(time.Time{}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(schemaRef.Value).NotTo(BeNil())
+				Expect(schemaRef.Value.Type.Is("string")).To(BeTrue())
+				Expect(schemaRef.Value.Format).To(Equal("date-time"))
+			})
+		})
+	})
+
+	Describe("Struct Parsing", func() {
+		It("should parse struct with fields", func() {
+			type SimpleStruct struct {
+				Name  string `json:"name" binding:"required,max=50"`
+				Email string `json:"email" binding:"email"`
+				Age   int    `json:"age,omitempty"`
 			}
 
-			if schemaRef.Value == nil {
-				t.Fatal("ParseType() returned nil schema")
-			}
+			schemaRef, err := tp.ParseType(reflect.TypeOf(SimpleStruct{}))
+			Expect(err).NotTo(HaveOccurred())
 
-			if !schemaRef.Value.Type.Is(tt.wantType) {
-				t.Errorf("ParseType() type = %v, want %v", schemaRef.Value.Type, tt.wantType)
-			}
+			// Should create a component reference
+			Expect(schemaRef.Ref).NotTo(BeEmpty())
 
-			if tt.wantFormat != "" && schemaRef.Value.Format != tt.wantFormat {
-				t.Errorf("ParseType() format = %v, want %v", schemaRef.Value.Format, tt.wantFormat)
+			// Check component was created
+			components := tp.GetComponents()
+			Expect(components).NotTo(BeEmpty())
+
+			schema := components["SimpleStruct"].Value
+			Expect(schema).NotTo(BeNil())
+
+			// Check properties
+			Expect(schema.Properties).To(HaveLen(3))
+
+			// Check name field
+			nameSchema := schema.Properties["name"]
+			Expect(nameSchema).NotTo(BeNil())
+			Expect(nameSchema.Value.MaxLength).NotTo(BeNil())
+			Expect(*nameSchema.Value.MaxLength).To(Equal(uint64(50)))
+
+			// Check required fields (only 'name' has binding:"required")
+			Expect(schema.Required).To(HaveLen(1))
+			if len(schema.Required) > 0 {
+				Expect(schema.Required[0]).To(Equal("name"))
 			}
 		})
-	}
-}
+	})
 
-func TestTypeParser_ParseStruct(t *testing.T) {
-	type SimpleStruct struct {
-		Name  string `json:"name" binding:"required,max=50"`
-		Email string `json:"email" binding:"email"`
-		Age   int    `json:"age,omitempty"`
-	}
+	Describe("Collections", func() {
+		Context("slices", func() {
+			It("should parse slice of structs", func() {
+				type Item struct {
+					ID string `json:"id"`
+				}
 
-	tp := NewTypeParser()
-	schemaRef, err := tp.ParseType(reflect.TypeOf(SimpleStruct{}))
-	if err != nil {
-		t.Fatalf("ParseType() error = %v", err)
-	}
+				schemaRef, err := tp.ParseType(reflect.TypeOf([]Item{}))
+				Expect(err).NotTo(HaveOccurred())
 
-	// Should create a component reference
-	if schemaRef.Ref == "" {
-		t.Error("Expected $ref for named struct")
-	}
+				Expect(schemaRef.Value.Type.Is("array")).To(BeTrue())
+				Expect(schemaRef.Value.Items).NotTo(BeNil())
 
-	// Check component was created
-	components := tp.GetComponents()
-	if len(components) == 0 {
-		t.Fatal("Expected component to be created")
-	}
-
-	schema := components["SimpleStruct"].Value
-	if schema == nil {
-		t.Fatal("Component schema is nil")
-	}
-
-	// Check properties
-	if len(schema.Properties) != 3 {
-		t.Errorf("Expected 3 properties, got %d", len(schema.Properties))
-	}
-
-	// Check name field
-	nameSchema := schema.Properties["name"]
-	if nameSchema == nil {
-		t.Fatal("name property not found")
-	}
-	if nameSchema.Value.MaxLength == nil || *nameSchema.Value.MaxLength != 50 {
-		t.Errorf("name maxLength = %v, want 50", nameSchema.Value.MaxLength)
-	}
-
-	// Check required fields (only 'name' has binding:"required")
-	if len(schema.Required) != 1 {
-		t.Errorf("Expected 1 required field (name), got %d: %v", len(schema.Required), schema.Required)
-	}
-	if len(schema.Required) > 0 && schema.Required[0] != "name" {
-		t.Errorf("Expected 'name' to be required, got %v", schema.Required)
-	}
-}
-
-func TestTypeParser_ParseSlice(t *testing.T) {
-	tp := NewTypeParser()
-
-	type Item struct {
-		ID string `json:"id"`
-	}
-
-	schemaRef, err := tp.ParseType(reflect.TypeOf([]Item{}))
-	if err != nil {
-		t.Fatalf("ParseType() error = %v", err)
-	}
-
-	if !schemaRef.Value.Type.Is("array") {
-		t.Errorf("Expected type=array, got %s", schemaRef.Value.Type)
-	}
-
-	if schemaRef.Value.Items == nil {
-		t.Fatal("Expected items schema")
-	}
-
-	// Should have a $ref to Item component
-	if schemaRef.Value.Items.Ref == "" {
-		t.Error("Expected $ref for array items")
-	}
-}
-
-func TestTypeParser_ParseMap(t *testing.T) {
-	tp := NewTypeParser()
-
-	tests := []struct {
-		name     string
-		typ      reflect.Type
-		wantType string
-	}{
-		{
-			name:     "map[string]string",
-			typ:      reflect.TypeOf(map[string]string{}),
-			wantType: "object",
-		},
-		{
-			name:     "map[string]interface{}",
-			typ:      reflect.TypeOf(map[string]interface{}{}),
-			wantType: "object",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			schemaRef, err := tp.ParseType(tt.typ)
-			if err != nil {
-				t.Fatalf("ParseType() error = %v", err)
-			}
-
-			if !schemaRef.Value.Type.Is(tt.wantType) {
-				t.Errorf("Expected type=%s, got %s", tt.wantType, schemaRef.Value.Type)
-			}
-
-			if schemaRef.Value.AdditionalProperties.Schema == nil {
-				t.Error("Expected additionalProperties to be set")
-			}
+				// Should have a $ref to Item component
+				Expect(schemaRef.Value.Items.Ref).NotTo(BeEmpty())
+			})
 		})
-	}
-}
 
-func TestTypeParser_ParsePointer(t *testing.T) {
-	tp := NewTypeParser()
+		Context("maps", func() {
+			It("should parse map[string]string", func() {
+				schemaRef, err := tp.ParseType(reflect.TypeOf(map[string]string{}))
+				Expect(err).NotTo(HaveOccurred())
 
-	type TestStruct struct {
-		Value string
-	}
+				Expect(schemaRef.Value.Type.Is("object")).To(BeTrue())
+				Expect(schemaRef.Value.AdditionalProperties.Schema).NotTo(BeNil())
+			})
 
-	// Pointer to struct should unwrap to struct
-	ptrType := reflect.TypeOf(&TestStruct{})
-	schemaRef, err := tp.ParseType(ptrType)
-	if err != nil {
-		t.Fatalf("ParseType() error = %v", err)
-	}
+			It("should parse map[string]interface{}", func() {
+				schemaRef, err := tp.ParseType(reflect.TypeOf(map[string]interface{}{}))
+				Expect(err).NotTo(HaveOccurred())
 
-	// Should create reference to TestStruct component
-	if schemaRef.Ref == "" {
-		t.Error("Expected $ref for pointer to struct")
-	}
-}
+				Expect(schemaRef.Value.Type.Is("object")).To(BeTrue())
+				Expect(schemaRef.Value.AdditionalProperties.Schema).NotTo(BeNil())
+			})
+		})
+	})
 
-func TestTypeParser_ParseEmbeddedStruct(t *testing.T) {
-	type BaseStruct struct {
-		ID   int    `json:"id"`
-		Name string `json:"name"`
-	}
+	Describe("Special Cases", func() {
+		Context("pointers", func() {
+			It("should unwrap pointer to struct", func() {
+				type TestStruct struct {
+					Value string
+				}
 
-	type ExtendedStruct struct {
-		BaseStruct
-		Email string `json:"email"`
-	}
+				ptrType := reflect.TypeOf(&TestStruct{})
+				schemaRef, err := tp.ParseType(ptrType)
+				Expect(err).NotTo(HaveOccurred())
 
-	tp := NewTypeParser()
-	_, err := tp.ParseType(reflect.TypeOf(ExtendedStruct{}))
-	if err != nil {
-		t.Fatalf("ParseType() error = %v", err)
-	}
+				// Should create reference to TestStruct component
+				Expect(schemaRef.Ref).NotTo(BeEmpty())
+			})
+		})
 
-	components := tp.GetComponents()
-	schema := components["ExtendedStruct"].Value
+		Context("embedded structs", func() {
+			It("should promote fields from embedded struct", func() {
+				type BaseStruct struct {
+					ID   int    `json:"id"`
+					Name string `json:"name"`
+				}
 
-	// Should have all fields from embedded struct promoted
-	if len(schema.Properties) != 3 {
-		t.Errorf("Expected 3 properties (id, name, email), got %d", len(schema.Properties))
-	}
+				type ExtendedStruct struct {
+					BaseStruct
+					Email string `json:"email"`
+				}
 
-	if schema.Properties["id"] == nil {
-		t.Error("Expected 'id' field from embedded struct")
-	}
-	if schema.Properties["name"] == nil {
-		t.Error("Expected 'name' field from embedded struct")
-	}
-	if schema.Properties["email"] == nil {
-		t.Error("Expected 'email' field")
-	}
-}
+				_, err := tp.ParseType(reflect.TypeOf(ExtendedStruct{}))
+				Expect(err).NotTo(HaveOccurred())
 
-func TestTypeParser_ParseInterface(t *testing.T) {
-	tp := NewTypeParser()
+				components := tp.GetComponents()
+				schema := components["ExtendedStruct"].Value
 
-	type TestStruct struct {
-		Data interface{} `json:"data"`
-	}
+				// Should have all fields from embedded struct promoted
+				Expect(schema.Properties).To(HaveLen(3))
+				Expect(schema.Properties["id"]).NotTo(BeNil())
+				Expect(schema.Properties["name"]).NotTo(BeNil())
+				Expect(schema.Properties["email"]).NotTo(BeNil())
+			})
+		})
 
-	_, err := tp.ParseType(reflect.TypeOf(TestStruct{}))
-	if err != nil {
-		t.Fatalf("ParseType() error = %v", err)
-	}
+		Context("interface{} type", func() {
+			It("should parse interface{} as object", func() {
+				type TestStruct struct {
+					Data interface{} `json:"data"`
+				}
 
-	components := tp.GetComponents()
-	schema := components["TestStruct"].Value
+				_, err := tp.ParseType(reflect.TypeOf(TestStruct{}))
+				Expect(err).NotTo(HaveOccurred())
 
-	dataField := schema.Properties["data"]
-	if dataField == nil {
-		t.Fatal("data field not found")
-	}
+				components := tp.GetComponents()
+				schema := components["TestStruct"].Value
 
-	// interface{} should be type: object
-	if !dataField.Value.Type.Is("object") {
-		t.Errorf("Expected type=object for interface{}, got %s", dataField.Value.Type)
-	}
-}
+				dataField := schema.Properties["data"]
+				Expect(dataField).NotTo(BeNil())
 
-func TestTypeParser_Cache(t *testing.T) {
-	tp := NewTypeParser()
+				// interface{} should be type: object
+				Expect(dataField.Value.Type.Is("object")).To(BeTrue())
+			})
+		})
 
-	type TestStruct struct {
-		Value string
-	}
+		Context("caching", func() {
+			It("should cache parsed types", func() {
+				type TestStruct struct {
+					Value string
+				}
 
-	typ := reflect.TypeOf(TestStruct{})
+				typ := reflect.TypeOf(TestStruct{})
 
-	// Parse once
-	ref1, err := tp.ParseType(typ)
-	if err != nil {
-		t.Fatalf("ParseType() error = %v", err)
-	}
+				// Parse once
+				ref1, err := tp.ParseType(typ)
+				Expect(err).NotTo(HaveOccurred())
 
-	// Parse again - should use cache
-	ref2, err := tp.ParseType(typ)
-	if err != nil {
-		t.Fatalf("ParseType() error = %v", err)
-	}
+				// Parse again - should use cache
+				ref2, err := tp.ParseType(typ)
+				Expect(err).NotTo(HaveOccurred())
 
-	// Should return same reference
-	if ref1.Ref != ref2.Ref {
-		t.Error("Expected cached result to match")
-	}
+				// Should return same reference
+				Expect(ref1.Ref).To(Equal(ref2.Ref))
 
-	// Reset and parse again
-	tp.Reset()
-	ref3, err := tp.ParseType(typ)
-	if err != nil {
-		t.Fatalf("ParseType() error = %v", err)
-	}
+				// Reset and parse again
+				tp.Reset()
+				ref3, err := tp.ParseType(typ)
+				Expect(err).NotTo(HaveOccurred())
 
-	// After reset, should create new component
-	if ref3.Ref != ref1.Ref {
-		t.Error("Reference should be same after reset (same component name)")
-	}
-}
+				// After reset, should create new component
+				Expect(ref3.Ref).To(Equal(ref1.Ref))
+			})
+		})
 
-func TestTypeParser_CircularReference(t *testing.T) {
-	type Node struct {
-		Value string
-		Next  *Node
-	}
+		Context("circular references", func() {
+			It("should handle circular references without panic", func() {
+				type Node struct {
+					Value string
+					Next  *Node
+				}
 
-	tp := NewTypeParser()
-	_, err := tp.ParseType(reflect.TypeOf(Node{}))
-	if err != nil {
-		t.Fatalf("ParseType() should handle circular references, got error = %v", err)
-	}
+				_, err := tp.ParseType(reflect.TypeOf(Node{}))
+				Expect(err).NotTo(HaveOccurred())
 
-	// Should not panic and should create component
-	components := tp.GetComponents()
-	if len(components) == 0 {
-		t.Error("Expected component to be created for circular reference")
-	}
-}
+				// Should not panic and should create component
+				components := tp.GetComponents()
+				Expect(components).NotTo(BeEmpty())
+			})
+		})
+	})
+})

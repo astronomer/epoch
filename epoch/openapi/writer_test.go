@@ -4,355 +4,284 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 )
 
-func TestWriter_NewWriter(t *testing.T) {
-	tests := []struct {
-		name           string
-		format         string
-		expectedFormat string
-	}{
-		{
-			name:           "yaml format",
-			format:         "yaml",
-			expectedFormat: "yaml",
-		},
-		{
-			name:           "json format",
-			format:         "json",
-			expectedFormat: "json",
-		},
-		{
-			name:           "invalid format defaults to yaml",
-			format:         "xml",
-			expectedFormat: "yaml",
-		},
-		{
-			name:           "empty format defaults to yaml",
-			format:         "",
-			expectedFormat: "yaml",
-		},
-	}
+var _ = Describe("Writer", func() {
+	Describe("Initialization", func() {
+		Context("with different formats", func() {
+			It("should create writer with yaml format", func() {
+				writer := NewWriter("yaml")
+				Expect(writer.format).To(Equal("yaml"))
+			})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			writer := NewWriter(tt.format)
-			if writer.format != tt.expectedFormat {
-				t.Errorf("expected format %s, got %s", tt.expectedFormat, writer.format)
-			}
+			It("should create writer with json format", func() {
+				writer := NewWriter("json")
+				Expect(writer.format).To(Equal("json"))
+			})
+
+			It("should default to yaml for invalid format", func() {
+				writer := NewWriter("xml")
+				Expect(writer.format).To(Equal("yaml"))
+			})
+
+			It("should default to yaml for empty format", func() {
+				writer := NewWriter("")
+				Expect(writer.format).To(Equal("yaml"))
+			})
 		})
-	}
-}
+	})
 
-func TestWriter_WriteSpec_YAML(t *testing.T) {
-	// Create a temporary directory for test files
-	tmpDir := t.TempDir()
-	filepath := filepath.Join(tmpDir, "test_spec.yaml")
+	Describe("Write Spec", func() {
+		Context("YAML format", func() {
+			It("should write spec to file", func() {
+				tmpDir := GinkgoT().TempDir()
+				filePath := filepath.Join(tmpDir, "test_spec.yaml")
 
-	// Create a simple OpenAPI spec
-	spec := &openapi3.T{
-		OpenAPI: "3.0.0",
-		Info: &openapi3.Info{
-			Title:   "Test API",
-			Version: "1.0.0",
-		},
-		Paths: openapi3.NewPaths(),
-	}
+				spec := &openapi3.T{
+					OpenAPI: "3.0.0",
+					Info: &openapi3.Info{
+						Title:   "Test API",
+						Version: "1.0.0",
+					},
+					Paths: openapi3.NewPaths(),
+				}
 
-	// Write the spec
-	writer := NewWriter("yaml")
-	err := writer.WriteSpec(spec, filepath)
-	if err != nil {
-		t.Fatalf("failed to write spec: %v", err)
-	}
+				writer := NewWriter("yaml")
+				err := writer.WriteSpec(spec, filePath)
+				Expect(err).NotTo(HaveOccurred())
 
-	// Verify file exists
-	if _, err := os.Stat(filepath); os.IsNotExist(err) {
-		t.Fatal("spec file was not created")
-	}
+				// Verify file exists
+				_, err = os.Stat(filePath)
+				Expect(err).NotTo(HaveOccurred())
 
-	// Read and verify content
-	data, err := os.ReadFile(filepath)
-	if err != nil {
-		t.Fatalf("failed to read spec file: %v", err)
-	}
+				// Read and verify content
+				data, err := os.ReadFile(filePath)
+				Expect(err).NotTo(HaveOccurred())
 
-	// Parse YAML to verify it's valid
-	var parsed map[string]interface{}
-	err = yaml.Unmarshal(data, &parsed)
-	if err != nil {
-		t.Fatalf("failed to parse YAML: %v", err)
-	}
+				// Parse YAML to verify it's valid
+				var parsed map[string]interface{}
+				err = yaml.Unmarshal(data, &parsed)
+				Expect(err).NotTo(HaveOccurred())
 
-	// Check basic structure
-	if parsed["openapi"] != "3.0.0" {
-		t.Error("openapi version not correct in output")
-	}
+				// Check basic structure
+				Expect(parsed["openapi"]).To(Equal("3.0.0"))
 
-	info, ok := parsed["info"].(map[string]interface{})
-	if !ok {
-		t.Fatal("info section not found")
-	}
+				info, ok := parsed["info"].(map[string]interface{})
+				Expect(ok).To(BeTrue())
+				Expect(info["title"]).To(Equal("Test API"))
+			})
+		})
 
-	if info["title"] != "Test API" {
-		t.Error("title not correct in output")
-	}
-}
+		Context("JSON format", func() {
+			It("should write spec to file", func() {
+				tmpDir := GinkgoT().TempDir()
+				filePath := filepath.Join(tmpDir, "test_spec.json")
 
-func TestWriter_WriteSpec_JSON(t *testing.T) {
-	// Create a temporary directory for test files
-	tmpDir := t.TempDir()
-	filepath := filepath.Join(tmpDir, "test_spec.json")
+				spec := &openapi3.T{
+					OpenAPI: "3.0.0",
+					Info: &openapi3.Info{
+						Title:   "Test API",
+						Version: "1.0.0",
+					},
+					Paths: openapi3.NewPaths(),
+				}
 
-	// Create a simple OpenAPI spec
-	spec := &openapi3.T{
-		OpenAPI: "3.0.0",
-		Info: &openapi3.Info{
-			Title:   "Test API",
-			Version: "1.0.0",
-		},
-		Paths: openapi3.NewPaths(),
-	}
+				writer := NewWriter("json")
+				err := writer.WriteSpec(spec, filePath)
+				Expect(err).NotTo(HaveOccurred())
 
-	// Write the spec
-	writer := NewWriter("json")
-	err := writer.WriteSpec(spec, filepath)
-	if err != nil {
-		t.Fatalf("failed to write spec: %v", err)
-	}
+				// Verify file exists
+				_, err = os.Stat(filePath)
+				Expect(err).NotTo(HaveOccurred())
 
-	// Verify file exists
-	if _, err := os.Stat(filepath); os.IsNotExist(err) {
-		t.Fatal("spec file was not created")
-	}
+				// Read and verify it's valid JSON
+				data, err := os.ReadFile(filePath)
+				Expect(err).NotTo(HaveOccurred())
 
-	// Read the file
-	data, err := os.ReadFile(filepath)
-	if err != nil {
-		t.Fatalf("failed to read spec file: %v", err)
-	}
+				loader := openapi3.NewLoader()
+				_, err = loader.LoadFromData(data)
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
 
-	// Verify it's valid JSON by parsing it
-	loader := openapi3.NewLoader()
-	_, err = loader.LoadFromData(data)
-	if err != nil {
-		t.Fatalf("failed to parse JSON spec: %v", err)
-	}
-}
+		Context("with invalid spec", func() {
+			It("should return error", func() {
+				tmpDir := GinkgoT().TempDir()
+				filePath := filepath.Join(tmpDir, "invalid_spec.yaml")
 
-func TestWriter_ValidateSpec(t *testing.T) {
-	tests := []struct {
-		name      string
-		spec      *openapi3.T
-		expectErr bool
-	}{
-		{
-			name: "valid spec",
-			spec: &openapi3.T{
+				// Create an invalid spec (missing required fields)
+				spec := &openapi3.T{
+					OpenAPI: "3.0.0",
+					// Missing Info which is required
+					Paths: openapi3.NewPaths(),
+				}
+
+				writer := NewWriter("yaml")
+				err := writer.WriteSpec(spec, filePath)
+				Expect(err).To(HaveOccurred())
+			})
+		})
+
+		Context("with components", func() {
+			It("should write spec with components correctly", func() {
+				tmpDir := GinkgoT().TempDir()
+				filePath := filepath.Join(tmpDir, "spec_with_components.yaml")
+
+				spec := &openapi3.T{
+					OpenAPI: "3.0.0",
+					Info: &openapi3.Info{
+						Title:   "API with Components",
+						Version: "1.0.0",
+					},
+					Paths: openapi3.NewPaths(),
+					Components: &openapi3.Components{
+						Schemas: openapi3.Schemas{
+							"User": openapi3.NewSchemaRef("", &openapi3.Schema{
+								Type: &openapi3.Types{"object"},
+								Properties: map[string]*openapi3.SchemaRef{
+									"id":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
+									"name": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+								},
+							}),
+						},
+					},
+				}
+
+				writer := NewWriter("yaml")
+				err := writer.WriteSpec(spec, filePath)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Read and verify
+				data, err := os.ReadFile(filePath)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Parse and validate
+				loader := openapi3.NewLoader()
+				loader.IsExternalRefsAllowed = true
+				loadedSpec, err := loader.LoadFromData(data)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Validate
+				err = loadedSpec.Validate(context.Background())
+				Expect(err).NotTo(HaveOccurred())
+
+				// Check that User schema exists
+				Expect(loadedSpec.Components).NotTo(BeNil())
+				Expect(loadedSpec.Components.Schemas).NotTo(BeNil())
+
+				userSchema, exists := loadedSpec.Components.Schemas["User"]
+				Expect(exists).To(BeTrue())
+				Expect(userSchema.Value).NotTo(BeNil())
+				Expect(userSchema.Value.Properties).To(HaveLen(2))
+			})
+		})
+	})
+
+	Describe("Validate Spec", func() {
+		var writer *Writer
+
+		BeforeEach(func() {
+			writer = NewWriter("yaml")
+		})
+
+		It("should validate a valid spec", func() {
+			spec := &openapi3.T{
 				OpenAPI: "3.0.0",
 				Info: &openapi3.Info{
 					Title:   "Test API",
 					Version: "1.0.0",
 				},
 				Paths: openapi3.NewPaths(),
-			},
-			expectErr: false,
-		},
-		{
-			name: "missing info",
-			spec: &openapi3.T{
+			}
+
+			err := writer.ValidateSpec(spec)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return error for spec missing info", func() {
+			spec := &openapi3.T{
 				OpenAPI: "3.0.0",
 				Paths:   openapi3.NewPaths(),
-			},
-			expectErr: true,
-		},
-		{
-			name: "missing openapi version",
-			spec: &openapi3.T{
+			}
+
+			err := writer.ValidateSpec(spec)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("should return error for spec missing openapi version", func() {
+			spec := &openapi3.T{
 				Info: &openapi3.Info{
 					Title:   "Test API",
 					Version: "1.0.0",
 				},
 				Paths: openapi3.NewPaths(),
-			},
-			expectErr: true,
-		},
-	}
-
-	writer := NewWriter("yaml")
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := writer.ValidateSpec(tt.spec)
-			if tt.expectErr && err == nil {
-				t.Error("expected error but got none")
 			}
-			if !tt.expectErr && err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
+
+			err := writer.ValidateSpec(spec)
+			Expect(err).To(HaveOccurred())
 		})
-	}
-}
+	})
 
-func TestWriter_WriteVersionedSpecs(t *testing.T) {
-	// Create a temporary directory for test files
-	tmpDir := t.TempDir()
-	filenamePattern := filepath.Join(tmpDir, "api_%s.yaml")
+	Describe("Write Versioned Specs", func() {
+		It("should write multiple versioned specs", func() {
+			tmpDir := GinkgoT().TempDir()
+			filenamePattern := filepath.Join(tmpDir, "api_%s.yaml")
 
-	// Create multiple specs
-	specs := map[string]*openapi3.T{
-		"v1": {
-			OpenAPI: "3.0.0",
-			Info: &openapi3.Info{
-				Title:   "Test API v1",
-				Version: "1.0.0",
-			},
-			Paths: openapi3.NewPaths(),
-		},
-		"v2": {
-			OpenAPI: "3.0.0",
-			Info: &openapi3.Info{
-				Title:   "Test API v2",
-				Version: "2.0.0",
-			},
-			Paths: openapi3.NewPaths(),
-		},
-		"head": {
-			OpenAPI: "3.0.0",
-			Info: &openapi3.Info{
-				Title:   "Test API HEAD",
-				Version: "head",
-			},
-			Paths: openapi3.NewPaths(),
-		},
-	}
-
-	// Write versioned specs
-	writer := NewWriter("yaml")
-	err := writer.WriteVersionedSpecs(specs, filenamePattern)
-	if err != nil {
-		t.Fatalf("failed to write versioned specs: %v", err)
-	}
-
-	// Verify all files were created
-	for version := range specs {
-		filename := filepath.Join(tmpDir, "api_"+version+".yaml")
-		if _, err := os.Stat(filename); os.IsNotExist(err) {
-			t.Errorf("spec file for version %s was not created", version)
-		}
-	}
-
-	// Verify content of one file
-	v1File := filepath.Join(tmpDir, "api_v1.yaml")
-	data, err := os.ReadFile(v1File)
-	if err != nil {
-		t.Fatalf("failed to read v1 spec: %v", err)
-	}
-
-	var parsed map[string]interface{}
-	err = yaml.Unmarshal(data, &parsed)
-	if err != nil {
-		t.Fatalf("failed to parse v1 spec: %v", err)
-	}
-
-	info, ok := parsed["info"].(map[string]interface{})
-	if !ok {
-		t.Fatal("info section not found in v1 spec")
-	}
-
-	if info["title"] != "Test API v1" {
-		t.Error("v1 spec has wrong title")
-	}
-}
-
-func TestWriter_WriteSpec_InvalidSpec(t *testing.T) {
-	tmpDir := t.TempDir()
-	filepath := filepath.Join(tmpDir, "invalid_spec.yaml")
-
-	// Create an invalid spec (missing required fields)
-	spec := &openapi3.T{
-		OpenAPI: "3.0.0",
-		// Missing Info which is required
-		Paths: openapi3.NewPaths(),
-	}
-
-	writer := NewWriter("yaml")
-	err := writer.WriteSpec(spec, filepath)
-	if err == nil {
-		t.Error("expected error for invalid spec, got none")
-	}
-}
-
-func TestWriter_WriteSpec_WithComponents(t *testing.T) {
-	tmpDir := t.TempDir()
-	filepath := filepath.Join(tmpDir, "spec_with_components.yaml")
-
-	// Create a spec with components
-	spec := &openapi3.T{
-		OpenAPI: "3.0.0",
-		Info: &openapi3.Info{
-			Title:   "API with Components",
-			Version: "1.0.0",
-		},
-		Paths: openapi3.NewPaths(),
-		Components: &openapi3.Components{
-			Schemas: openapi3.Schemas{
-				"User": openapi3.NewSchemaRef("", &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"id":   openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"integer"}}),
-						"name": openapi3.NewSchemaRef("", &openapi3.Schema{Type: &openapi3.Types{"string"}}),
+			specs := map[string]*openapi3.T{
+				"v1": {
+					OpenAPI: "3.0.0",
+					Info: &openapi3.Info{
+						Title:   "Test API v1",
+						Version: "1.0.0",
 					},
-				}),
-			},
-		},
-	}
+					Paths: openapi3.NewPaths(),
+				},
+				"v2": {
+					OpenAPI: "3.0.0",
+					Info: &openapi3.Info{
+						Title:   "Test API v2",
+						Version: "2.0.0",
+					},
+					Paths: openapi3.NewPaths(),
+				},
+				"head": {
+					OpenAPI: "3.0.0",
+					Info: &openapi3.Info{
+						Title:   "Test API HEAD",
+						Version: "head",
+					},
+					Paths: openapi3.NewPaths(),
+				},
+			}
 
-	writer := NewWriter("yaml")
-	err := writer.WriteSpec(spec, filepath)
-	if err != nil {
-		t.Fatalf("failed to write spec with components: %v", err)
-	}
+			writer := NewWriter("yaml")
+			err := writer.WriteVersionedSpecs(specs, filenamePattern)
+			Expect(err).NotTo(HaveOccurred())
 
-	// Read and verify
-	data, err := os.ReadFile(filepath)
-	if err != nil {
-		t.Fatalf("failed to read spec: %v", err)
-	}
+			// Verify all files were created
+			for version := range specs {
+				filename := filepath.Join(tmpDir, "api_"+version+".yaml")
+				_, err := os.Stat(filename)
+				Expect(err).NotTo(HaveOccurred(), "spec file for version %s was not created", version)
+			}
 
-	// Parse and validate
-	loader := openapi3.NewLoader()
-	loader.IsExternalRefsAllowed = true
-	loadedSpec, err := loader.LoadFromData(data)
-	if err != nil {
-		t.Fatalf("failed to load spec: %v", err)
-	}
+			// Verify content of one file
+			v1File := filepath.Join(tmpDir, "api_v1.yaml")
+			data, err := os.ReadFile(v1File)
+			Expect(err).NotTo(HaveOccurred())
 
-	// Validate
-	err = loadedSpec.Validate(context.Background())
-	if err != nil {
-		t.Fatalf("spec validation failed: %v", err)
-	}
+			var parsed map[string]interface{}
+			err = yaml.Unmarshal(data, &parsed)
+			Expect(err).NotTo(HaveOccurred())
 
-	// Check that User schema exists
-	if loadedSpec.Components == nil || loadedSpec.Components.Schemas == nil {
-		t.Fatal("components.schemas not found")
-	}
-
-	userSchema, exists := loadedSpec.Components.Schemas["User"]
-	if !exists {
-		t.Error("User schema not found in components")
-	}
-
-	if userSchema.Value == nil {
-		t.Fatal("User schema value is nil")
-	}
-
-	if len(userSchema.Value.Properties) != 2 {
-		t.Errorf("expected 2 properties in User schema, got %d", len(userSchema.Value.Properties))
-	}
-}
+			info, ok := parsed["info"].(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(info["title"]).To(Equal("Test API v1"))
+		})
+	})
+})
