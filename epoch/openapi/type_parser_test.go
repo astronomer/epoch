@@ -15,79 +15,25 @@ var _ = Describe("TypeParser", func() {
 		tp = NewTypeParser()
 	})
 
-	Describe("Primitive Types", func() {
-		Context("string type", func() {
-			It("should parse string correctly", func() {
-				schemaRef, err := tp.ParseType(reflect.TypeOf(""))
-				Expect(err).NotTo(HaveOccurred())
-				Expect(schemaRef.Value).NotTo(BeNil())
-				Expect(schemaRef.Value.Type.Is("string")).To(BeTrue())
-			})
-		})
-
-		Context("integer types", func() {
-			It("should parse int as integer with int64 format", func() {
-				schemaRef, err := tp.ParseType(reflect.TypeOf(int(0)))
-				Expect(err).NotTo(HaveOccurred())
-				Expect(schemaRef.Value).NotTo(BeNil())
-				Expect(schemaRef.Value.Type.Is("integer")).To(BeTrue())
-				Expect(schemaRef.Value.Format).To(Equal("int64"))
-			})
-
-			It("should parse int64 as integer with int64 format", func() {
-				schemaRef, err := tp.ParseType(reflect.TypeOf(int64(0)))
-				Expect(err).NotTo(HaveOccurred())
-				Expect(schemaRef.Value).NotTo(BeNil())
-				Expect(schemaRef.Value.Type.Is("integer")).To(BeTrue())
-				Expect(schemaRef.Value.Format).To(Equal("int64"))
-			})
-
-			It("should parse int32 as integer with int32 format", func() {
-				schemaRef, err := tp.ParseType(reflect.TypeOf(int32(0)))
-				Expect(err).NotTo(HaveOccurred())
-				Expect(schemaRef.Value).NotTo(BeNil())
-				Expect(schemaRef.Value.Type.Is("integer")).To(BeTrue())
-				Expect(schemaRef.Value.Format).To(Equal("int32"))
-			})
-		})
-
-		Context("floating point types", func() {
-			It("should parse float32 as number with float format", func() {
-				schemaRef, err := tp.ParseType(reflect.TypeOf(float32(0)))
-				Expect(err).NotTo(HaveOccurred())
-				Expect(schemaRef.Value).NotTo(BeNil())
-				Expect(schemaRef.Value.Type.Is("number")).To(BeTrue())
-				Expect(schemaRef.Value.Format).To(Equal("float"))
-			})
-
-			It("should parse float64 as number with double format", func() {
-				schemaRef, err := tp.ParseType(reflect.TypeOf(float64(0)))
-				Expect(err).NotTo(HaveOccurred())
-				Expect(schemaRef.Value).NotTo(BeNil())
-				Expect(schemaRef.Value.Type.Is("number")).To(BeTrue())
-				Expect(schemaRef.Value.Format).To(Equal("double"))
-			})
-		})
-
-		Context("boolean type", func() {
-			It("should parse bool correctly", func() {
-				schemaRef, err := tp.ParseType(reflect.TypeOf(false))
-				Expect(err).NotTo(HaveOccurred())
-				Expect(schemaRef.Value).NotTo(BeNil())
-				Expect(schemaRef.Value.Type.Is("boolean")).To(BeTrue())
-			})
-		})
-
-		Context("time type", func() {
-			It("should parse time.Time as string with date-time format", func() {
-				schemaRef, err := tp.ParseType(reflect.TypeOf(time.Time{}))
-				Expect(err).NotTo(HaveOccurred())
-				Expect(schemaRef.Value).NotTo(BeNil())
-				Expect(schemaRef.Value.Type.Is("string")).To(BeTrue())
-				Expect(schemaRef.Value.Format).To(Equal("date-time"))
-			})
-		})
-	})
+	DescribeTable("Primitive Types",
+		func(goValue interface{}, expectedType, expectedFormat string) {
+			schemaRef, err := tp.ParseType(reflect.TypeOf(goValue))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(schemaRef.Value).NotTo(BeNil())
+			Expect(schemaRef.Value.Type.Is(expectedType)).To(BeTrue())
+			if expectedFormat != "" {
+				Expect(schemaRef.Value.Format).To(Equal(expectedFormat))
+			}
+		},
+		Entry("string", "", "string", ""),
+		Entry("int", int(0), "integer", "int64"),
+		Entry("int64", int64(0), "integer", "int64"),
+		Entry("int32", int32(0), "integer", "int32"),
+		Entry("float32", float32(0), "number", "float"),
+		Entry("float64", float64(0), "number", "double"),
+		Entry("bool", false, "boolean", ""),
+		Entry("time.Time", time.Time{}, "string", "date-time"),
+	)
 
 	Describe("Struct Parsing", func() {
 		It("should parse struct with fields", func() {
@@ -145,23 +91,16 @@ var _ = Describe("TypeParser", func() {
 			})
 		})
 
-		Context("maps", func() {
-			It("should parse map[string]string", func() {
-				schemaRef, err := tp.ParseType(reflect.TypeOf(map[string]string{}))
+		DescribeTable("maps",
+			func(mapValue interface{}) {
+				schemaRef, err := tp.ParseType(reflect.TypeOf(mapValue))
 				Expect(err).NotTo(HaveOccurred())
-
 				Expect(schemaRef.Value.Type.Is("object")).To(BeTrue())
 				Expect(schemaRef.Value.AdditionalProperties.Schema).NotTo(BeNil())
-			})
-
-			It("should parse map[string]interface{}", func() {
-				schemaRef, err := tp.ParseType(reflect.TypeOf(map[string]interface{}{}))
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(schemaRef.Value.Type.Is("object")).To(BeTrue())
-				Expect(schemaRef.Value.AdditionalProperties.Schema).NotTo(BeNil())
-			})
-		})
+			},
+			Entry("map[string]string", map[string]string{}),
+			Entry("map[string]interface{}", map[string]interface{}{}),
+		)
 	})
 
 	Describe("Special Cases", func() {

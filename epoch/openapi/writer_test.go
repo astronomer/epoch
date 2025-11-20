@@ -12,29 +12,16 @@ import (
 )
 
 var _ = Describe("Writer", func() {
-	Describe("Initialization", func() {
-		Context("with different formats", func() {
-			It("should create writer with yaml format", func() {
-				writer := NewWriter("yaml")
-				Expect(writer.format).To(Equal("yaml"))
-			})
-
-			It("should create writer with json format", func() {
-				writer := NewWriter("json")
-				Expect(writer.format).To(Equal("json"))
-			})
-
-			It("should default to yaml for invalid format", func() {
-				writer := NewWriter("xml")
-				Expect(writer.format).To(Equal("yaml"))
-			})
-
-			It("should default to yaml for empty format", func() {
-				writer := NewWriter("")
-				Expect(writer.format).To(Equal("yaml"))
-			})
-		})
-	})
+	DescribeTable("Initialization",
+		func(inputFormat, expectedFormat string) {
+			writer := NewWriter(inputFormat)
+			Expect(writer.format).To(Equal(expectedFormat))
+		},
+		Entry("yaml format", "yaml", "yaml"),
+		Entry("json format", "json", "json"),
+		Entry("invalid format defaults to yaml", "xml", "yaml"),
+		Entry("empty format defaults to yaml", "", "yaml"),
+	)
 
 	Describe("Write Spec", func() {
 		Context("YAML format", func() {
@@ -182,50 +169,30 @@ var _ = Describe("Writer", func() {
 		})
 	})
 
-	Describe("Validate Spec", func() {
-		var writer *Writer
-
-		BeforeEach(func() {
-			writer = NewWriter("yaml")
-		})
-
-		It("should validate a valid spec", func() {
-			spec := &openapi3.T{
-				OpenAPI: "3.0.0",
-				Info: &openapi3.Info{
-					Title:   "Test API",
-					Version: "1.0.0",
-				},
-				Paths: openapi3.NewPaths(),
-			}
-
+	DescribeTable("Validate Spec",
+		func(spec *openapi3.T, shouldError bool) {
+			writer := NewWriter("yaml")
 			err := writer.ValidateSpec(spec)
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		It("should return error for spec missing info", func() {
-			spec := &openapi3.T{
-				OpenAPI: "3.0.0",
-				Paths:   openapi3.NewPaths(),
+			if shouldError {
+				Expect(err).To(HaveOccurred())
+			} else {
+				Expect(err).NotTo(HaveOccurred())
 			}
-
-			err := writer.ValidateSpec(spec)
-			Expect(err).To(HaveOccurred())
-		})
-
-		It("should return error for spec missing openapi version", func() {
-			spec := &openapi3.T{
-				Info: &openapi3.Info{
-					Title:   "Test API",
-					Version: "1.0.0",
-				},
-				Paths: openapi3.NewPaths(),
-			}
-
-			err := writer.ValidateSpec(spec)
-			Expect(err).To(HaveOccurred())
-		})
-	})
+		},
+		Entry("valid spec", &openapi3.T{
+			OpenAPI: "3.0.0",
+			Info:    &openapi3.Info{Title: "Test API", Version: "1.0.0"},
+			Paths:   openapi3.NewPaths(),
+		}, false),
+		Entry("missing info", &openapi3.T{
+			OpenAPI: "3.0.0",
+			Paths:   openapi3.NewPaths(),
+		}, true),
+		Entry("missing openapi version", &openapi3.T{
+			Info:  &openapi3.Info{Title: "Test API", Version: "1.0.0"},
+			Paths: openapi3.NewPaths(),
+		}, true),
+	)
 
 	Describe("Write Versioned Specs", func() {
 		It("should write multiple versioned specs", func() {

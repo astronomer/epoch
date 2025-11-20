@@ -97,35 +97,22 @@ var _ = Describe("SchemaGenerator", func() {
 		})
 	})
 
-	Describe("Version Suffix", func() {
-		var generator *SchemaGenerator
-
-		BeforeEach(func() {
+	DescribeTable("Version Suffix",
+		func(versionFunc func() *epoch.Version, expectedSuffix string) {
 			versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{})
 			config := SchemaGeneratorConfig{
 				VersionBundle: versionBundle,
 			}
-			generator = NewSchemaGenerator(config)
-		})
+			generator := NewSchemaGenerator(config)
 
-		It("should return empty suffix for HEAD version", func() {
-			version := epoch.NewHeadVersion()
+			version := versionFunc()
 			suffix := generator.getVersionSuffix(version)
-			Expect(suffix).To(Equal(""))
-		})
-
-		It("should return correct suffix for date version", func() {
-			v, _ := epoch.NewDateVersion("2024-01-01")
-			suffix := generator.getVersionSuffix(v)
-			Expect(suffix).To(Equal("V20240101"))
-		})
-
-		It("should return correct suffix for semver version", func() {
-			v, _ := epoch.NewSemverVersion("1.2.3")
-			suffix := generator.getVersionSuffix(v)
-			Expect(suffix).To(Equal("V123"))
-		})
-	})
+			Expect(suffix).To(Equal(expectedSuffix))
+		},
+		Entry("HEAD version", func() *epoch.Version { return epoch.NewHeadVersion() }, ""),
+		Entry("date version", func() *epoch.Version { v, _ := epoch.NewDateVersion("2024-01-01"); return v }, "V20240101"),
+		Entry("semver version", func() *epoch.Version { v, _ := epoch.NewSemverVersion("1.2.3"); return v }, "V123"),
+	)
 
 	Describe("Spec Cloning", func() {
 		It("should clone spec correctly", func() {
