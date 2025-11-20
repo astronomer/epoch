@@ -5,12 +5,12 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"reflect"
 	"time"
 
 	"github.com/astronomer/epoch/epoch"
 	"github.com/astronomer/epoch/epoch/openapi"
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/gin-gonic/gin"
 )
 
 // Example types that match the advanced example
@@ -39,6 +39,19 @@ type OrganizationResponse struct {
 	CreatedAt *time.Time        `json:"createdAt" validate:"required" format:"date-time"`
 	UpdatedAt *time.Time        `json:"updatedAt" validate:"required" format:"date-time"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
+}
+
+// Dummy handler functions for Gin router registration
+func getUser(c *gin.Context) {
+	c.JSON(200, UserResponse{})
+}
+
+func createUser(c *gin.Context) {
+	c.JSON(201, UserResponse{})
+}
+
+func getOrganization(c *gin.Context) {
+	c.JSON(200, OrganizationResponse{})
 }
 
 // Helper function to create a minimal base OpenAPI spec
@@ -287,17 +300,33 @@ func main() {
 	v3, _ := epoch.NewDateVersion("2025-01-01")
 
 	// Define version migrations
+	// v1→v2: Add email and status fields
+	// HEAD has these fields, v1 doesn't, so:
+	// - Response: Remove them when sending to v1 (ResponseToPreviousVersion)
+	// - Request: Add them when v1 client sends request (RequestToNextVersion)
 	v1ToV2 := epoch.NewVersionChangeBuilder(v1, v2).
 		Description("Add email and status fields to User").
-		ForType(UserResponse{}, CreateUserRequest{}).
+		ForType(CreateUserRequest{}).
+		RequestToNextVersion().
+		AddField("email", "").
+		AddField("status", "active").
+		ForType(UserResponse{}).
 		ResponseToPreviousVersion().
 		RemoveField("email").
 		RemoveField("status").
 		Build()
 
+	// v2→v3: Rename name to full_name, add phone
+	// HEAD has full_name and phone, v2 has name (no phone), so:
+	// - Response: Rename full_name→name, remove phone when sending to v2
+	// - Request: Rename name→full_name, add phone when v2 client sends request
 	v2ToV3 := epoch.NewVersionChangeBuilder(v2, v3).
 		Description("Rename name to full_name, add phone").
-		ForType(UserResponse{}, CreateUserRequest{}).
+		ForType(CreateUserRequest{}).
+		RequestToNextVersion().
+		RenameField("name", "full_name").
+		AddField("phone", "").
+		ForType(UserResponse{}).
 		ResponseToPreviousVersion().
 		RenameField("full_name", "name").
 		RemoveField("phone").
@@ -322,25 +351,28 @@ func main() {
 	fmt.Println("✓ Created Epoch instance with 3 versions + HEAD")
 	fmt.Println("  Versions: 2024-01-01, 2024-06-01, 2025-01-01, head")
 
-	// Register types in endpoint registry for schema generation
-	// In a real application, these would be registered via WrapHandler().Returns()/.Accepts()
-	// but for this example, we register them directly
-	epochInstance.EndpointRegistry().Register("GET", "/users/:id", &epoch.EndpointDefinition{
-		Method:       "GET",
-		PathPattern:  "/users/:id",
-		ResponseType: reflect.TypeOf(UserResponse{}),
-	})
-	epochInstance.EndpointRegistry().Register("POST", "/users", &epoch.EndpointDefinition{
-		Method:       "POST",
-		PathPattern:  "/users",
-		RequestType:  reflect.TypeOf(CreateUserRequest{}),
-		ResponseType: reflect.TypeOf(UserResponse{}),
-	})
-	epochInstance.EndpointRegistry().Register("GET", "/organizations/:id", &epoch.EndpointDefinition{
-		Method:       "GET",
-		PathPattern:  "/organizations/:id",
-		ResponseType: reflect.TypeOf(OrganizationResponse{}),
-	})
+	// Register endpoints via Gin router using WrapHandler pattern
+	// This is the production pattern that automatically registers types
+	router := gin.New()
+	routerGroup := router.Group("")
+
+	routerGroup.GET("/users/:id",
+		epochInstance.WrapHandler(getUser).
+			Returns(UserResponse{}).
+			ToHandlerFunc("GET", "/users/:id"))
+
+	routerGroup.POST("/users",
+		epochInstance.WrapHandler(createUser).
+			Accepts(CreateUserRequest{}).
+			Returns(UserResponse{}).
+			ToHandlerFunc("POST", "/users"))
+
+	routerGroup.GET("/organizations/:id",
+		epochInstance.WrapHandler(getOrganization).
+			Returns(OrganizationResponse{}).
+			ToHandlerFunc("GET", "/organizations/:id"))
+
+	fmt.Println("✓ Registered endpoints via Gin router")
 
 	// Create schema generator
 	generator := openapi.NewSchemaGenerator(openapi.SchemaGeneratorConfig{
@@ -453,9 +485,9 @@ func main() {
 	v3Spec := specs["with_existing_2025-01-01"]
 	headSpec := specs["with_existing_head"]
 
-	// Check v1 transformations
+	// Check v1 transformations (uses bare name when transforming existing schema)
 	if v1Spec != nil {
-		v1Schema := v1Spec.Components.Schemas["UserResponseV20240101"]
+		v1Schema := v1Spec.Components.Schemas["UserResponse"]
 		if v1Schema != nil && v1Schema.Value != nil {
 			hasEmail := v1Schema.Value.Properties["email"] != nil
 			hasStatus := v1Schema.Value.Properties["status"] != nil
@@ -468,9 +500,9 @@ func main() {
 		}
 	}
 
-	// Check v2 transformations
+	// Check v2 transformations (uses bare name when transforming existing schema)
 	if v2Spec != nil {
-		v2Schema := v2Spec.Components.Schemas["UserResponseV20240601"]
+		v2Schema := v2Spec.Components.Schemas["UserResponse"]
 		if v2Schema != nil && v2Schema.Value != nil {
 			hasName := v2Schema.Value.Properties["name"] != nil
 			hasFullName := v2Schema.Value.Properties["full_name"] != nil
@@ -484,20 +516,18 @@ func main() {
 		}
 	}
 
-	// Check v3 and HEAD have all fields
+	// Check v3 and HEAD have all fields (should be identical - no v3→HEAD change defined)
 	if v3Spec != nil {
-		v3Schema := v3Spec.Components.Schemas["UserResponseV20250101"]
+		v3Schema := v3Spec.Components.Schemas["UserResponse"]
 		if v3Schema != nil && v3Schema.Value != nil {
-			// v3 is between v2 and HEAD, so transformations from both v1ToV2 and v2ToV3 apply
-			// v3 should have: id, name, created_at (missing email, status, phone, and using 'name' not 'full_name')
-			hasExpectedFields := v3Schema.Value.Properties["id"] != nil &&
-				v3Schema.Value.Properties["name"] != nil &&
+			// v3 should be identical to HEAD (all fields with full_name)
+			hasAllFields := v3Schema.Value.Properties["id"] != nil &&
+				v3Schema.Value.Properties["full_name"] != nil &&
+				v3Schema.Value.Properties["email"] != nil &&
+				v3Schema.Value.Properties["phone"] != nil &&
+				v3Schema.Value.Properties["status"] != nil &&
 				v3Schema.Value.Properties["created_at"] != nil
-			hasEmail := v3Schema.Value.Properties["email"] != nil
-			hasStatus := v3Schema.Value.Properties["status"] != nil
-			hasPhone := v3Schema.Value.Properties["phone"] != nil
-			hasFullName := v3Schema.Value.Properties["full_name"] != nil
-			results.TransformV3Correct = hasExpectedFields && !hasEmail && !hasStatus && !hasPhone && !hasFullName
+			results.TransformV3Correct = hasAllFields
 		}
 	}
 
@@ -508,17 +538,18 @@ func main() {
 				headSchema.Value.Properties["full_name"] != nil &&
 				headSchema.Value.Properties["email"] != nil &&
 				headSchema.Value.Properties["phone"] != nil &&
-				headSchema.Value.Properties["status"] != nil
+				headSchema.Value.Properties["status"] != nil &&
+				headSchema.Value.Properties["created_at"] != nil
 			results.TransformHEADCorrect = hasAllFields
 		}
 	}
 
 	if results.TransformV3Correct && results.TransformHEADCorrect {
-		fmt.Println("    ✓ v3: name only (cumulative transforms applied)")
+		fmt.Println("    ✓ v3: all fields (identical to HEAD)")
 		fmt.Println("    ✓ HEAD: all fields present with full_name")
 	} else {
 		if !results.TransformV3Correct {
-			fmt.Println("    ✗ v3: should have id, name, created_at only")
+			fmt.Println("    ✗ v3: should have all fields (identical to HEAD)")
 		}
 		if !results.TransformHEADCorrect {
 			fmt.Println("    ✗ HEAD: should have all fields")
@@ -532,12 +563,93 @@ func main() {
 
 	fmt.Println()
 
+	// Verify Request Schema Transformations
+	fmt.Println("  Request Schema Transformations:")
+
+	// Note: Unlike response schemas, request schemas use bare names (not versioned)
+	// Each version gets its own transformed CreateUserRequest schema
+
+	// Check v1 request transformations
+	if v1Spec != nil {
+		v1RequestSchema := v1Spec.Components.Schemas["CreateUserRequest"]
+		if v1RequestSchema != nil && v1RequestSchema.Value != nil {
+			hasEmail := v1RequestSchema.Value.Properties["email"] != nil
+			hasStatus := v1RequestSchema.Value.Properties["status"] != nil
+			hasPhone := v1RequestSchema.Value.Properties["phone"] != nil
+			hasName := v1RequestSchema.Value.Properties["name"] != nil
+			hasFullName := v1RequestSchema.Value.Properties["full_name"] != nil
+			v1RequestCorrect := !hasEmail && !hasStatus && !hasPhone && hasName && !hasFullName
+			if v1RequestCorrect {
+				fmt.Println("    ✓ v1 request: name only (no email, status, phone, full_name)")
+			} else {
+				fmt.Printf("    ✗ v1 request: should have name only (has email:%v status:%v phone:%v name:%v full_name:%v)\n",
+					hasEmail, hasStatus, hasPhone, hasName, hasFullName)
+			}
+		}
+	}
+
+	// Check v2 request transformations
+	if v2Spec != nil {
+		v2RequestSchema := v2Spec.Components.Schemas["CreateUserRequest"]
+		if v2RequestSchema != nil && v2RequestSchema.Value != nil {
+			hasEmail := v2RequestSchema.Value.Properties["email"] != nil
+			hasStatus := v2RequestSchema.Value.Properties["status"] != nil
+			hasPhone := v2RequestSchema.Value.Properties["phone"] != nil
+			hasName := v2RequestSchema.Value.Properties["name"] != nil
+			hasFullName := v2RequestSchema.Value.Properties["full_name"] != nil
+			v2RequestCorrect := hasEmail && hasStatus && !hasPhone && hasName && !hasFullName
+			if v2RequestCorrect {
+				fmt.Println("    ✓ v2 request: name, email, status (no phone, full_name)")
+			} else {
+				fmt.Printf("    ✗ v2 request: should have name, email, status (has email:%v status:%v phone:%v name:%v full_name:%v)\n",
+					hasEmail, hasStatus, hasPhone, hasName, hasFullName)
+			}
+		}
+	}
+
+	// Check v3 and HEAD request transformations
+	if v3Spec != nil {
+		v3RequestSchema := v3Spec.Components.Schemas["CreateUserRequest"]
+		if v3RequestSchema != nil && v3RequestSchema.Value != nil {
+			hasEmail := v3RequestSchema.Value.Properties["email"] != nil
+			hasStatus := v3RequestSchema.Value.Properties["status"] != nil
+			hasPhone := v3RequestSchema.Value.Properties["phone"] != nil
+			hasFullName := v3RequestSchema.Value.Properties["full_name"] != nil
+			v3RequestCorrect := hasEmail && hasStatus && hasPhone && hasFullName
+			if v3RequestCorrect {
+				fmt.Println("    ✓ v3 request: all fields with full_name")
+			} else {
+				fmt.Printf("    ✗ v3 request: should have all fields (has email:%v status:%v phone:%v full_name:%v)\n",
+					hasEmail, hasStatus, hasPhone, hasFullName)
+			}
+		}
+	}
+
+	if headSpec != nil {
+		headRequestSchema := headSpec.Components.Schemas["CreateUserRequest"]
+		if headRequestSchema != nil && headRequestSchema.Value != nil {
+			hasEmail := headRequestSchema.Value.Properties["email"] != nil
+			hasStatus := headRequestSchema.Value.Properties["status"] != nil
+			hasPhone := headRequestSchema.Value.Properties["phone"] != nil
+			hasFullName := headRequestSchema.Value.Properties["full_name"] != nil
+			headRequestCorrect := hasEmail && hasStatus && hasPhone && hasFullName
+			if headRequestCorrect {
+				fmt.Println("    ✓ HEAD request: all fields with full_name")
+			} else {
+				fmt.Printf("    ✗ HEAD request: should have all fields (has email:%v status:%v phone:%v full_name:%v)\n",
+					hasEmail, hasStatus, hasPhone, hasFullName)
+			}
+		}
+	}
+
+	fmt.Println()
+
 	// Verify Smart Merging (description preservation)
 	fmt.Println("  Smart Merging:")
 
-	// Check v1 descriptions preserved
+	// Check v1 descriptions preserved (uses bare name when transforming existing schema)
 	if v1Spec != nil {
-		v1Schema := v1Spec.Components.Schemas["UserResponseV20240101"]
+		v1Schema := v1Spec.Components.Schemas["UserResponse"]
 		if v1Schema != nil && v1Schema.Value != nil && v1Schema.Value.Properties["id"] != nil {
 			idDesc := v1Schema.Value.Properties["id"].Value.Description
 			results.SmartMergeV1Correct = idDesc == "User ID from base spec"
@@ -549,9 +661,9 @@ func main() {
 		}
 	}
 
-	// Check v2 descriptions preserved
+	// Check v2 descriptions preserved (uses bare name when transforming existing schema)
 	if v2Spec != nil {
-		v2Schema := v2Spec.Components.Schemas["UserResponseV20240601"]
+		v2Schema := v2Spec.Components.Schemas["UserResponse"]
 		if v2Schema != nil && v2Schema.Value != nil && v2Schema.Value.Properties["id"] != nil {
 			idDesc := v2Schema.Value.Properties["id"].Value.Description
 			results.SmartMergeV2Correct = idDesc == "User ID from base spec"
@@ -563,9 +675,9 @@ func main() {
 		}
 	}
 
-	// Check v3/HEAD descriptions preserved
+	// Check v3/HEAD descriptions preserved (both use bare name)
 	if v3Spec != nil {
-		v3Schema := v3Spec.Components.Schemas["UserResponseV20250101"]
+		v3Schema := v3Spec.Components.Schemas["UserResponse"]
 		if v3Schema != nil && v3Schema.Value != nil && v3Schema.Value.Properties["id"] != nil {
 			idDesc := v3Schema.Value.Properties["id"].Value.Description
 			results.SmartMergeV3Correct = idDesc == "User ID from base spec"
@@ -631,6 +743,7 @@ func main() {
 	fmt.Println()
 
 	// Verify Schema Naming Convention
+	// When transforming existing schemas from base spec, bare names are preserved
 	fmt.Println("  Schema Naming:")
 
 	if headSpec != nil && headSpec.Components != nil {
@@ -645,35 +758,38 @@ func main() {
 	}
 
 	if v1Spec != nil && v1Spec.Components != nil {
-		hasVersionedName := v1Spec.Components.Schemas["UserResponseV20240101"] != nil
-		hasNoBareName := v1Spec.Components.Schemas["UserResponse"] == nil
-		results.V1UsesVersionedOnly = hasVersionedName && hasNoBareName
+		// When transforming existing schemas, bare names are preserved
+		hasBareName := v1Spec.Components.Schemas["UserResponse"] != nil
+		hasNoVersionedName := v1Spec.Components.Schemas["UserResponseV20240101"] == nil
+		results.V1UsesVersionedOnly = hasBareName && hasNoVersionedName
 		if results.V1UsesVersionedOnly {
-			fmt.Println("    ✓ v1 uses versioned names only")
+			fmt.Println("    ✓ v1 uses bare names (transformed from base)")
 		} else {
-			fmt.Println("    ✗ v1 should use versioned names only")
+			fmt.Println("    ✗ v1 should use bare names when transforming existing schemas")
 		}
 	}
 
 	if v2Spec != nil && v2Spec.Components != nil {
-		hasVersionedName := v2Spec.Components.Schemas["UserResponseV20240601"] != nil
-		hasNoBareName := v2Spec.Components.Schemas["UserResponse"] == nil
-		results.V2UsesVersionedOnly = hasVersionedName && hasNoBareName
+		// When transforming existing schemas, bare names are preserved
+		hasBareName := v2Spec.Components.Schemas["UserResponse"] != nil
+		hasNoVersionedName := v2Spec.Components.Schemas["UserResponseV20240601"] == nil
+		results.V2UsesVersionedOnly = hasBareName && hasNoVersionedName
 		if results.V2UsesVersionedOnly {
-			fmt.Println("    ✓ v2 uses versioned names only")
+			fmt.Println("    ✓ v2 uses bare names (transformed from base)")
 		} else {
-			fmt.Println("    ✗ v2 should use versioned names only")
+			fmt.Println("    ✗ v2 should use bare names when transforming existing schemas")
 		}
 	}
 
 	if v3Spec != nil && v3Spec.Components != nil {
-		hasVersionedName := v3Spec.Components.Schemas["UserResponseV20250101"] != nil
-		hasNoBareName := v3Spec.Components.Schemas["UserResponse"] == nil
-		results.V3UsesVersionedOnly = hasVersionedName && hasNoBareName
+		// When transforming existing schemas, bare names are preserved
+		hasBareName := v3Spec.Components.Schemas["UserResponse"] != nil
+		hasNoVersionedName := v3Spec.Components.Schemas["UserResponseV20250101"] == nil
+		results.V3UsesVersionedOnly = hasBareName && hasNoVersionedName
 		if results.V3UsesVersionedOnly {
-			fmt.Println("    ✓ v3 uses versioned names only")
+			fmt.Println("    ✓ v3 uses bare names (transformed from base)")
 		} else {
-			fmt.Println("    ✗ v3 should use versioned names only")
+			fmt.Println("    ✗ v3 should use bare names when transforming existing schemas")
 		}
 	}
 
@@ -753,12 +869,4 @@ func main() {
 	}
 
 	fmt.Printf("📁 Generated files in: %s\n", filepath.Join("examples", "schema-generation", "output"))
-	fmt.Println()
-	fmt.Println("📚 This example demonstrates:")
-	fmt.Println("  ✓ Smart schema merging with base spec metadata")
-	fmt.Println("  ✓ Preservation of unmanaged schemas")
-	fmt.Println("  ✓ Version-specific transformations")
-	fmt.Println("  ✓ Correct naming conventions (HEAD vs versioned)")
-	fmt.Println("  ✓ Full spec preservation (paths, security, tags)")
-	fmt.Println()
 }

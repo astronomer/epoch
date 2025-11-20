@@ -14,7 +14,8 @@ import (
 // This is the ONLY direction requests flow
 type RequestToNextVersionOperation interface {
 	ApplyToRequest(node *ast.Node) error
-	GetFieldMapping() map[string]string // For error transformation
+	GetFieldMapping() map[string]string     // For error transformation
+	Inverse() RequestToNextVersionOperation // For OpenAPI schema generation (HEAD→Client)
 }
 
 // ResponseToPreviousVersionOperation applies when migrating responses from HEAD to client version
@@ -52,6 +53,14 @@ func (op *RequestAddField) GetFieldMapping() map[string]string {
 	return nil // No field rename
 }
 
+// Inverse returns the opposite operation for schema generation
+// AddField (Client→HEAD) becomes RemoveField (HEAD→Client)
+func (op *RequestAddField) Inverse() RequestToNextVersionOperation {
+	return &RequestRemoveField{
+		Name: op.Name,
+	}
+}
+
 // RequestAddFieldWithDefault adds a field ONLY if missing (Cadwyn-style default handling)
 // Use case: Making a field required - add default for old clients that don't send it
 type RequestAddFieldWithDefault struct {
@@ -76,6 +85,14 @@ func (op *RequestAddFieldWithDefault) GetFieldMapping() map[string]string {
 	return nil
 }
 
+// Inverse returns the opposite operation for schema generation
+// AddFieldWithDefault (Client→HEAD) becomes RemoveField (HEAD→Client)
+func (op *RequestAddFieldWithDefault) Inverse() RequestToNextVersionOperation {
+	return &RequestRemoveField{
+		Name: op.Name,
+	}
+}
+
 // RequestRemoveField removes a field when request migrates from client to HEAD
 // Use case: HEAD version removed a deprecated field
 type RequestRemoveField struct {
@@ -92,6 +109,16 @@ func (op *RequestRemoveField) ApplyToRequest(node *ast.Node) error {
 
 func (op *RequestRemoveField) GetFieldMapping() map[string]string {
 	return nil // No field rename
+}
+
+// Inverse returns the opposite operation for schema generation
+// RemoveField (Client→HEAD) becomes AddField with nil default (HEAD→Client)
+// The nil default is safe for schema generation (defaults are a runtime concern)
+func (op *RequestRemoveField) Inverse() RequestToNextVersionOperation {
+	return &RequestAddField{
+		Name:    op.Name,
+		Default: nil, // Safe for OpenAPI schemas
+	}
 }
 
 // RequestRenameField renames a field when request migrates from client to HEAD
@@ -131,6 +158,16 @@ func (op *RequestRenameField) GetFieldMapping() map[string]string {
 	return map[string]string{op.To: op.From}
 }
 
+// Inverse returns the opposite operation for schema generation
+// RenameField (Client→HEAD: from→to) becomes RenameField (HEAD→Client: to→from)
+// This is a perfect inversion - completely reversible
+func (op *RequestRenameField) Inverse() RequestToNextVersionOperation {
+	return &RequestRenameField{
+		From: op.To, // Swap directions
+		To:   op.From,
+	}
+}
+
 // RequestCustom applies a custom transformation function
 type RequestCustom struct {
 	Fn func(*ast.Node) error
@@ -145,6 +182,12 @@ func (op *RequestCustom) ApplyToRequest(node *ast.Node) error {
 
 func (op *RequestCustom) GetFieldMapping() map[string]string {
 	return nil
+}
+
+// Inverse returns nil because custom operations cannot be automatically inverted
+// Custom operations will be skipped during schema generation
+func (op *RequestCustom) Inverse() RequestToNextVersionOperation {
+	return nil // Not invertible
 }
 
 // ============================================================================

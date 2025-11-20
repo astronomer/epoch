@@ -109,8 +109,12 @@ func (sg *SchemaGenerator) processTypeForVersion(
 
 	if existingSchema != nil {
 		// TRANSFORM PATH: Schema exists, transform it in place
+
+		// Determine correct direction based on type's role (request vs response)
+		direction := sg.getDirectionForType(typ)
+
 		transformedSchema, err := sg.transformer.TransformSchemaForVersion(
-			existingSchema, typ, version, SchemaDirectionResponse)
+			existingSchema, typ, version, direction)
 		if err != nil {
 			return fmt.Errorf("failed to transform schema %s: %w", mappedSchemaName, err)
 		}
@@ -119,7 +123,11 @@ func (sg *SchemaGenerator) processTypeForVersion(
 		spec.Components.Schemas[mappedSchemaName] = openapi3.NewSchemaRef("", transformedSchema)
 	} else {
 		// FALLBACK PATH: Schema doesn't exist, generate from scratch
-		generatedSchema, err := sg.GetSchemaForType(typ, version, SchemaDirectionResponse)
+
+		// Determine correct direction based on type's role (request vs response)
+		direction := sg.getDirectionForType(typ)
+
+		generatedSchema, err := sg.GetSchemaForType(typ, version, direction)
 		if err != nil {
 			return fmt.Errorf("failed to generate schema for %s: %w", goTypeName, err)
 		}
@@ -306,4 +314,21 @@ func (sg *SchemaGenerator) copySchemas(originalComponents *openapi3.Components) 
 // filenamePattern should contain %s for version, e.g., "docs/api_%s.yaml"
 func (sg *SchemaGenerator) WriteVersionedSpecs(specs map[string]*openapi3.T, filenamePattern string) error {
 	return sg.writer.WriteVersionedSpecs(specs, filenamePattern)
+}
+
+// getDirectionForType determines if a type is used as request or response
+// by checking the endpoint registry
+func (sg *SchemaGenerator) getDirectionForType(typ reflect.Type) SchemaDirection {
+	// Check endpoint registry to determine type's role
+	for _, endpoint := range sg.config.TypeRegistry.GetAll() {
+		if endpoint.RequestType == typ {
+			return SchemaDirectionRequest
+		}
+		if endpoint.ResponseType == typ {
+			return SchemaDirectionResponse
+		}
+	}
+
+	// Default to response if unknown (safer default)
+	return SchemaDirectionResponse
 }
