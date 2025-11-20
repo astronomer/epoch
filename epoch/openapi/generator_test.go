@@ -444,12 +444,18 @@ func TestSchemaGenerator_TransformSwagSchemas(t *testing.T) {
 	v1, _ := epoch.NewSemverVersion("1.0")
 	headVersion := epoch.NewHeadVersion()
 
+	// Migration from v1 to HEAD
+	// v1 has: name
+	// HEAD has: betterNewName, timezone
 	change := epoch.NewVersionChangeBuilder(v1, headVersion).
 		Description("Add betterNewName and timezone fields").
 		ForType(UpdateExampleRequest{}).
 		ResponseToPreviousVersion().
 		RenameField("betterNewName", "name").
 		RemoveField("timezone").
+		RequestToNextVersion().
+		RenameField("name", "betterNewName").
+		AddField("timezone", "").
 		Build()
 
 	vb, err := epoch.NewVersionBundle([]*epoch.Version{headVersion, v1})

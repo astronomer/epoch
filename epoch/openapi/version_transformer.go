@@ -58,6 +58,7 @@ type versionChange struct {
 	toVersion   *epoch.Version
 	operation   interface{}  // RequestOperation or ResponseOperation
 	targetType  reflect.Type // The Go type this change applies to
+	inverted    bool         // For request schema generation: signals operations should be inverted
 }
 
 // getVersionChanges returns all version changes that need to be applied
@@ -72,36 +73,49 @@ func (vt *VersionTransformer) getVersionChanges(
 	versions := vt.versionBundle.GetVersions()
 
 	if direction == SchemaDirectionRequest {
-		// Request: walk FORWARD from target version to HEAD
-		// Find starting position
-		startIdx := -1
+		// Request: walk BACKWARD from HEAD to target version and INVERT operations
+		// For schema generation, we need to transform HEAD schemas backward to older versions
+		// But RequestToNextVersion operations are defined forward (Client→HEAD)
+		// So we walk backward and mark operations for inversion
+
+		// Find ending position (target version)
+		endIdx := -1
 		for i, v := range versions {
 			if v.Equal(targetVersion) {
-				startIdx = i
+				endIdx = i
 				break
 			}
 		}
 
-		if startIdx == -1 {
+		if endIdx == -1 {
 			return changes // Version not found
 		}
 
-		// Walk forward collecting changes (ascending order: v1, v2, v3)
-		// Apply changes from versions after target toward HEAD
-		for i := startIdx + 1; i < len(versions); i++ {
+		// Walk backward from HEAD to target version
+		for i := len(versions) - 1; i >= endIdx; i-- {
 			currentVer := versions[i]
-			prevVer := versions[i-1]
 
-			// Get changes from previous version to current
+			// Determine previous version for the transformation
+			var prevVer *epoch.Version
+			if i > 0 {
+				prevVer = versions[i-1]
+			} else {
+				// At oldest version
+				prevVer = currentVer
+			}
+
+			// Process changes on currentVer (which describe transitions FROM currentVer)
+			// These are applied in reverse for request schema transformation
 			for _, vc := range currentVer.Changes {
 				if epochVC, ok := vc.(*epoch.VersionChange); ok {
-					// Check if this change applies to our type
-					if vt.changeAppliesToType(epochVC, targetType, SchemaDirectionRequest) {
+					// Check if this change has request operations for our type
+					if ops, exists := epochVC.GetRequestOperationsByType(targetType); exists && len(ops) > 0 {
 						changes = append(changes, versionChange{
-							fromVersion: prevVer,
-							toVersion:   currentVer,
+							fromVersion: currentVer,
+							toVersion:   prevVer,
 							operation:   epochVC,
 							targetType:  targetType,
+							inverted:    true, // INVERT operations for schema generation
 						})
 					}
 				}
@@ -208,9 +222,21 @@ func (vt *VersionTransformer) applyChange(
 			return nil // No operations for this type
 		}
 
-		// Apply each operation to the schema
+		// Apply each operation to the schema (inverted if flagged)
 		for _, op := range ops {
-			if err := vt.applyOperationToSchema(schema, op, direction); err != nil {
+			actualOp := op
+
+			if change.inverted {
+				// Invert the operation for schema generation
+				actualOp = op.Inverse()
+				if actualOp == nil {
+					// Operation not invertible (e.g., Custom), skip it
+					// This is safe - custom operations handle runtime logic, not schema structure
+					continue
+				}
+			}
+
+			if err := vt.applyOperationToSchema(schema, actualOp, direction); err != nil {
 				return fmt.Errorf("failed to apply request operation: %w", err)
 			}
 		}

@@ -47,17 +47,33 @@ func createTestVersions() (*epoch.Version, *epoch.Version, *epoch.Version) {
 
 // createTestMigrations creates the standard v1→v2 and v2→v3 migrations
 func createTestMigrations(v1, v2, v3 *epoch.Version) (*epoch.VersionChange, *epoch.VersionChange) {
+	// v1→v2: Add email and status fields
+	// HEAD has these fields, v1 doesn't, so:
+	// - Response: Remove them when sending to v1 (ResponseToPreviousVersion)
+	// - Request: Add them when v1 client sends request (RequestToNextVersion)
 	v1ToV2 := epoch.NewVersionChangeBuilder(v1, v2).
 		Description("Add email and status fields to User").
-		ForType(swagTestUserResponse{}, swagTestCreateUserRequest{}).
+		ForType(swagTestCreateUserRequest{}).
+		RequestToNextVersion().
+		AddField("email", "").
+		AddField("status", "active").
+		ForType(swagTestUserResponse{}).
 		ResponseToPreviousVersion().
 		RemoveField("email").
 		RemoveField("status").
 		Build()
 
+	// v2→v3: Rename name to full_name, add phone
+	// HEAD has full_name and phone, v2 has name (no phone), so:
+	// - Response: Rename full_name→name, remove phone when sending to v2
+	// - Request: Rename name→full_name, add phone when v2 client sends request
 	v2ToV3 := epoch.NewVersionChangeBuilder(v2, v3).
 		Description("Rename name to full_name, add phone").
-		ForType(swagTestUserResponse{}, swagTestCreateUserRequest{}).
+		ForType(swagTestCreateUserRequest{}).
+		RequestToNextVersion().
+		RenameField("name", "full_name").
+		AddField("phone", "").
+		ForType(swagTestUserResponse{}).
 		ResponseToPreviousVersion().
 		RenameField("full_name", "name").
 		RemoveField("phone").
@@ -295,23 +311,25 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 		t.Fatalf("Failed to create Epoch instance: %v", err)
 	}
 
-	// Register types
-	epochInstance.EndpointRegistry().Register("GET", "/users/:id", &epoch.EndpointDefinition{
-		Method:       "GET",
-		PathPattern:  "/users/:id",
-		ResponseType: reflect.TypeOf(swagTestUserResponse{}),
-	})
-	epochInstance.EndpointRegistry().Register("POST", "/users", &epoch.EndpointDefinition{
-		Method:       "POST",
-		PathPattern:  "/users",
-		RequestType:  reflect.TypeOf(swagTestCreateUserRequest{}),
-		ResponseType: reflect.TypeOf(swagTestUserResponse{}),
-	})
-	epochInstance.EndpointRegistry().Register("GET", "/organizations/:id", &epoch.EndpointDefinition{
-		Method:       "GET",
-		PathPattern:  "/organizations/:id",
-		ResponseType: reflect.TypeOf(swagTestOrganizationResponse{}),
-	})
+	// Register types via Gin router (production pattern)
+	dummyRouter := gin.New()
+	routerGroup := dummyRouter.Group("")
+
+	routerGroup.GET("/users/:id",
+		epochInstance.WrapHandler(dummyHandler).
+			Returns(swagTestUserResponse{}).
+			ToHandlerFunc("GET", "/users/:id"))
+
+	routerGroup.POST("/users",
+		epochInstance.WrapHandler(dummyHandler).
+			Accepts(swagTestCreateUserRequest{}).
+			Returns(swagTestUserResponse{}).
+			ToHandlerFunc("POST", "/users"))
+
+	routerGroup.GET("/organizations/:id",
+		epochInstance.WrapHandler(dummyHandler).
+			Returns(swagTestOrganizationResponse{}).
+			ToHandlerFunc("GET", "/organizations/:id"))
 
 	// Create Swag-style base spec with package-prefixed schemas
 	swagSpec := &openapi3.T{
@@ -424,6 +442,48 @@ func TestSwagIntegration_TransformInPlace(t *testing.T) {
 			}
 		}
 	})
+
+	// Test 6: Verify request schema transformations
+	t.Run("request_schema_transformations", func(t *testing.T) {
+		// HEAD and v3: should have all fields with full_name
+		headSpec, ok := versionedSpecs["head"]
+		if !ok {
+			t.Fatal("HEAD spec not found")
+		}
+		headRequestSchema := getSchemaOrFail(t, headSpec, "versionedapi.swagTestCreateUserRequest", "HEAD")
+		verifySchemaFields(t, headRequestSchema, "HEAD request",
+			[]string{"full_name", "email", "phone", "status"},
+			[]string{"name"})
+
+		v3Spec, ok := versionedSpecs["2025-01-01"]
+		if !ok {
+			t.Fatal("v3 spec not found")
+		}
+		v3RequestSchema := getSchemaOrFail(t, v3Spec, "versionedapi.swagTestCreateUserRequest", "v3")
+		verifySchemaFields(t, v3RequestSchema, "v3 request",
+			[]string{"full_name", "email", "phone", "status"},
+			[]string{"name"})
+
+		// v2: should have name (not full_name), email, status, but not phone
+		v2Spec, ok := versionedSpecs["2024-06-01"]
+		if !ok {
+			t.Fatal("v2 spec not found")
+		}
+		v2RequestSchema := getSchemaOrFail(t, v2Spec, "versionedapi.swagTestCreateUserRequest", "v2")
+		verifySchemaFields(t, v2RequestSchema, "v2 request",
+			[]string{"name", "email", "status"},
+			[]string{"full_name", "phone"})
+
+		// v1: should have name only (no email, status, phone, full_name)
+		v1Spec, ok := versionedSpecs["2024-01-01"]
+		if !ok {
+			t.Fatal("v1 spec not found")
+		}
+		v1RequestSchema := getSchemaOrFail(t, v1Spec, "versionedapi.swagTestCreateUserRequest", "v1")
+		verifySchemaFields(t, v1RequestSchema, "v1 request",
+			[]string{"name"},
+			[]string{"full_name", "email", "status", "phone"})
+	})
 }
 
 // TestSwagIntegration_PreservesMetadata verifies that descriptions and metadata
@@ -451,11 +511,14 @@ func TestSwagIntegration_PreservesMetadata(t *testing.T) {
 		t.Fatalf("Failed to create Epoch instance: %v", err)
 	}
 
-	epochInstance.EndpointRegistry().Register("GET", "/users/:id", &epoch.EndpointDefinition{
-		Method:       "GET",
-		PathPattern:  "/users/:id",
-		ResponseType: reflect.TypeOf(swagTestUserResponse{}),
-	})
+	// Register endpoint via Gin router (production pattern)
+	dummyRouter := gin.New()
+	routerGroup := dummyRouter.Group("")
+
+	routerGroup.GET("/users/:id",
+		epochInstance.WrapHandler(dummyHandler).
+			Returns(swagTestUserResponse{}).
+			ToHandlerFunc("GET", "/users/:id"))
 
 	// Create Swag spec with rich metadata
 	swagSpec := &openapi3.T{
@@ -694,7 +757,49 @@ func TestSwagIntegration_ProductionPattern(t *testing.T) {
 			[]string{"email", "status", "phone", "full_name"})
 	})
 
-	// Test 5: Verify endpoint registry was populated via ToHandlerFunc
+	// Test 5: Verify request schema transformations
+	t.Run("request_schema_transformations", func(t *testing.T) {
+		// HEAD and v3: should have all fields with full_name
+		headSpec, ok := versionedSpecs["head"]
+		if !ok {
+			t.Fatal("HEAD spec not found")
+		}
+		headRequestSchema := getSchemaOrFail(t, headSpec, "versionedapi.swagTestCreateUserRequest", "HEAD")
+		verifySchemaFields(t, headRequestSchema, "HEAD request",
+			[]string{"full_name", "email", "phone", "status"},
+			[]string{"name"})
+
+		v3Spec, ok := versionedSpecs["2025-01-01"]
+		if !ok {
+			t.Fatal("v3 spec not found")
+		}
+		v3RequestSchema := getSchemaOrFail(t, v3Spec, "versionedapi.swagTestCreateUserRequest", "v3")
+		verifySchemaFields(t, v3RequestSchema, "v3 request",
+			[]string{"full_name", "email", "phone", "status"},
+			[]string{"name"})
+
+		// v2: should have name (not full_name), email, status, but not phone
+		v2Spec, ok := versionedSpecs["2024-06-01"]
+		if !ok {
+			t.Fatal("v2 spec not found")
+		}
+		v2RequestSchema := getSchemaOrFail(t, v2Spec, "versionedapi.swagTestCreateUserRequest", "v2")
+		verifySchemaFields(t, v2RequestSchema, "v2 request",
+			[]string{"name", "email", "status"},
+			[]string{"full_name", "phone"})
+
+		// v1: should have name only (no email, status, phone, full_name)
+		v1Spec, ok := versionedSpecs["2024-01-01"]
+		if !ok {
+			t.Fatal("v1 spec not found")
+		}
+		v1RequestSchema := getSchemaOrFail(t, v1Spec, "versionedapi.swagTestCreateUserRequest", "v1")
+		verifySchemaFields(t, v1RequestSchema, "v1 request",
+			[]string{"name"},
+			[]string{"full_name", "email", "status", "phone"})
+	})
+
+	// Test 6: Verify endpoint registry was populated via ToHandlerFunc
 	t.Run("endpoint_registry_populated_by_ToHandlerFunc", func(t *testing.T) {
 		registry := epochInstance.EndpointRegistry()
 
