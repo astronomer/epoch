@@ -326,6 +326,17 @@ func (vah *VersionAwareHandler) HandlerFunc() gin.HandlerFunc {
 	}
 }
 
+// stripVersionPrefix removes version prefix from path for endpoint lookup
+func (vah *VersionAwareHandler) stripVersionPrefix(path string) string {
+	// Regex pattern matches version-like prefixes at the start of the path
+	// Matches: /v1/, /v2.0/, /v1.1/, /1/, /2.0/, /2024-01-01/, etc.
+	pattern := `^/([vV]?\d+(?:[\.\-]\w+)*)/`
+	regex := regexp.MustCompile(pattern)
+
+	// Replace the version prefix with just /
+	return regex.ReplaceAllString(path, "/")
+}
+
 // handleWithMigration handles request/response migration for version-aware handlers
 func (vah *VersionAwareHandler) handleWithMigration(c *gin.Context, requestedVersion *Version) {
 	// Skip migration if requesting head version
@@ -334,8 +345,10 @@ func (vah *VersionAwareHandler) handleWithMigration(c *gin.Context, requestedVer
 		return
 	}
 
+	lookupPath := vah.stripVersionPrefix(c.Request.URL.Path)
+
 	// Lookup endpoint definition
-	endpointDef, err := vah.endpointRegistry.Lookup(c.Request.Method, c.Request.URL.Path)
+	endpointDef, err := vah.endpointRegistry.Lookup(c.Request.Method, lookupPath)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Endpoint not registered", "details": "This endpoint must be registered with type information via WrapHandler().Returns()/.Accepts()"})
 		return
