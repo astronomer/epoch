@@ -264,7 +264,39 @@ func NewMigrationChain(changes []*VersionChange) (*MigrationChain, error) {
 
 // MigrateRequest applies all changes in the chain for request migration
 func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *RequestInfo, from, to *Version) error {
+	// If from and to are the same, no migration needed
+	if from.Equal(to) {
+		return nil
+	}
+
 	// Type information is set by MigrateRequestForType from the EndpointRegistry
+
+	// If 'to' is HEAD, treat it as the latest non-HEAD version
+	// since migrations are defined between numbered versions, not to/from HEAD
+	targetVersion := to
+
+	if targetVersion.IsHead {
+		// Find the latest non-HEAD version
+		var latestVersion *Version
+		for _, change := range mc.changes {
+			if change.ToVersion() != nil && !change.ToVersion().IsHead {
+				if latestVersion == nil || change.ToVersion().IsNewerThan(latestVersion) {
+					latestVersion = change.ToVersion()
+				}
+			}
+		}
+		if latestVersion != nil {
+			targetVersion = latestVersion
+		} else {
+			// No migrations defined - HEAD equals the from version
+			return nil
+		}
+	}
+
+	// Early return if from equals target after HEAD resolution
+	if from.Equal(targetVersion) {
+		return nil
+	}
 
 	// Find the starting point in the version chain
 	start := -1
@@ -284,22 +316,14 @@ func (mc *MigrationChain) MigrateRequest(ctx context.Context, requestInfo *Reque
 	for i := start; i < len(mc.changes); i++ {
 		change := mc.changes[i]
 
-		// Stop if we've reached the target version
-		if change.ToVersion().Equal(to) {
-			if err := change.MigrateRequest(ctx, requestInfo); err != nil {
-				return fmt.Errorf("migration failed at %s->%s: %w",
-					change.FromVersion().String(), change.ToVersion().String(), err)
-			}
-			break
-		}
-
 		// Stop if this change would take us past the target
-		if change.ToVersion().IsNewerThan(to) {
+		if change.ToVersion().IsNewerThan(targetVersion) {
 			break
 		}
 
 		// Apply this change if it's part of the migration path
-		if change.FromVersion().IsOlderThan(to) || change.FromVersion().Equal(to) {
+		if (change.ToVersion().Equal(targetVersion) || change.ToVersion().IsOlderThan(targetVersion)) &&
+			(change.FromVersion().IsOlderThan(targetVersion) || change.FromVersion().Equal(targetVersion)) {
 			if err := change.MigrateRequest(ctx, requestInfo); err != nil {
 				return fmt.Errorf("migration failed at %s->%s: %w",
 					change.FromVersion().String(), change.ToVersion().String(), err)
