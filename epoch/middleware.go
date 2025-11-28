@@ -386,13 +386,14 @@ func (vah *VersionAwareHandler) handleWithMigration(c *gin.Context, requestedVer
 	if responseTypeForMigration != nil || responseCapture.statusCode >= 400 {
 		if err := vah.migrateResponse(c, requestedVersion, responseCapture,
 			responseTypeForMigration, endpointDef.NestedArrays); err != nil {
+			c.Writer = responseCapture.ResponseWriter
 			c.JSON(500, gin.H{"error": "Response migration failed", "details": err.Error()})
 			return
 		}
 	} else {
 		// No response type registered and not an error, write response as-is
 		c.Writer = responseCapture.ResponseWriter
-		if responseCapture.body != nil {
+		if len(responseCapture.body) > 0 {
 			c.Data(responseCapture.statusCode, "application/json", responseCapture.body)
 		} else {
 			c.Writer.WriteHeader(responseCapture.statusCode)
@@ -537,7 +538,11 @@ func (vah *VersionAwareHandler) migrateResponse(
 
 		c.Data(responseInfo.StatusCode, "application/json", []byte(migratedJSON))
 	} else {
-		c.Writer.WriteHeader(responseInfo.StatusCode)
+		if len(responseCapture.body) > 0 {
+			c.Data(responseCapture.statusCode, "application/json", responseCapture.body)
+		} else {
+			c.Writer.WriteHeader(responseInfo.StatusCode)
+		}
 	}
 
 	return nil

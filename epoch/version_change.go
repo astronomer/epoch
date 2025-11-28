@@ -335,6 +335,8 @@ func (mc *MigrationChain) MigrateResponse(ctx context.Context, responseInfo *Res
 		}
 		if latestVersion != nil {
 			currentVersion = latestVersion
+		} else {
+			return nil
 		}
 	}
 
