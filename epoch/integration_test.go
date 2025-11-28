@@ -1464,4 +1464,162 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(usersHead[0]).To(HaveKey("phone"))
 		})
 	})
+
+	Describe("Response Utility Pattern with WrapHandler", func() {
+		It("should correctly return response body when using response utility (like response.Ok)", func() {
+			// Setup versions
+			v1, _ := NewSemverVersion("1.0")
+			v2, _ := NewSemverVersion("2.0")
+
+			// Simple migration: v1 doesn't have 'phone' field
+			change := NewVersionChangeBuilder(v1, v2).
+				Description("Add phone field to User").
+				ForType(User{}).
+				RequestToNextVersion().
+				AddField("phone", "+1-555-0000").
+				ResponseToPreviousVersion().
+				RemoveField("phone").
+				Build()
+
+			epochInstance, err := NewEpoch().
+				WithVersions(v1, v2).
+				WithHeadVersion().
+				WithChanges(change).
+				WithVersionFormat(VersionFormatSemver).
+				Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			router := gin.New()
+			router.Use(epochInstance.Middleware())
+
+			// Response utility function (mimics user's pattern like response.Ok)
+			testResponseOk := func(ctx *gin.Context, data interface{}) {
+				if data != nil {
+					ctx.JSON(200, data)
+				} else {
+					ctx.Status(200)
+				}
+			}
+
+			// Handler using response utility (no return type in signature)
+			// This is the exact pattern from the bug report
+			router.GET("/users", epochInstance.WrapHandler(func(c *gin.Context) {
+				resp := UsersListResponse{
+					Users: []User{
+						{ID: 1, FullName: "Alice", Email: "alice@example.com", Phone: "+1-555-0100"},
+						{ID: 2, FullName: "Bob", Email: "bob@example.com", Phone: "+1-555-0200"},
+					},
+					Total: 2,
+				}
+				testResponseOk(c, resp) // Uses utility instead of direct c.JSON()
+			}).Returns(UsersListResponse{}).
+				WithArrayItems("users", User{}).
+				ToHandlerFunc("GET", "/users"))
+
+			// Test with non-HEAD version (v1.0)
+			// BUG: This should return the response body but returns empty when no migrations defined
+			req := httptest.NewRequest("GET", "/users", nil)
+			req.Header.Set("X-API-Version", "1.0")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			// Should return 200 OK
+			Expect(recorder.Code).To(Equal(200))
+
+			// BUG REPRODUCTION: Body should NOT be empty!
+			// Before fix: recorder.Body.Len() == 0 (when no migrations defined)
+			// After fix: recorder.Body.Len() > 0
+			Expect(recorder.Body.Len()).To(BeNumerically(">", 0), "Response body should not be empty")
+
+			var response map[string]interface{}
+			err = json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred(), "Response should be valid JSON")
+
+			// Verify response structure
+			Expect(response).To(HaveKey("users"))
+			Expect(response).To(HaveKey("total"))
+
+			// Verify users array
+			users, ok := response["users"].([]interface{})
+			Expect(ok).To(BeTrue(), "users should be an array")
+			Expect(len(users)).To(Equal(2), "Should have 2 users")
+
+			// Verify V1 doesn't have phone field (migration applied)
+			user1, ok := users[0].(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(user1).To(HaveKey("id"))
+			Expect(user1).To(HaveKey("full_name"))
+			Expect(user1).To(HaveKey("email"))
+			Expect(user1).NotTo(HaveKey("phone"), "V1 should not have phone field")
+		})
+
+		It("should also work with HEAD version request", func() {
+			// Setup same as above
+			v1, _ := NewSemverVersion("1.0")
+			v2, _ := NewSemverVersion("2.0")
+
+			change := NewVersionChangeBuilder(v1, v2).
+				Description("Add phone field to User").
+				ForType(User{}).
+				RequestToNextVersion().
+				AddField("phone", "+1-555-0000").
+				ResponseToPreviousVersion().
+				RemoveField("phone").
+				Build()
+
+			epochInstance, err := NewEpoch().
+				WithVersions(v1, v2).
+				WithHeadVersion().
+				WithChanges(change).
+				WithVersionFormat(VersionFormatSemver).
+				Build()
+			Expect(err).NotTo(HaveOccurred())
+
+			router := gin.New()
+			router.Use(epochInstance.Middleware())
+
+			testResponseOk := func(ctx *gin.Context, data interface{}) {
+				if data != nil {
+					ctx.JSON(200, data)
+				} else {
+					ctx.Status(200)
+				}
+			}
+
+			router.GET("/users", epochInstance.WrapHandler(func(c *gin.Context) {
+				resp := UsersListResponse{
+					Users: []User{
+						{ID: 1, FullName: "Alice", Email: "alice@example.com", Phone: "+1-555-0100"},
+						{ID: 2, FullName: "Bob", Email: "bob@example.com", Phone: "+1-555-0200"},
+					},
+					Total: 2,
+				}
+				testResponseOk(c, resp)
+			}).Returns(UsersListResponse{}).
+				WithArrayItems("users", User{}).
+				ToHandlerFunc("GET", "/users"))
+
+			// Test with HEAD version (should work even before fix)
+			req := httptest.NewRequest("GET", "/users", nil)
+			req.Header.Set("X-API-Version", "head")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+			Expect(recorder.Body.Len()).To(BeNumerically(">", 0))
+
+			var response map[string]interface{}
+			err = json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred())
+
+			// HEAD version should have phone field
+			users, ok := response["users"].([]interface{})
+			Expect(ok).To(BeTrue())
+			user1, ok := users[0].(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(user1).To(HaveKey("phone"), "HEAD version should have phone field")
+		})
+	})
 })
