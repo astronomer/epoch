@@ -385,7 +385,7 @@ func (vah *VersionAwareHandler) handleWithMigration(c *gin.Context, requestedVer
 
 	if responseTypeForMigration != nil || responseCapture.statusCode >= 400 {
 		if err := vah.migrateResponse(c, requestedVersion, responseCapture,
-			responseTypeForMigration, endpointDef.NestedArrays); err != nil {
+			responseTypeForMigration, endpointDef.NestedArrays, endpointDef.NestedObjects); err != nil {
 			c.Writer = responseCapture.ResponseWriter
 			c.JSON(500, gin.H{"error": "Response migration failed", "details": err.Error()})
 			return
@@ -485,6 +485,7 @@ func (vah *VersionAwareHandler) migrateResponse(
 	responseCapture *ResponseCapture,
 	responseType reflect.Type,
 	nestedArrays map[string]reflect.Type,
+	nestedObjects map[string]reflect.Type,
 ) error {
 	// Parse captured response body with Sonic to preserve field order
 	var responseNode *ast.Node
@@ -514,12 +515,14 @@ func (vah *VersionAwareHandler) migrateResponse(
 	responseInfo.StatusCode = responseCapture.statusCode
 
 	// Apply migrations for this SPECIFIC type (NO schema matching)
+	// Use the extended version that supports nested objects
 	headVersion := vah.versionBundle.GetHeadVersion()
-	if err := vah.migrationChain.MigrateResponseForType(
+	if err := vah.migrationChain.MigrateResponseForTypeWithNestedObjects(
 		c.Request.Context(),
 		responseInfo,
 		responseType,
 		nestedArrays,
+		nestedObjects,
 		headVersion,
 		toVersion,
 	); err != nil {

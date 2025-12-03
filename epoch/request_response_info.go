@@ -72,6 +72,9 @@ type ResponseInfo struct {
 
 	// Nested array type information for step-by-step transformations
 	nestedArrayTypes map[string]reflect.Type
+
+	// Nested object type information for step-by-step transformations (NEW)
+	nestedObjectTypes map[string]reflect.Type
 }
 
 // NewResponseInfo creates a new ResponseInfo from a Gin context

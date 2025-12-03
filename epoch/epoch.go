@@ -59,46 +59,58 @@ func (c *Epoch) EndpointRegistry() *EndpointRegistry {
 
 // HandlerWrapper wraps a handler and collects type information for endpoint registration
 type HandlerWrapper struct {
-	epoch        *Epoch
-	handler      gin.HandlerFunc
-	request      interface{}
-	response     interface{}
-	nestedArrays map[string]interface{}
+	epoch                 *Epoch
+	handler               gin.HandlerFunc
+	request               interface{}
+	response              interface{}
+	responseNestedArrays  map[string]reflect.Type // Auto-populated from response type
+	responseNestedObjects map[string]reflect.Type // Auto-populated from response type
+	requestNestedArrays   map[string]reflect.Type // Auto-populated from request type
+	requestNestedObjects  map[string]reflect.Type // Auto-populated from request type
 }
 
 // WrapHandler wraps a Gin handler to provide automatic request/response migration
 // Returns a HandlerWrapper that allows type registration via builder pattern
 func (c *Epoch) WrapHandler(handler gin.HandlerFunc) *HandlerWrapper {
 	return &HandlerWrapper{
-		epoch:        c,
-		handler:      handler,
-		nestedArrays: make(map[string]interface{}),
+		epoch:   c,
+		handler: handler,
 	}
 }
 
 // Accepts registers the request type for this endpoint
+// Automatically analyzes the type to discover nested structs and arrays
 func (hw *HandlerWrapper) Accepts(reqType interface{}) *HandlerWrapper {
 	hw.request = reqType
+	// Automatically analyze nested types
+	t := reflect.TypeOf(reqType)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	hw.requestNestedArrays, hw.requestNestedObjects = BuildNestedTypeMaps(t)
 	return hw
 }
 
 // Returns registers the response type for this endpoint
+// Automatically analyzes the type to discover nested structs and arrays
 func (hw *HandlerWrapper) Returns(respType interface{}) *HandlerWrapper {
 	hw.response = respType
-	return hw
-}
-
-// WithArrayItems registers a nested array field and its item type
-func (hw *HandlerWrapper) WithArrayItems(fieldName string, itemType interface{}) *HandlerWrapper {
-	hw.nestedArrays[fieldName] = itemType
+	// Automatically analyze nested types
+	t := reflect.TypeOf(respType)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	hw.responseNestedArrays, hw.responseNestedObjects = BuildNestedTypeMaps(t)
 	return hw
 }
 
 // buildEndpointDefinition creates an EndpointDefinition from the wrapper's state
 func (hw *HandlerWrapper) buildEndpointDefinition(method, pathPattern string) *EndpointDefinition {
 	def := &EndpointDefinition{
-		Method:      method,
-		PathPattern: pathPattern,
+		Method:        method,
+		PathPattern:   pathPattern,
+		NestedArrays:  hw.responseNestedArrays,
+		NestedObjects: hw.responseNestedObjects,
 	}
 
 	if hw.request != nil {
@@ -112,17 +124,6 @@ func (hw *HandlerWrapper) buildEndpointDefinition(method, pathPattern string) *E
 		def.ResponseType = reflect.TypeOf(hw.response)
 		if def.ResponseType.Kind() == reflect.Ptr {
 			def.ResponseType = def.ResponseType.Elem()
-		}
-	}
-
-	if len(hw.nestedArrays) > 0 {
-		def.NestedArrays = make(map[string]reflect.Type)
-		for field, itemType := range hw.nestedArrays {
-			itemReflectType := reflect.TypeOf(itemType)
-			if itemReflectType.Kind() == reflect.Ptr {
-				itemReflectType = itemReflectType.Elem()
-			}
-			def.NestedArrays[field] = itemReflectType
 		}
 	}
 

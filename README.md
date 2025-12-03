@@ -181,13 +181,6 @@ r.GET("/users",
     epochInstance.WrapHandler(listUsers).
         Returns([]User{}).                  // Returns array of Users
         ToHandlerFunc("GET", "/users"))
-
-// Nested arrays
-r.GET("/orders",
-    epochInstance.WrapHandler(listOrders).
-        Returns(OrderResponse{}).
-        WithArrayItems("items", OrderItem{}).  // Nested array field
-        ToHandlerFunc("GET", "/orders"))
 ```
 
 **Important**: The method and path parameters passed to `ToHandlerFunc()` must match the route being registered. This enables immediate endpoint registration for features like OpenAPI schema generation.
@@ -352,7 +345,7 @@ Demonstrates:
 - Multiple models (User, Product, Order)
 - Field additions and renames across versions
 - Array transformations
-- Nested array migrations with `WithArrayItems()`
+- Automatic nested type discovery (arrays and objects)
 - Full CRUD operations
 
 ## How It Works

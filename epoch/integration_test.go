@@ -14,34 +14,65 @@ import (
 // Test models - HEAD version only (what controllers actually work with)
 // Migrations describe how older versions differ from HEAD
 
-// User - HEAD version has all fields
-type User struct {
-	ID       int    `json:"id"`
-	FullName string `json:"full_name"` // V2 renamed from "name"
-	Email    string `json:"email"`     // Added in V2
-	Phone    string `json:"phone"`     // Added in V3
+// Role - nested array item for User.Roles
+type Role struct {
+	Name     string `json:"name"`     // Renamed to "role_name" in older versions
+	Priority int    `json:"priority"` // Added in V2
 }
 
-// Product - HEAD version
+// Profile - nested object for User
+type Profile struct {
+	Bio    string `json:"bio"`    // Renamed to "biography" in older versions
+	Avatar string `json:"avatar"` // Added in V2
+}
+
+// User - HEAD version has all fields, extended with nested object and array
+type User struct {
+	ID       int      `json:"id"`
+	FullName string   `json:"full_name"` // V2 renamed from "name"
+	Email    string   `json:"email"`     // Added in V2
+	Phone    string   `json:"phone"`     // Added in V3
+	Profile  Profile  `json:"profile"`   // Nested object
+	Roles    []Role   `json:"roles"`     // Nested array
+	Tags     []string `json:"tags"`      // Array of primitives
+}
+
+// ProductMetadata - nested object for Product
+type ProductMetadata struct {
+	SKU      string `json:"sku"`
+	Supplier string `json:"supplier"` // Renamed to "vendor" in older versions
+}
+
+// Product - HEAD version, extended with nested object
 type Product struct {
-	ID          int     `json:"id"`
-	Name        string  `json:"name"`
-	Price       float64 `json:"price"`
-	Currency    string  `json:"currency"`    // Added in V2
-	Description string  `json:"description"` // Added in V3
+	ID          int             `json:"id"`
+	Name        string          `json:"name"`
+	Price       float64         `json:"price"`
+	Currency    string          `json:"currency"`    // Added in V2
+	Description string          `json:"description"` // Added in V3
+	Metadata    ProductMetadata `json:"metadata"`    // Nested object
 }
 
 // CreateUserRequest - HEAD version
 type CreateUserRequest struct {
-	FullName string `json:"full_name"`
-	Email    string `json:"email"`
-	Phone    string `json:"phone"`
+	FullName string  `json:"full_name"`
+	Email    string  `json:"email"`
+	Phone    string  `json:"phone"`
+	Profile  Profile `json:"profile"` // Nested object in request
 }
 
-// UsersListResponse - wrapper with nested array
+// ListMetadata - nested object alongside arrays
+type ListMetadata struct {
+	Page      int    `json:"page"`
+	PerPage   int    `json:"per_page"`
+	UpdatedBy string `json:"updated_by"` // Renamed to "author" in older versions
+}
+
+// UsersListResponse - wrapper with nested array and nested object
 type UsersListResponse struct {
-	Users []User `json:"users"`
-	Total int    `json:"total"`
+	Users    []User       `json:"users"`
+	Total    int          `json:"total"`
+	Metadata ListMetadata `json:"metadata"` // Nested object alongside array
 }
 
 // Helper functions for test setup
@@ -270,7 +301,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(response[0]["full_name"]).To(Equal("Alice"))
 		})
 
-		It("should handle nested array fields with WithArrayItems", func() {
+		It("should handle nested array fields with automatic type discovery", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
@@ -295,7 +326,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 					},
 					"total": 2,
 				})
-			}).Returns(UsersListResponse{}).WithArrayItems("users", User{}).ToHandlerFunc("GET", "/users"))
+			}).Returns(UsersListResponse{}).ToHandlerFunc("GET", "/users"))
 
 			req := httptest.NewRequest("GET", "/users", nil)
 			req.Header.Set("X-API-Version", "2024-01-01")
@@ -1250,7 +1281,6 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				}
 				testResponseOk(c, resp)
 			}).Returns(UsersListResponse{}).
-				WithArrayItems("users", User{}).
 				ToHandlerFunc("GET", "/users"))
 
 			// Test with v1.0
@@ -1354,6 +1384,292 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(response).To(HaveKey("id"))
 			Expect(response).To(HaveKey("name"))
 			Expect(response).NotTo(HaveKey("email"), "v1.0 response should have email removed by migration")
+		})
+	})
+
+	Describe("Request Transformation Edge Cases", func() {
+		It("should transform top-level array request body", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			// Simple user type for array body test
+			type SimpleUser struct {
+				ID   int    `json:"id"`
+				Name string `json:"name"` // Renamed from "user_name" in older version
+			}
+
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(SimpleUser{}).
+				RequestToNextVersion().
+				RenameField("user_name", "name").
+				ResponseToPreviousVersion().
+				RenameField("name", "user_name").
+				Build()
+
+			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			router := setupRouterWithMiddleware(epochInstance)
+
+			router.POST("/users/bulk", epochInstance.WrapHandler(func(c *gin.Context) {
+				var users []map[string]interface{}
+				if err := c.ShouldBindJSON(&users); err != nil {
+					c.JSON(400, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Return the processed users
+				c.JSON(200, users)
+			}).Accepts([]SimpleUser{}).Returns([]SimpleUser{}).ToHandlerFunc("POST", "/users/bulk"))
+
+			// V1 client sends array with "user_name"
+			reqBody := `[
+				{"id": 1, "user_name": "John"},
+				{"id": 2, "user_name": "Jane"}
+			]`
+			req := httptest.NewRequest("POST", "/users/bulk", strings.NewReader(reqBody))
+			req.Header.Set("X-API-Version", "2024-01-01")
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response []map[string]interface{}
+			err = json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Response for V1 should have "user_name" back
+			Expect(response).To(HaveLen(2))
+			Expect(response[0]).To(HaveKey("user_name"))
+			Expect(response[0]).NotTo(HaveKey("name"))
+		})
+
+		It("should demonstrate that nested objects in requests are not auto-transformed", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			// Define change for CreateUserRequest that has nested Profile
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(CreateUserRequest{}).
+				RequestToNextVersion().
+				RenameField("full_name", "display_name"). // Top-level rename
+				Build()
+
+			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			router := setupRouterWithMiddleware(epochInstance)
+
+			router.POST("/users", epochInstance.WrapHandler(func(c *gin.Context) {
+				var req map[string]interface{}
+				c.ShouldBindJSON(&req)
+				c.JSON(200, req)
+			}).Accepts(CreateUserRequest{}).Returns(CreateUserRequest{}).ToHandlerFunc("POST", "/users"))
+
+			// V1 client sends request with nested profile containing "biography" (older field name)
+			reqBody := `{
+				"full_name": "John Doe",
+				"email": "john@example.com",
+				"phone": "+1-555-0100",
+				"profile": {
+					"biography": "Software Engineer",
+					"avatar": "avatar.png"
+				}
+			}`
+			req := httptest.NewRequest("POST", "/users", strings.NewReader(reqBody))
+			req.Header.Set("X-API-Version", "2024-01-01")
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response map[string]interface{}
+			err = json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Top-level field should be transformed
+			Expect(response).To(HaveKey("display_name"))
+			Expect(response).NotTo(HaveKey("full_name"))
+
+			// LIMITATION: Nested profile.biography is NOT transformed
+			// (standard operations only work on top-level fields)
+			profile := response["profile"].(map[string]interface{})
+			Expect(profile).To(HaveKey("biography"), "LIMITATION: nested fields unchanged")
+		})
+	})
+
+	Describe("Array of Primitives Handling", func() {
+		It("should preserve array of primitives unchanged during transformation", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(User{}).
+				ResponseToPreviousVersion().
+				RenameField("full_name", "name").
+				Build()
+
+			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			router := setupRouterWithMiddleware(epochInstance)
+
+			router.GET("/users/1", epochInstance.WrapHandler(func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"id":        1,
+					"full_name": "John",
+					"email":     "john@example.com",
+					"phone":     "+1-555-0100",
+					"profile":   gin.H{"bio": "Engineer", "avatar": "avatar.png"},
+					"roles":     []gin.H{{"name": "admin", "priority": 1}},
+					"tags":      []string{"go", "rust", "python"}, // Array of primitives
+				})
+			}).Returns(User{}).ToHandlerFunc("GET", "/users/1"))
+
+			req := httptest.NewRequest("GET", "/users/1", nil)
+			req.Header.Set("X-API-Version", "2024-01-01")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response map[string]interface{}
+			err = json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Tags (array of primitives) should be preserved
+			Expect(response).To(HaveKey("tags"))
+			tags := response["tags"].([]interface{})
+			Expect(tags).To(HaveLen(3))
+			Expect(tags[0]).To(Equal("go"))
+			Expect(tags[1]).To(Equal("rust"))
+			Expect(tags[2]).To(Equal("python"))
+
+			// Top-level transformation should work
+			Expect(response).To(HaveKey("name"))
+			Expect(response).NotTo(HaveKey("full_name"))
+		})
+	})
+
+	Describe("Nested Object and Array Auto-Discovery", func() {
+		It("should transform nested arrays using auto-discovered types", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			// Migration for Role type in nested array
+			roleChange := NewVersionChangeBuilder(v1, v2).
+				ForType(Role{}).
+				ResponseToPreviousVersion().
+				RenameField("name", "role_name").
+				RemoveField("priority").
+				Build()
+
+			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{roleChange})
+			Expect(err).NotTo(HaveOccurred())
+
+			router := setupRouterWithMiddleware(epochInstance)
+
+			router.GET("/users/1", epochInstance.WrapHandler(func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"id":        1,
+					"full_name": "John",
+					"email":     "john@example.com",
+					"phone":     "+1-555-0100",
+					"profile":   gin.H{"bio": "Engineer", "avatar": "avatar.png"},
+					"roles": []gin.H{
+						{"name": "admin", "priority": 1},
+						{"name": "user", "priority": 2},
+					},
+					"tags": []string{"go"},
+				})
+			}).Returns(User{}).ToHandlerFunc("GET", "/users/1"))
+
+			req := httptest.NewRequest("GET", "/users/1", nil)
+			req.Header.Set("X-API-Version", "2024-01-01")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response map[string]interface{}
+			err = json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Roles should be transformed via auto-discovery
+			Expect(response).To(HaveKey("roles"))
+			roles := response["roles"].([]interface{})
+			Expect(roles).To(HaveLen(2))
+
+			role0 := roles[0].(map[string]interface{})
+			Expect(role0).To(HaveKey("role_name"))
+			Expect(role0).NotTo(HaveKey("name"))
+			Expect(role0).NotTo(HaveKey("priority"))
+		})
+
+		It("should transform metadata nested object using auto-discovered types", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			// Migration for ListMetadata type
+			metadataChange := NewVersionChangeBuilder(v1, v2).
+				ForType(ListMetadata{}).
+				ResponseToPreviousVersion().
+				RenameField("updated_by", "author").
+				Build()
+
+			// Migration for User in array
+			userChange := NewVersionChangeBuilder(v1, v2).
+				ForType(User{}).
+				ResponseToPreviousVersion().
+				RemoveField("phone").
+				Build()
+
+			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{metadataChange, userChange})
+			Expect(err).NotTo(HaveOccurred())
+
+			router := setupRouterWithMiddleware(epochInstance)
+
+			router.GET("/users", epochInstance.WrapHandler(func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"users": []gin.H{
+						{"id": 1, "full_name": "Alice", "email": "alice@example.com", "phone": "+1-555-0100", "profile": gin.H{}, "roles": []gin.H{}, "tags": []string{}},
+					},
+					"total": 1,
+					"metadata": gin.H{
+						"page":       1,
+						"per_page":   10,
+						"updated_by": "admin",
+					},
+				})
+			}).Returns(UsersListResponse{}).ToHandlerFunc("GET", "/users"))
+
+			req := httptest.NewRequest("GET", "/users", nil)
+			req.Header.Set("X-API-Version", "2024-01-01")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response map[string]interface{}
+			err = json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Metadata should be transformed via auto-discovery
+			metadata := response["metadata"].(map[string]interface{})
+			Expect(metadata).To(HaveKey("author"))
+			Expect(metadata).NotTo(HaveKey("updated_by"))
+
+			// Users array should also be transformed
+			users := response["users"].([]interface{})
+			user0 := users[0].(map[string]interface{})
+			Expect(user0).NotTo(HaveKey("phone"))
 		})
 	})
 })

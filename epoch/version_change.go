@@ -187,15 +187,26 @@ func (vc *VersionChange) MigrateResponse(ctx context.Context, responseInfo *Resp
 			}
 		}
 
+		if len(responseInfo.nestedObjectTypes) > 0 {
+			for fieldPath, objectType := range responseInfo.nestedObjectTypes {
+				if err := vc.transformNestedObjectForSingleStep(
+					ctx, responseInfo, fieldPath, objectType,
+				); err != nil {
+					return fmt.Errorf("nested object migration failed for change '%s' (field: %s): %w",
+						vc.description, fieldPath, err)
+				}
+			}
+		}
+
 		// After type-specific transformations, also transform nested arrays if defined
 		if len(responseInfo.nestedArrayTypes) > 0 {
 			// For each registered nested array, transform its items with type info
-			for fieldName, itemType := range responseInfo.nestedArrayTypes {
+			for fieldPath, itemType := range responseInfo.nestedArrayTypes {
 				if err := vc.transformNestedArrayItemsForSingleStep(
-					ctx, responseInfo, fieldName, itemType,
+					ctx, responseInfo, fieldPath, itemType,
 				); err != nil {
 					return fmt.Errorf("nested array migration failed for change '%s' (field: %s): %w",
-						vc.description, fieldName, err)
+						vc.description, fieldPath, err)
 				}
 			}
 		}
@@ -557,12 +568,26 @@ func (mc *MigrationChain) MigrateRequestForType(
 
 // MigrateResponseForType applies response migrations for a known type (NO runtime matching)
 // This is used by the endpoint registry system where types are explicitly declared at setup time
-// It also handles nested arrays explicitly when provided
+// It also handles nested arrays and nested objects explicitly when provided
 func (mc *MigrationChain) MigrateResponseForType(
 	ctx context.Context,
 	responseInfo *ResponseInfo,
 	knownType reflect.Type,
 	nestedArrays map[string]reflect.Type,
+	from, to *Version,
+) error {
+	// Delegate to the extended version with nil nestedObjects for backward compatibility
+	return mc.MigrateResponseForTypeWithNestedObjects(ctx, responseInfo, knownType, nestedArrays, nil, from, to)
+}
+
+// MigrateResponseForTypeWithNestedObjects applies response migrations for a known type
+// with full support for nested arrays and nested objects
+func (mc *MigrationChain) MigrateResponseForTypeWithNestedObjects(
+	ctx context.Context,
+	responseInfo *ResponseInfo,
+	knownType reflect.Type,
+	nestedArrays map[string]reflect.Type,
+	nestedObjects map[string]reflect.Type,
 	from, to *Version,
 ) error {
 	// Check if the response type is a top-level array (e.g., []User)
@@ -574,12 +599,13 @@ func (mc *MigrationChain) MigrateResponseForType(
 		return mc.transformTopLevelArrayItems(ctx, responseInfo, elementType, from, to)
 	}
 
-	// Set the known type and nested array information - NO runtime matching needed
+	// Set the known type and nested type information - NO runtime matching needed
 	responseInfo.schemaMatched = true
 	responseInfo.matchedSchemaType = knownType
 	responseInfo.nestedArrayTypes = nestedArrays
+	responseInfo.nestedObjectTypes = nestedObjects
 
-	// Apply top-level migrations - nested arrays will be transformed at each step
+	// Apply top-level migrations - nested types will be transformed at each step
 	return mc.MigrateResponse(ctx, responseInfo, from, to)
 }
 
@@ -629,19 +655,44 @@ func (mc *MigrationChain) transformTopLevelArrayItems(
 	return nil
 }
 
+// getNodeAtPath navigates to a nested node using dot-notation path
+// Returns nil if any part of the path doesn't exist
+func getNodeAtPath(root *ast.Node, path string) *ast.Node {
+	if root == nil || path == "" {
+		return root
+	}
+
+	parts := strings.Split(path, ".")
+	current := root
+
+	for _, part := range parts {
+		if current == nil {
+			return nil
+		}
+		current = current.Get(part)
+		if current == nil || !current.Exists() {
+			return nil
+		}
+	}
+
+	return current
+}
+
 // transformNestedArrayItemsForSingleStep applies THIS version change's migrations
 // to items in a nested array field (single step, not multi-step)
+// Supports dot-notation paths for arrays inside nested objects (e.g., "profile.skills")
 func (vc *VersionChange) transformNestedArrayItemsForSingleStep(
 	ctx context.Context,
 	responseInfo *ResponseInfo,
-	fieldName string,
+	fieldPath string,
 	itemType reflect.Type,
 ) error {
 	if responseInfo.Body == nil {
 		return nil
 	}
 
-	arrayField := responseInfo.Body.Get(fieldName)
+	// Navigate to the array field using dot-notation path
+	arrayField := getNodeAtPath(responseInfo.Body, fieldPath)
 	if arrayField == nil || !arrayField.Exists() || arrayField.TypeSafe() != ast.V_ARRAY {
 		return nil
 	}
@@ -653,7 +704,17 @@ func (vc *VersionChange) transformNestedArrayItemsForSingleStep(
 	}
 
 	// Transform each array item with this version change's operations
-	return responseInfo.TransformArrayField(fieldName, func(item *ast.Node) error {
+	length, err := arrayField.Len()
+	if err != nil {
+		return err
+	}
+
+	for i := 0; i < length; i++ {
+		item := arrayField.Index(i)
+		if item == nil {
+			continue
+		}
+
 		itemInfo := &ResponseInfo{
 			Body:              item,
 			schemaMatched:     true,
@@ -669,6 +730,52 @@ func (vc *VersionChange) transformNestedArrayItemsForSingleStep(
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// transformNestedObjectForSingleStep applies THIS version change's migrations
+// to a nested object field (single step, not multi-step)
+// Supports dot-notation paths for deeply nested objects (e.g., "user.profile.address")
+func (vc *VersionChange) transformNestedObjectForSingleStep(
+	ctx context.Context,
+	responseInfo *ResponseInfo,
+	fieldPath string,
+	objectType reflect.Type,
+) error {
+	if responseInfo.Body == nil {
 		return nil
-	})
+	}
+
+	// Navigate to the object field using dot-notation path
+	objectField := getNodeAtPath(responseInfo.Body, fieldPath)
+	if objectField == nil || !objectField.Exists() || objectField.TypeSafe() != ast.V_OBJECT {
+		return nil
+	}
+
+	// Get instructions for the object type
+	instructions, exists := vc.alterResponseBySchemaInstructions[objectType]
+	if !exists {
+		return nil // No migrations defined for this object type in this version change
+	}
+
+	// Create ResponseInfo wrapper for the nested object
+	objectInfo := &ResponseInfo{
+		Body:              objectField,
+		StatusCode:        responseInfo.StatusCode,
+		schemaMatched:     true,
+		matchedSchemaType: objectType,
+	}
+
+	// Apply only THIS version change's instructions (single step)
+	for _, instruction := range instructions {
+		if responseInfo.StatusCode >= 400 && !instruction.MigrateHTTPErrors {
+			continue
+		}
+		if err := instruction.Transformer(objectInfo); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
