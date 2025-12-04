@@ -116,7 +116,10 @@ func (er *EndpointRegistry) GetAll() map[string]*EndpointDefinition {
 
 // AnalyzeStructFields recursively analyzes struct fields to discover nested types
 // Returns a list of NestedTypeInfo describing all nested structs and arrays
-func AnalyzeStructFields(t reflect.Type, prefix string, visited map[reflect.Type]bool) []NestedTypeInfo {
+//
+// The ancestors parameter tracks types currently being processed in the call stack
+// to prevent infinite recursion with circular references. Pass nil for initial call.
+func AnalyzeStructFields(t reflect.Type, prefix string, ancestors []reflect.Type) []NestedTypeInfo {
 	var result []NestedTypeInfo
 
 	// Handle nil or invalid types
@@ -135,13 +138,18 @@ func AnalyzeStructFields(t reflect.Type, prefix string, visited map[reflect.Type
 	}
 
 	// Prevent infinite recursion for circular references
-	if visited == nil {
-		visited = make(map[reflect.Type]bool)
+	// Check if this type is already in our ancestor chain (call stack)
+	for _, ancestor := range ancestors {
+		if ancestor == t {
+			return result // Circular reference detected, stop recursion
+		}
 	}
-	if visited[t] {
-		return result
-	}
-	visited[t] = true
+
+	// Add current type to ancestors for recursive calls
+	// Create a new slice to avoid modifying the caller's view
+	currentAncestors := make([]reflect.Type, len(ancestors)+1)
+	copy(currentAncestors, ancestors)
+	currentAncestors[len(ancestors)] = t
 
 	// Iterate through struct fields
 	for i := 0; i < t.NumField(); i++ {
@@ -188,7 +196,8 @@ func AnalyzeStructFields(t reflect.Type, prefix string, visited map[reflect.Type
 			})
 
 			// Recursively analyze nested struct
-			nestedResults := AnalyzeStructFields(fieldType, path, visited)
+			// Pass currentAncestors - each recursive call gets its own view
+			nestedResults := AnalyzeStructFields(fieldType, path, currentAncestors)
 			result = append(result, nestedResults...)
 
 		case reflect.Slice, reflect.Array:
@@ -208,14 +217,15 @@ func AnalyzeStructFields(t reflect.Type, prefix string, visited map[reflect.Type
 				})
 
 				// Recursively analyze array element type for deeper nesting
-				nestedResults := AnalyzeStructFields(elemType, path, visited)
+				// Pass currentAncestors - each recursive call gets its own view
+				nestedResults := AnalyzeStructFields(elemType, path, currentAncestors)
 				result = append(result, nestedResults...)
 			}
 		}
 	}
 
-	// Clean up visited map for this type (allow it to be found at different paths)
-	delete(visited, t)
+	// No cleanup needed - the ancestors slice is local to this call
+	// and each sibling branch gets its own view through the copy above
 
 	return result
 }

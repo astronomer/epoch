@@ -668,6 +668,115 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 			Expect(arrays).To(HaveKey("items"))
 			Expect(objects).To(HaveKey("metadata"))
 		})
+
+		It("should handle self-referential types without infinite recursion", func() {
+			// Define a self-referential type (like a linked list node)
+			type Node struct {
+				Value    string  `json:"value"`
+				Next     *Node   `json:"next"`
+				Children []Node  `json:"children"`
+			}
+
+			// This should not hang or panic
+			arrays, objects := BuildNestedTypeMaps(reflect.TypeOf(Node{}))
+
+			// Should find the children array (self-referential)
+			Expect(arrays).To(HaveKey("children"))
+			Expect(arrays["children"].Name()).To(Equal("Node"))
+
+			// Should find the next field as a nested object
+			Expect(objects).To(HaveKey("next"))
+			Expect(objects["next"].Name()).To(Equal("Node"))
+
+			// Should NOT recurse infinitely - verify by checking we don't have
+			// infinitely nested paths like "next.next.next..."
+			for path := range objects {
+				// Paths should be reasonable length (not infinite)
+				Expect(len(path)).To(BeNumerically("<", 100))
+			}
+		})
+
+		It("should handle mutually recursive types without infinite recursion", func() {
+			// Define mutually recursive types
+			type TypeB struct {
+				Name string `json:"name"`
+				// A will be added via interface to avoid Go compilation issues
+			}
+			type TypeA struct {
+				ID   int     `json:"id"`
+				RefB *TypeB  `json:"ref_b"`
+			}
+
+			// This should not hang or panic
+			_, objects := BuildNestedTypeMaps(reflect.TypeOf(TypeA{}))
+
+			// Should find ref_b as a nested object
+			Expect(objects).To(HaveKey("ref_b"))
+		})
+
+		It("should handle diamond-shaped type dependencies", func() {
+			// Diamond pattern: Root -> Left, Right; Left -> Bottom; Right -> Bottom
+			type Bottom struct {
+				Value string `json:"value"`
+			}
+			type Left struct {
+				Bottom Bottom `json:"bottom"`
+			}
+			type Right struct {
+				Bottom Bottom `json:"bottom"`
+			}
+			type Diamond struct {
+				Left  Left  `json:"left"`
+				Right Right `json:"right"`
+			}
+
+			_, objects := BuildNestedTypeMaps(reflect.TypeOf(Diamond{}))
+
+			// Should find all nested objects, including Bottom at both paths
+			Expect(objects).To(HaveKey("left"))
+			Expect(objects).To(HaveKey("right"))
+			Expect(objects).To(HaveKey("left.bottom"))
+			Expect(objects).To(HaveKey("right.bottom"))
+		})
+
+		It("should handle types appearing at multiple paths (sibling branches)", func() {
+			// Same type appearing in sibling fields
+			type Address struct {
+				City string `json:"city"`
+			}
+			type Person struct {
+				HomeAddress Address `json:"home_address"`
+				WorkAddress Address `json:"work_address"`
+			}
+
+			_, objects := BuildNestedTypeMaps(reflect.TypeOf(Person{}))
+
+			// Should find Address at both paths
+			Expect(objects).To(HaveKey("home_address"))
+			Expect(objects).To(HaveKey("work_address"))
+			Expect(objects["home_address"].Name()).To(Equal("Address"))
+			Expect(objects["work_address"].Name()).To(Equal("Address"))
+		})
+
+		It("should handle circular reference through nested arrays", func() {
+			// Type with array that contains self-reference
+			type TreeNode struct {
+				Name     string      `json:"name"`
+				Children []TreeNode `json:"children"`
+				Parent   *TreeNode  `json:"parent"`
+			}
+
+			// This should not hang or panic
+			arrays, objects := BuildNestedTypeMaps(reflect.TypeOf(TreeNode{}))
+
+			// Should find children array
+			Expect(arrays).To(HaveKey("children"))
+			Expect(arrays["children"].Name()).To(Equal("TreeNode"))
+
+			// Should find parent as nested object
+			Expect(objects).To(HaveKey("parent"))
+			Expect(objects["parent"].Name()).To(Equal("TreeNode"))
+		})
 	})
 
 	Describe("Nested object transformations", func() {
