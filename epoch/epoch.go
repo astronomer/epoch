@@ -84,6 +84,9 @@ func (hw *HandlerWrapper) Accepts(reqType interface{}) *HandlerWrapper {
 	hw.request = reqType
 	// Automatically analyze nested types
 	t := reflect.TypeOf(reqType)
+	if t == nil {
+		return hw
+	}
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
@@ -97,6 +100,9 @@ func (hw *HandlerWrapper) Returns(respType interface{}) *HandlerWrapper {
 	hw.response = respType
 	// Automatically analyze nested types
 	t := reflect.TypeOf(respType)
+	if t == nil {
+		return hw
+	}
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}

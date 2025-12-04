@@ -258,6 +258,8 @@ func isBuiltinType(t reflect.Type) bool {
 }
 
 // BuildNestedTypeMaps builds NestedArrays and NestedObjects maps from struct analysis
+// Only stores first-level nested types (paths without dots). Deeper nesting is handled
+// recursively when NewForNestedObject/NewForNestedArrayItem creates new info objects.
 func BuildNestedTypeMaps(t reflect.Type) (nestedArrays, nestedObjects map[string]reflect.Type) {
 	nestedArrays = make(map[string]reflect.Type)
 	nestedObjects = make(map[string]reflect.Type)
@@ -279,6 +281,13 @@ func BuildNestedTypeMaps(t reflect.Type) (nestedArrays, nestedObjects map[string
 
 	infos := AnalyzeStructFields(t, "", nil)
 	for _, info := range infos {
+		// Only store first-level nested types (paths without dots)
+		// Deeper nesting is handled recursively when we create new TransformableBody
+		// instances for nested objects/arrays via NewForNestedObject/NewForNestedArrayItem
+		if strings.Contains(info.Path, ".") {
+			continue
+		}
+
 		if info.IsArray {
 			nestedArrays[info.Path] = info.Type
 		} else {

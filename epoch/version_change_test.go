@@ -638,21 +638,23 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 			Expect(objects["metadata"].Name()).To(Equal("Metadata"))
 		})
 
-		It("should discover deeply nested structures (3+ levels)", func() {
-			// Container -> Items[] -> SubItems[] (two-level array nesting)
-			// Container -> Items[] -> Details (object inside array item)
+		It("should discover only first-level nested structures", func() {
+			// BuildNestedTypeMaps only returns first-level nested types
+			// Deeper nesting is handled recursively via NewForNestedObject/NewForNestedArrayItem
 			arrays, objects := BuildNestedTypeMaps(reflect.TypeOf(Container{}))
 
-			// Should find items array
+			// Should find first-level items array
 			Expect(arrays).To(HaveKey("items"))
 
-			// Should find subitems inside items (items.subitems path)
-			Expect(arrays).To(HaveKey("items.subitems"))
-			Expect(arrays["items.subitems"].Name()).To(Equal("SubItem"))
+			// Should NOT find deeply nested paths - these are discovered recursively
+			// when processing the Item type, not from the root Container level
+			Expect(arrays).NotTo(HaveKey("items.subitems"))
+			Expect(objects).NotTo(HaveKey("items.details"))
 
-			// Should find details inside items (items.details path)
-			Expect(objects).To(HaveKey("items.details"))
-			Expect(objects["items.details"].Name()).To(Equal("Details"))
+			// Verify that the Item type's nested types are discoverable separately
+			itemArrays, itemObjects := BuildNestedTypeMaps(arrays["items"])
+			Expect(itemArrays).To(HaveKey("subitems"))
+			Expect(itemObjects).To(HaveKey("details"))
 		})
 
 		It("should handle nil types gracefully", func() {
@@ -732,11 +734,17 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 
 			_, objects := BuildNestedTypeMaps(reflect.TypeOf(Diamond{}))
 
-			// Should find all nested objects, including Bottom at both paths
+			// Should find only first-level nested objects
 			Expect(objects).To(HaveKey("left"))
 			Expect(objects).To(HaveKey("right"))
-			Expect(objects).To(HaveKey("left.bottom"))
-			Expect(objects).To(HaveKey("right.bottom"))
+
+			// Should NOT find deeply nested paths - these are discovered recursively
+			Expect(objects).NotTo(HaveKey("left.bottom"))
+			Expect(objects).NotTo(HaveKey("right.bottom"))
+
+			// Verify that nested Bottom is discoverable from Left/Right types
+			_, leftObjects := BuildNestedTypeMaps(objects["left"])
+			Expect(leftObjects).To(HaveKey("bottom"))
 		})
 
 		It("should handle types appearing at multiple paths (sibling branches)", func() {

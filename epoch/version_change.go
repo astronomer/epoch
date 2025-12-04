@@ -757,13 +757,17 @@ func (mc *MigrationChain) transformTopLevelArray(
 		var migrateErr error
 		switch direction {
 		case DirectionRequest:
-			if reqInfo, ok := itemInfo.(*RequestInfo); ok {
-				migrateErr = mc.MigrateRequest(ctx, reqInfo, from, to)
+			reqInfo, ok := itemInfo.(*RequestInfo)
+			if !ok {
+				return fmt.Errorf("failed to migrate array item %d: expected *RequestInfo but got %T", i, itemInfo)
 			}
+			migrateErr = mc.MigrateRequest(ctx, reqInfo, from, to)
 		case DirectionResponse:
-			if respInfo, ok := itemInfo.(*ResponseInfo); ok {
-				migrateErr = mc.MigrateResponse(ctx, respInfo, from, to)
+			respInfo, ok := itemInfo.(*ResponseInfo)
+			if !ok {
+				return fmt.Errorf("failed to migrate array item %d: expected *ResponseInfo but got %T", i, itemInfo)
 			}
+			migrateErr = mc.MigrateResponse(ctx, respInfo, from, to)
 		}
 
 		if migrateErr != nil {
