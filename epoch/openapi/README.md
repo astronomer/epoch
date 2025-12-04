@@ -12,6 +12,7 @@ The OpenAPI schema generation library creates separate, version-specific OpenAPI
 - ✅ **Full type support** - Primitives, structs, slices, maps, interfaces, pointers, embedded structs
 - ✅ **Dual tag support** - Parses both `binding` (request) and `validate` (response) tags
 - ✅ **Version transformations** - Applies Epoch migrations to generate version-specific schemas
+- ✅ **Recursive nested transformations** - Nested objects and arrays are automatically transformed
 - ✅ **Separate specs per version** - Clean, standalone OpenAPI files for each version
 
 ## Architecture
@@ -70,13 +71,13 @@ The OpenAPI schema generation library creates separate, version-specific OpenAPI
 | `float64` | `number` (format: double) | |
 | `bool` | `boolean` | |
 | `time.Time` | `string` (format: date-time) | |
-| `[]T` | `array` (items: T) | |
+| `[]T` | `array` (items: T) | Nested array items transformed recursively |
 | `[N]T` | `array` (minItems/maxItems: N) | |
 | `*T` | Same as T (not in required) | Pointer = optional |
 | `map[string]T` | `object` (additionalProperties: T) | |
 | `map[string]interface{}` | `object` (additionalProperties: true) | |
 | `interface{}` | `object` (free-form) | |
-| `struct` | `object` (with properties) | |
+| `struct` | `object` (with properties) | Nested structs transformed recursively |
 | Embedded struct | Properties promoted | |
 
 ## Tag Parsing Reference

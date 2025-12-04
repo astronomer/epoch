@@ -12,6 +12,7 @@ Epoch lets you version your Go APIs the way Stripe does - write your handlers on
 - **Type-based routing** - Explicit type registration at endpoint setup for predictable migrations
 - **Flow-based operations** - Clear separation: requests go Client→HEAD, responses go HEAD→Client
 - **Automatic bidirectional** - One operation generates both request and response transformations
+- **Automatic nested discovery** - Nested objects and arrays are transformed recursively without manual registration
 - **Field order preservation** - JSON responses maintain original field order using Sonic
 - **Cycle detection** - Built-in validation prevents circular migration dependencies
 
@@ -355,7 +356,8 @@ Demonstrates:
 3. **Request migration** - Transforms incoming request: Client Version → HEAD
 4. **Handler executes** - With migrated request in HEAD format
 5. **Response migration** - Transforms outgoing response: HEAD → Client Version
-6. **Client receives** - Response in their requested version format
+6. **Nested types transformed** - Automatically discovers and transforms nested objects/arrays recursively
+7. **Client receives** - Response in their requested version format
 
 ```
 Client (v1) → [v1 Request] → Migration (v1→v2) → [v2 Request] → Handler (v2)
