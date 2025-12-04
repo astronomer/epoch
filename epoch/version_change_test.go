@@ -672,9 +672,9 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 		It("should handle self-referential types without infinite recursion", func() {
 			// Define a self-referential type (like a linked list node)
 			type Node struct {
-				Value    string  `json:"value"`
-				Next     *Node   `json:"next"`
-				Children []Node  `json:"children"`
+				Value    string `json:"value"`
+				Next     *Node  `json:"next"`
+				Children []Node `json:"children"`
 			}
 
 			// This should not hang or panic
@@ -703,8 +703,8 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 				// A will be added via interface to avoid Go compilation issues
 			}
 			type TypeA struct {
-				ID   int     `json:"id"`
-				RefB *TypeB  `json:"ref_b"`
+				ID   int    `json:"id"`
+				RefB *TypeB `json:"ref_b"`
 			}
 
 			// This should not hang or panic
@@ -761,7 +761,7 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 		It("should handle circular reference through nested arrays", func() {
 			// Type with array that contains self-reference
 			type TreeNode struct {
-				Name     string      `json:"name"`
+				Name     string     `json:"name"`
 				Children []TreeNode `json:"children"`
 				Parent   *TreeNode  `json:"parent"`
 			}
