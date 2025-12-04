@@ -107,10 +107,12 @@ func (hw *HandlerWrapper) Returns(respType interface{}) *HandlerWrapper {
 // buildEndpointDefinition creates an EndpointDefinition from the wrapper's state
 func (hw *HandlerWrapper) buildEndpointDefinition(method, pathPattern string) *EndpointDefinition {
 	def := &EndpointDefinition{
-		Method:        method,
-		PathPattern:   pathPattern,
-		NestedArrays:  hw.responseNestedArrays,
-		NestedObjects: hw.responseNestedObjects,
+		Method:                method,
+		PathPattern:           pathPattern,
+		ResponseNestedArrays:  hw.responseNestedArrays,
+		ResponseNestedObjects: hw.responseNestedObjects,
+		RequestNestedArrays:   hw.requestNestedArrays,
+		RequestNestedObjects:  hw.requestNestedObjects,
 	}
 
 	if hw.request != nil {

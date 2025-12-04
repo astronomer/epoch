@@ -238,7 +238,7 @@ func (sg *SchemaGenerator) getRegisteredTypes() []reflect.Type {
 		}
 
 		// Also collect nested array types
-		for _, itemType := range endpoint.NestedArrays {
+		for _, itemType := range endpoint.ResponseNestedArrays {
 			if !typeMap[itemType] {
 				typeMap[itemType] = true
 				types = append(types, itemType)

@@ -17,12 +17,14 @@ type NestedTypeInfo struct {
 
 // EndpointDefinition stores type information for a specific endpoint
 type EndpointDefinition struct {
-	Method        string
-	PathPattern   string                  // e.g., "/users/:id"
-	RequestType   reflect.Type            // Type for request body
-	ResponseType  reflect.Type            // Type for response body
-	NestedArrays  map[string]reflect.Type // field path → item type for nested arrays (auto-populated)
-	NestedObjects map[string]reflect.Type // field path → type for nested objects (auto-populated)
+	Method                string
+	PathPattern           string                  // e.g., "/users/:id"
+	RequestType           reflect.Type            // Type for request body
+	ResponseType          reflect.Type            // Type for response body
+	RequestNestedArrays   map[string]reflect.Type // field path → item type for request nested arrays (auto-populated)
+	RequestNestedObjects  map[string]reflect.Type // field path → type for request nested objects (auto-populated)
+	ResponseNestedArrays  map[string]reflect.Type // field path → item type for response nested arrays (auto-populated)
+	ResponseNestedObjects map[string]reflect.Type // field path → type for response nested objects (auto-populated)
 }
 
 // EndpointRegistry stores and manages endpoint→type mappings
@@ -111,10 +113,6 @@ func (er *EndpointRegistry) GetAll() map[string]*EndpointDefinition {
 	}
 	return result
 }
-
-// ============================================================================
-// STRUCT ANALYSIS FOR NESTED TYPE DISCOVERY
-// ============================================================================
 
 // AnalyzeStructFields recursively analyzes struct fields to discover nested types
 // Returns a list of NestedTypeInfo describing all nested structs and arrays

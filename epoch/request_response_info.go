@@ -9,6 +9,32 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// TransformDirection indicates whether a transformation is for a request or response
+type TransformDirection int
+
+const (
+	// DirectionRequest indicates request transformation (older to newer version)
+	DirectionRequest TransformDirection = iota
+	// DirectionResponse indicates response transformation (newer to older version)
+	DirectionResponse
+)
+
+// TransformableBody represents a request or response body that can be transformed
+// This interface allows consolidation of transformation logic for nested objects and arrays
+type TransformableBody interface {
+	// GetBody returns the AST node representing the body
+	GetBody() *ast.Node
+	// GetStatusCode returns the HTTP status code (0 for requests)
+	GetStatusCode() int
+	// ShouldSkipInstruction returns true if the instruction should be skipped
+	// based on status code and MigrateHTTPErrors flag
+	ShouldSkipInstruction(migrateHTTPErrors bool) bool
+	// NewForNestedObject creates a new TransformableBody for a nested object
+	NewForNestedObject(body *ast.Node, objectType reflect.Type) TransformableBody
+	// NewForNestedArrayItem creates a new TransformableBody for a nested array item
+	NewForNestedArrayItem(body *ast.Node, itemType reflect.Type) TransformableBody
+}
+
 // RequestInfo contains information about a Gin request for migration
 type RequestInfo struct {
 	Body        *ast.Node // Sonic AST Node preserves field order
@@ -20,6 +46,12 @@ type RequestInfo struct {
 	// Chain-level schema matching context (prevents re-matching in multi-step migrations)
 	schemaMatched     bool
 	matchedSchemaType reflect.Type
+
+	// Nested array type information for step-by-step transformations
+	nestedArrayTypes map[string]reflect.Type
+
+	// Nested object type information for step-by-step transformations
+	nestedObjectTypes map[string]reflect.Type
 }
 
 // NewRequestInfo creates a new RequestInfo from a Gin context
@@ -164,6 +196,40 @@ func (r *RequestInfo) HasField(key string) bool {
 	return field != nil && field.Exists()
 }
 
+// GetBody returns the AST node representing the request body
+func (r *RequestInfo) GetBody() *ast.Node {
+	return r.Body
+}
+
+// GetStatusCode returns 0 for requests (no status code)
+func (r *RequestInfo) GetStatusCode() int {
+	return 0
+}
+
+// ShouldSkipInstruction always returns false for requests
+// (requests don't have HTTP error status codes to check)
+func (r *RequestInfo) ShouldSkipInstruction(migrateHTTPErrors bool) bool {
+	return false
+}
+
+// NewForNestedObject creates a new RequestInfo for a nested object
+func (r *RequestInfo) NewForNestedObject(body *ast.Node, objectType reflect.Type) TransformableBody {
+	return &RequestInfo{
+		Body:              body,
+		schemaMatched:     true,
+		matchedSchemaType: objectType,
+	}
+}
+
+// NewForNestedArrayItem creates a new RequestInfo for a nested array item
+func (r *RequestInfo) NewForNestedArrayItem(body *ast.Node, itemType reflect.Type) TransformableBody {
+	return &RequestInfo{
+		Body:              body,
+		schemaMatched:     true,
+		matchedSchemaType: itemType,
+	}
+}
+
 // TransformArrayField applies a transformation to each item in an array field
 // If key is empty, transforms the root body if it's an array
 func (r *RequestInfo) TransformArrayField(key string, transformer func(*ast.Node) error) error {
@@ -267,6 +333,42 @@ func (r *ResponseInfo) HasField(key string) bool {
 	}
 	field := r.Body.Get(key)
 	return field != nil && field.Exists()
+}
+
+// GetBody returns the AST node representing the response body
+func (r *ResponseInfo) GetBody() *ast.Node {
+	return r.Body
+}
+
+// GetStatusCode returns the HTTP status code
+func (r *ResponseInfo) GetStatusCode() int {
+	return r.StatusCode
+}
+
+// ShouldSkipInstruction returns true if the instruction should be skipped
+// based on status code and MigrateHTTPErrors flag
+func (r *ResponseInfo) ShouldSkipInstruction(migrateHTTPErrors bool) bool {
+	return r.StatusCode >= 400 && !migrateHTTPErrors
+}
+
+// NewForNestedObject creates a new ResponseInfo for a nested object
+func (r *ResponseInfo) NewForNestedObject(body *ast.Node, objectType reflect.Type) TransformableBody {
+	return &ResponseInfo{
+		Body:              body,
+		StatusCode:        r.StatusCode,
+		schemaMatched:     true,
+		matchedSchemaType: objectType,
+	}
+}
+
+// NewForNestedArrayItem creates a new ResponseInfo for a nested array item
+func (r *ResponseInfo) NewForNestedArrayItem(body *ast.Node, itemType reflect.Type) TransformableBody {
+	return &ResponseInfo{
+		Body:              body,
+		StatusCode:        r.StatusCode,
+		schemaMatched:     true,
+		matchedSchemaType: itemType,
+	}
 }
 
 // TransformArrayField applies a transformation to each item in an array field
