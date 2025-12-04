@@ -49,7 +49,132 @@ func (vt *VersionTransformer) TransformSchemaForVersion(
 		}
 	}
 
+	// Recursively transform nested schemas (objects and arrays)
+	if err := vt.transformNestedSchemas(schema, targetType, targetVersion, direction); err != nil {
+		return nil, fmt.Errorf("failed to transform nested schemas: %w", err)
+	}
+
 	return schema, nil
+}
+
+// transformNestedSchemas recursively transforms nested object and array schemas
+func (vt *VersionTransformer) transformNestedSchemas(
+	schema *openapi3.Schema,
+	parentType reflect.Type,
+	targetVersion *epoch.Version,
+	direction SchemaDirection,
+) error {
+	if schema == nil || schema.Properties == nil {
+		return nil
+	}
+
+	// Dereference pointer type if needed
+	if parentType.Kind() == reflect.Ptr {
+		parentType = parentType.Elem()
+	}
+
+	// Only process struct types
+	if parentType.Kind() != reflect.Struct {
+		return nil
+	}
+
+	// Analyze the parent type to discover nested types
+	nestedTypes := epoch.AnalyzeStructFields(parentType, "", nil)
+
+	// Process each nested type found
+	for _, nested := range nestedTypes {
+		// Only handle direct children (no dots in path for first level)
+		// Deeper nesting will be handled recursively
+		if containsDot(nested.Path) {
+			continue
+		}
+
+		// Find the property in the schema
+		propRef, exists := schema.Properties[nested.Path]
+		if !exists || propRef == nil {
+			continue
+		}
+
+		// Get the schema to transform
+		var propSchema *openapi3.Schema
+		if propRef.Value != nil {
+			propSchema = propRef.Value
+		} else if propRef.Ref != "" {
+			// Skip $ref - these should be transformed separately as component schemas
+			continue
+		}
+
+		if propSchema == nil {
+			continue
+		}
+
+		if nested.IsArray {
+			// Transform array items
+			if propSchema.Items != nil && propSchema.Items.Value != nil {
+				itemSchema := propSchema.Items.Value
+
+				// Apply transformations for the array item type
+				transformedItemSchema, err := vt.transformNestedTypeSchema(
+					itemSchema, nested.Type, targetVersion, direction)
+				if err != nil {
+					return fmt.Errorf("failed to transform array items at %s: %w", nested.Path, err)
+				}
+
+				// Update the items schema
+				propSchema.Items = openapi3.NewSchemaRef("", transformedItemSchema)
+			}
+		} else {
+			// Transform nested object
+			transformedSchema, err := vt.transformNestedTypeSchema(
+				propSchema, nested.Type, targetVersion, direction)
+			if err != nil {
+				return fmt.Errorf("failed to transform nested object at %s: %w", nested.Path, err)
+			}
+
+			// Update the property schema
+			schema.Properties[nested.Path] = openapi3.NewSchemaRef("", transformedSchema)
+		}
+	}
+
+	return nil
+}
+
+// transformNestedTypeSchema applies transformations to a nested type's schema
+func (vt *VersionTransformer) transformNestedTypeSchema(
+	schema *openapi3.Schema,
+	nestedType reflect.Type,
+	targetVersion *epoch.Version,
+	direction SchemaDirection,
+) (*openapi3.Schema, error) {
+	// Clone the schema first
+	clonedSchema := CloneSchema(schema)
+
+	// Get version changes for the nested type
+	changes := vt.getVersionChanges(nestedType, targetVersion, direction)
+
+	// Apply all changes
+	for _, change := range changes {
+		if err := vt.applyChange(clonedSchema, change, direction); err != nil {
+			return nil, fmt.Errorf("failed to apply change: %w", err)
+		}
+	}
+
+	// Recursively transform any nested types within this type
+	if err := vt.transformNestedSchemas(clonedSchema, nestedType, targetVersion, direction); err != nil {
+		return nil, err
+	}
+
+	return clonedSchema, nil
+}
+
+// containsDot checks if a string contains a dot character
+func containsDot(s string) bool {
+	for _, c := range s {
+		if c == '.' {
+			return true
+		}
+	}
+	return false
 }
 
 // versionChange holds information about a single version change operation

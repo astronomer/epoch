@@ -106,13 +106,31 @@ func (hw *HandlerWrapper) Returns(respType interface{}) *HandlerWrapper {
 
 // buildEndpointDefinition creates an EndpointDefinition from the wrapper's state
 func (hw *HandlerWrapper) buildEndpointDefinition(method, pathPattern string) *EndpointDefinition {
+	// Ensure nested type maps are never nil to prevent panics in downstream code
+	responseNestedArrays := hw.responseNestedArrays
+	if responseNestedArrays == nil {
+		responseNestedArrays = make(map[string]reflect.Type)
+	}
+	responseNestedObjects := hw.responseNestedObjects
+	if responseNestedObjects == nil {
+		responseNestedObjects = make(map[string]reflect.Type)
+	}
+	requestNestedArrays := hw.requestNestedArrays
+	if requestNestedArrays == nil {
+		requestNestedArrays = make(map[string]reflect.Type)
+	}
+	requestNestedObjects := hw.requestNestedObjects
+	if requestNestedObjects == nil {
+		requestNestedObjects = make(map[string]reflect.Type)
+	}
+
 	def := &EndpointDefinition{
 		Method:                method,
 		PathPattern:           pathPattern,
-		ResponseNestedArrays:  hw.responseNestedArrays,
-		ResponseNestedObjects: hw.responseNestedObjects,
-		RequestNestedArrays:   hw.requestNestedArrays,
-		RequestNestedObjects:  hw.requestNestedObjects,
+		ResponseNestedArrays:  responseNestedArrays,
+		ResponseNestedObjects: responseNestedObjects,
+		RequestNestedArrays:   requestNestedArrays,
+		RequestNestedObjects:  requestNestedObjects,
 	}
 
 	if hw.request != nil {

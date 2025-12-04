@@ -214,19 +214,35 @@ func (r *RequestInfo) ShouldSkipInstruction(migrateHTTPErrors bool) bool {
 
 // NewForNestedObject creates a new RequestInfo for a nested object
 func (r *RequestInfo) NewForNestedObject(body *ast.Node, objectType reflect.Type) TransformableBody {
+	// Discover nested types within the object type for recursive transformation
+	nestedArrays, nestedObjects := BuildNestedTypeMaps(objectType)
 	return &RequestInfo{
 		Body:              body,
+		Headers:           r.Headers,
+		Cookies:           r.Cookies,
+		QueryParams:       r.QueryParams,
+		GinContext:        r.GinContext,
 		schemaMatched:     true,
 		matchedSchemaType: objectType,
+		nestedArrayTypes:  nestedArrays,
+		nestedObjectTypes: nestedObjects,
 	}
 }
 
 // NewForNestedArrayItem creates a new RequestInfo for a nested array item
 func (r *RequestInfo) NewForNestedArrayItem(body *ast.Node, itemType reflect.Type) TransformableBody {
+	// Discover nested types within the item type for recursive transformation
+	nestedArrays, nestedObjects := BuildNestedTypeMaps(itemType)
 	return &RequestInfo{
 		Body:              body,
+		Headers:           r.Headers,
+		Cookies:           r.Cookies,
+		QueryParams:       r.QueryParams,
+		GinContext:        r.GinContext,
 		schemaMatched:     true,
 		matchedSchemaType: itemType,
+		nestedArrayTypes:  nestedArrays,
+		nestedObjectTypes: nestedObjects,
 	}
 }
 
@@ -353,21 +369,33 @@ func (r *ResponseInfo) ShouldSkipInstruction(migrateHTTPErrors bool) bool {
 
 // NewForNestedObject creates a new ResponseInfo for a nested object
 func (r *ResponseInfo) NewForNestedObject(body *ast.Node, objectType reflect.Type) TransformableBody {
+	// Discover nested types within the object type for recursive transformation
+	nestedArrays, nestedObjects := BuildNestedTypeMaps(objectType)
 	return &ResponseInfo{
 		Body:              body,
 		StatusCode:        r.StatusCode,
+		Headers:           r.Headers,
+		GinContext:        r.GinContext,
 		schemaMatched:     true,
 		matchedSchemaType: objectType,
+		nestedArrayTypes:  nestedArrays,
+		nestedObjectTypes: nestedObjects,
 	}
 }
 
 // NewForNestedArrayItem creates a new ResponseInfo for a nested array item
 func (r *ResponseInfo) NewForNestedArrayItem(body *ast.Node, itemType reflect.Type) TransformableBody {
+	// Discover nested types within the item type for recursive transformation
+	nestedArrays, nestedObjects := BuildNestedTypeMaps(itemType)
 	return &ResponseInfo{
 		Body:              body,
 		StatusCode:        r.StatusCode,
+		Headers:           r.Headers,
+		GinContext:        r.GinContext,
 		schemaMatched:     true,
 		matchedSchemaType: itemType,
+		nestedArrayTypes:  nestedArrays,
+		nestedObjectTypes: nestedObjects,
 	}
 }
 

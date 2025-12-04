@@ -648,6 +648,11 @@ func (mc *MigrationChain) MigrateRequestForTypeWithNestedObjects(
 	nestedObjects map[string]reflect.Type,
 	from, to *Version,
 ) error {
+	// If knownType is nil, skip type-specific processing and just apply migrations
+	if knownType == nil {
+		return mc.MigrateRequest(ctx, requestInfo, from, to)
+	}
+
 	// Check if the request type is a top-level array (e.g., []User)
 	if knownType.Kind() == reflect.Slice || knownType.Kind() == reflect.Array {
 		// Extract the element type from the array
@@ -691,6 +696,11 @@ func (mc *MigrationChain) MigrateResponseForTypeWithNestedObjects(
 	nestedObjects map[string]reflect.Type,
 	from, to *Version,
 ) error {
+	// If knownType is nil, skip type-specific processing and just apply migrations
+	if knownType == nil {
+		return mc.MigrateResponse(ctx, responseInfo, from, to)
+	}
+
 	// Check if the response type is a top-level array (e.g., []User)
 	if knownType.Kind() == reflect.Slice || knownType.Kind() == reflect.Array {
 		// Extract the element type from the array

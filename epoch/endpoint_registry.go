@@ -116,9 +116,6 @@ func (er *EndpointRegistry) GetAll() map[string]*EndpointDefinition {
 
 // AnalyzeStructFields recursively analyzes struct fields to discover nested types
 // Returns a list of NestedTypeInfo describing all nested structs and arrays
-//
-// The ancestors parameter tracks types currently being processed in the call stack
-// to prevent infinite recursion with circular references. Pass nil for initial call.
 func AnalyzeStructFields(t reflect.Type, prefix string, ancestors []reflect.Type) []NestedTypeInfo {
 	var result []NestedTypeInfo
 
@@ -223,9 +220,6 @@ func AnalyzeStructFields(t reflect.Type, prefix string, ancestors []reflect.Type
 			}
 		}
 	}
-
-	// No cleanup needed - the ancestors slice is local to this call
-	// and each sibling branch gets its own view through the copy above
 
 	return result
 }
