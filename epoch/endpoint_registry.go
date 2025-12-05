@@ -8,13 +8,23 @@ import (
 	"sync"
 )
 
+// NestedTypeInfo describes a nested type within a struct
+type NestedTypeInfo struct {
+	Path    string       // JSON path e.g., "metadata" or "profile.skills"
+	Type    reflect.Type // The nested type
+	IsArray bool         // True if it's an array/slice field
+}
+
 // EndpointDefinition stores type information for a specific endpoint
 type EndpointDefinition struct {
-	Method       string
-	PathPattern  string                  // e.g., "/users/:id"
-	RequestType  reflect.Type            // Type for request body
-	ResponseType reflect.Type            // Type for response body
-	NestedArrays map[string]reflect.Type // field name → item type for nested arrays
+	Method                string
+	PathPattern           string                  // e.g., "/users/:id"
+	RequestType           reflect.Type            // Type for request body
+	ResponseType          reflect.Type            // Type for response body
+	RequestNestedArrays   map[string]reflect.Type // field path → item type for request nested arrays (auto-populated)
+	RequestNestedObjects  map[string]reflect.Type // field path → type for request nested objects (auto-populated)
+	ResponseNestedArrays  map[string]reflect.Type // field path → item type for response nested arrays (auto-populated)
+	ResponseNestedObjects map[string]reflect.Type // field path → type for response nested objects (auto-populated)
 }
 
 // EndpointRegistry stores and manages endpoint→type mappings
@@ -102,4 +112,188 @@ func (er *EndpointRegistry) GetAll() map[string]*EndpointDefinition {
 		result[k] = v
 	}
 	return result
+}
+
+// AnalyzeStructFields recursively analyzes struct fields to discover nested types
+// Returns a list of NestedTypeInfo describing all nested structs and arrays
+func AnalyzeStructFields(t reflect.Type, prefix string, ancestors []reflect.Type) []NestedTypeInfo {
+	var result []NestedTypeInfo
+
+	// Handle nil or invalid types
+	if t == nil {
+		return result
+	}
+
+	// Dereference pointer types
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	// Only analyze structs
+	if t.Kind() != reflect.Struct {
+		return result
+	}
+
+	// Prevent infinite recursion for circular references
+	// Check if this type is already in our ancestor chain (call stack)
+	for _, ancestor := range ancestors {
+		if ancestor == t {
+			return result // Circular reference detected, stop recursion
+		}
+	}
+
+	// Add current type to ancestors for recursive calls
+	// Create a new slice to avoid modifying the caller's view
+	currentAncestors := make([]reflect.Type, len(ancestors)+1)
+	copy(currentAncestors, ancestors)
+	currentAncestors[len(ancestors)] = t
+
+	// Iterate through struct fields
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+
+		// Skip unexported fields
+		if !field.IsExported() {
+			continue
+		}
+
+		// Get JSON field name
+		jsonName := getJSONFieldName(field)
+		if jsonName == "-" {
+			continue // Skip fields marked with json:"-"
+		}
+
+		// Build the full path
+		var path string
+		if prefix == "" {
+			path = jsonName
+		} else {
+			path = prefix + "." + jsonName
+		}
+
+		fieldType := field.Type
+
+		// Dereference pointer types
+		if fieldType.Kind() == reflect.Ptr {
+			fieldType = fieldType.Elem()
+		}
+
+		switch fieldType.Kind() {
+		case reflect.Struct:
+			// Skip time.Time and other common non-nested types
+			if isBuiltinType(fieldType) {
+				continue
+			}
+
+			// Found a nested struct
+			result = append(result, NestedTypeInfo{
+				Path:    path,
+				Type:    fieldType,
+				IsArray: false,
+			})
+
+			// Recursively analyze nested struct
+			// Pass currentAncestors - each recursive call gets its own view
+			nestedResults := AnalyzeStructFields(fieldType, path, currentAncestors)
+			result = append(result, nestedResults...)
+
+		case reflect.Slice, reflect.Array:
+			elemType := fieldType.Elem()
+
+			// Dereference pointer element types
+			if elemType.Kind() == reflect.Ptr {
+				elemType = elemType.Elem()
+			}
+
+			// Only care about slices of structs
+			if elemType.Kind() == reflect.Struct && !isBuiltinType(elemType) {
+				result = append(result, NestedTypeInfo{
+					Path:    path,
+					Type:    elemType,
+					IsArray: true,
+				})
+
+				// Recursively analyze array element type for deeper nesting
+				// Pass currentAncestors - each recursive call gets its own view
+				nestedResults := AnalyzeStructFields(elemType, path, currentAncestors)
+				result = append(result, nestedResults...)
+			}
+		}
+	}
+
+	return result
+}
+
+// getJSONFieldName extracts the JSON field name from a struct field
+func getJSONFieldName(field reflect.StructField) string {
+	jsonTag := field.Tag.Get("json")
+	if jsonTag == "" {
+		return field.Name
+	}
+
+	// Handle json:"fieldname,omitempty" format
+	parts := strings.Split(jsonTag, ",")
+	if parts[0] == "" {
+		return field.Name
+	}
+	return parts[0]
+}
+
+// isBuiltinType checks if a type is a builtin type that shouldn't be recursed into
+func isBuiltinType(t reflect.Type) bool {
+	// Check for common types that look like structs but aren't "nested objects"
+	typeName := t.String()
+	builtins := []string{
+		"time.Time",
+		"json.RawMessage",
+		"uuid.UUID",
+		"decimal.Decimal",
+	}
+	for _, builtin := range builtins {
+		if typeName == builtin {
+			return true
+		}
+	}
+	return false
+}
+
+// BuildNestedTypeMaps builds NestedArrays and NestedObjects maps from struct analysis
+// Only stores first-level nested types (paths without dots). Deeper nesting is handled
+// recursively when NewForNestedObject/NewForNestedArrayItem creates new info objects.
+func BuildNestedTypeMaps(t reflect.Type) (nestedArrays, nestedObjects map[string]reflect.Type) {
+	nestedArrays = make(map[string]reflect.Type)
+	nestedObjects = make(map[string]reflect.Type)
+
+	if t == nil {
+		return
+	}
+
+	// Dereference pointer
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	// Handle slice/array types at top level
+	if t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+		// Top-level arrays don't need nested registration
+		return
+	}
+
+	infos := AnalyzeStructFields(t, "", nil)
+	for _, info := range infos {
+		// Only store first-level nested types (paths without dots)
+		// Deeper nesting is handled recursively when we create new TransformableBody
+		// instances for nested objects/arrays via NewForNestedObject/NewForNestedArrayItem
+		if strings.Contains(info.Path, ".") {
+			continue
+		}
+
+		if info.IsArray {
+			nestedArrays[info.Path] = info.Type
+		} else {
+			nestedObjects[info.Path] = info.Type
+		}
+	}
+
+	return
 }

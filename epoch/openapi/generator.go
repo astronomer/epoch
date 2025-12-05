@@ -110,11 +110,14 @@ func (sg *SchemaGenerator) processTypeForVersion(
 	if existingSchema != nil {
 		// TRANSFORM PATH: Schema exists, transform it in place
 
+		// Resolve any $refs in the existing schema using other schemas from base spec
+		resolvedSchema := sg.resolveRefsFromBaseSpec(existingSchema, baseSpec)
+
 		// Determine correct direction based on type's role (request vs response)
 		direction := sg.getDirectionForType(typ)
 
 		transformedSchema, err := sg.transformer.TransformSchemaForVersion(
-			existingSchema, typ, version, direction)
+			resolvedSchema, typ, version, direction)
 		if err != nil {
 			return fmt.Errorf("failed to transform schema %s: %w", mappedSchemaName, err)
 		}
@@ -141,6 +144,51 @@ func (sg *SchemaGenerator) processTypeForVersion(
 	}
 
 	return nil
+}
+
+// resolveRefsFromBaseSpec resolves $refs using schemas from the base spec
+func (sg *SchemaGenerator) resolveRefsFromBaseSpec(schema *openapi3.Schema, baseSpec *openapi3.T) *openapi3.Schema {
+	if schema == nil || baseSpec == nil || baseSpec.Components == nil || baseSpec.Components.Schemas == nil {
+		return schema
+	}
+
+	// Clone the schema first
+	result := CloneSchema(schema)
+
+	// Resolve $refs in properties
+	if result.Properties != nil {
+		for propName, propRef := range result.Properties {
+			if propRef.Ref != "" {
+				// It's a $ref - resolve it from base spec
+				componentName := strings.TrimPrefix(propRef.Ref, "#/components/schemas/")
+				if comp, ok := baseSpec.Components.Schemas[componentName]; ok && comp.Value != nil {
+					// Recursively resolve nested $refs
+					resolvedProp := sg.resolveRefsFromBaseSpec(comp.Value, baseSpec)
+					result.Properties[propName] = openapi3.NewSchemaRef("", resolvedProp)
+				}
+			} else if propRef.Value != nil {
+				// Recursively resolve nested objects
+				resolvedProp := sg.resolveRefsFromBaseSpec(propRef.Value, baseSpec)
+				result.Properties[propName] = openapi3.NewSchemaRef("", resolvedProp)
+			}
+		}
+	}
+
+	// Resolve $refs in array items
+	if result.Items != nil {
+		if result.Items.Ref != "" {
+			componentName := strings.TrimPrefix(result.Items.Ref, "#/components/schemas/")
+			if comp, ok := baseSpec.Components.Schemas[componentName]; ok && comp.Value != nil {
+				resolvedItems := sg.resolveRefsFromBaseSpec(comp.Value, baseSpec)
+				result.Items = openapi3.NewSchemaRef("", resolvedItems)
+			}
+		} else if result.Items.Value != nil {
+			resolvedItems := sg.resolveRefsFromBaseSpec(result.Items.Value, baseSpec)
+			result.Items = openapi3.NewSchemaRef("", resolvedItems)
+		}
+	}
+
+	return result
 }
 
 // findSchemaInSpec looks for a schema by name in the base spec
@@ -180,12 +228,14 @@ func (sg *SchemaGenerator) GetSchemaForType(
 		return nil, fmt.Errorf("failed to parse type: %w", err)
 	}
 
+	// Get all components for resolving $refs
+	components := sg.typeParser.GetComponents()
+
 	// If it's a $ref, we need to get the actual schema from components
 	var baseSchema *openapi3.Schema
 	if schemaRef.Ref != "" {
 		// Extract component name from $ref
 		componentName := strings.TrimPrefix(schemaRef.Ref, "#/components/schemas/")
-		components := sg.typeParser.GetComponents()
 		if comp, ok := components[componentName]; ok && comp.Value != nil {
 			baseSchema = comp.Value
 		} else {
@@ -199,8 +249,12 @@ func (sg *SchemaGenerator) GetSchemaForType(
 		return nil, fmt.Errorf("no schema found for type %s", typ.Name())
 	}
 
+	// Resolve all $refs inline to avoid unresolved reference issues
+	// when generating versioned schemas from scratch
+	resolvedSchema := sg.resolveRefsInSchema(baseSchema, components)
+
 	// Apply version transformations
-	transformedSchema, err := sg.transformer.TransformSchemaForVersion(baseSchema, typ, version, direction)
+	transformedSchema, err := sg.transformer.TransformSchemaForVersion(resolvedSchema, typ, version, direction)
 	if err != nil {
 		return nil, fmt.Errorf("failed to transform schema: %w", err)
 	}
@@ -214,7 +268,53 @@ func (sg *SchemaGenerator) GetSchemaForType(
 	return transformedSchema, nil
 }
 
+// resolveRefsInSchema recursively resolves all $ref references to inline schemas
+func (sg *SchemaGenerator) resolveRefsInSchema(schema *openapi3.Schema, components map[string]*openapi3.SchemaRef) *openapi3.Schema {
+	if schema == nil {
+		return nil
+	}
+
+	// Clone the schema to avoid modifying original
+	result := CloneSchema(schema)
+
+	// Resolve $refs in properties
+	if result.Properties != nil {
+		for propName, propRef := range result.Properties {
+			if propRef.Ref != "" {
+				// It's a $ref - resolve it
+				componentName := strings.TrimPrefix(propRef.Ref, "#/components/schemas/")
+				if comp, ok := components[componentName]; ok && comp.Value != nil {
+					// Recursively resolve nested $refs
+					resolvedProp := sg.resolveRefsInSchema(comp.Value, components)
+					result.Properties[propName] = openapi3.NewSchemaRef("", resolvedProp)
+				}
+			} else if propRef.Value != nil {
+				// Recursively resolve nested objects
+				resolvedProp := sg.resolveRefsInSchema(propRef.Value, components)
+				result.Properties[propName] = openapi3.NewSchemaRef("", resolvedProp)
+			}
+		}
+	}
+
+	// Resolve $refs in array items
+	if result.Items != nil {
+		if result.Items.Ref != "" {
+			componentName := strings.TrimPrefix(result.Items.Ref, "#/components/schemas/")
+			if comp, ok := components[componentName]; ok && comp.Value != nil {
+				resolvedItems := sg.resolveRefsInSchema(comp.Value, components)
+				result.Items = openapi3.NewSchemaRef("", resolvedItems)
+			}
+		} else if result.Items.Value != nil {
+			resolvedItems := sg.resolveRefsInSchema(result.Items.Value, components)
+			result.Items = openapi3.NewSchemaRef("", resolvedItems)
+		}
+	}
+
+	return result
+}
+
 // getRegisteredTypes extracts all types from the endpoint registry
+// including nested types discovered from struct analysis
 func (sg *SchemaGenerator) getRegisteredTypes() []reflect.Type {
 	typeMap := make(map[reflect.Type]bool)
 	var types []reflect.Type
@@ -228,6 +328,7 @@ func (sg *SchemaGenerator) getRegisteredTypes() []reflect.Type {
 				typeMap[endpoint.RequestType] = true
 				types = append(types, endpoint.RequestType)
 			}
+			sg.collectNestedTypes(endpoint.RequestType, typeMap, &types)
 		}
 
 		if endpoint.ResponseType != nil {
@@ -235,18 +336,66 @@ func (sg *SchemaGenerator) getRegisteredTypes() []reflect.Type {
 				typeMap[endpoint.ResponseType] = true
 				types = append(types, endpoint.ResponseType)
 			}
+			sg.collectNestedTypes(endpoint.ResponseType, typeMap, &types)
 		}
 
-		// Also collect nested array types
-		for _, itemType := range endpoint.NestedArrays {
+		for _, itemType := range endpoint.ResponseNestedArrays {
 			if !typeMap[itemType] {
 				typeMap[itemType] = true
 				types = append(types, itemType)
 			}
 		}
+
+		for _, objType := range endpoint.ResponseNestedObjects {
+			if !typeMap[objType] {
+				typeMap[objType] = true
+				types = append(types, objType)
+			}
+		}
+
+		for _, itemType := range endpoint.RequestNestedArrays {
+			if !typeMap[itemType] {
+				typeMap[itemType] = true
+				types = append(types, itemType)
+			}
+		}
+
+		for _, objType := range endpoint.RequestNestedObjects {
+			if !typeMap[objType] {
+				typeMap[objType] = true
+				types = append(types, objType)
+			}
+		}
 	}
 
 	return types
+}
+
+// collectNestedTypes discovers and collects all nested types from a struct type
+func (sg *SchemaGenerator) collectNestedTypes(rootType reflect.Type, typeMap map[reflect.Type]bool, types *[]reflect.Type) {
+	if rootType == nil {
+		return
+	}
+
+	// Dereference pointer
+	if rootType.Kind() == reflect.Ptr {
+		rootType = rootType.Elem()
+	}
+
+	// Only analyze struct types
+	if rootType.Kind() != reflect.Struct {
+		return
+	}
+
+	// Use AnalyzeStructFields to discover nested types
+	nestedInfos := epoch.AnalyzeStructFields(rootType, "", nil)
+
+	for _, info := range nestedInfos {
+		if !typeMap[info.Type] {
+			typeMap[info.Type] = true
+			*types = append(*types, info.Type)
+		}
+	}
 }
 
 // getVersionSuffix returns a suffix for versioned schema names

@@ -13,22 +13,82 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Example types that match the advanced example
+// ============================================================================
+// NESTED TYPE DEFINITIONS - Response Types (HEAD version)
+// ============================================================================
+
+// Skill represents an item in the profile.skills[] array (nested array inside nested object)
+// v1: skill_name, no level
+// v2+: name, level
+type Skill struct {
+	Name  string `json:"name"`  // v1: "skill_name"
+	Level int    `json:"level"` // Added in v2
+}
+
+// ProfileSettings represents deeply nested settings (3 levels: user.profile.settings)
+// v1: color_theme
+// v2+: theme
+type ProfileSettings struct {
+	Theme string `json:"theme"` // v1: "color_theme"
+}
+
+// UserProfile represents a nested object containing an array and another nested object
+// v1: biography
+// v2+: bio
+type UserProfile struct {
+	Bio      string          `json:"bio"`      // v1: "biography"
+	Skills   []Skill         `json:"skills"`   // Array inside nested object
+	Settings ProfileSettings `json:"settings"` // 3-level deep nesting
+}
+
+// ============================================================================
+// NESTED TYPE DEFINITIONS - Request Types (HEAD version)
+// ============================================================================
+
+// SkillRequest represents a skill in the request (HEAD version)
+// v1: skill_name, no level
+// v2+: name, level
+type SkillRequest struct {
+	Name  string `json:"name"`            // v1: "skill_name"
+	Level int    `json:"level,omitempty"` // Added in v2
+}
+
+// ProfileSettingsRequest represents deeply nested settings in request (HEAD version)
+// v1: color_theme
+// v2+: theme
+type ProfileSettingsRequest struct {
+	Theme string `json:"theme,omitempty"` // v1: "color_theme"
+}
+
+// ProfileRequest represents a nested object in requests (HEAD version)
+// v1: biography, skills[].skill_name
+// v2+: bio, skills[].name + level
+type ProfileRequest struct {
+	Bio      string                  `json:"bio,omitempty"`      // v1: "biography"
+	Skills   []SkillRequest          `json:"skills,omitempty"`   // Nested array in request
+	Settings *ProfileSettingsRequest `json:"settings,omitempty"` // Deeply nested object
+}
+
+// ============================================================================
+// TOP-LEVEL TYPE DEFINITIONS
+// ============================================================================
 
 type CreateUserRequest struct {
-	FullName string `json:"full_name" binding:"required,max=100"`
-	Email    string `json:"email" binding:"required,email"`
-	Phone    string `json:"phone,omitempty"`
-	Status   string `json:"status" binding:"required,oneof=active inactive pending suspended"`
+	FullName string          `json:"full_name" binding:"required,max=100"`
+	Email    string          `json:"email" binding:"required,email"`
+	Phone    string          `json:"phone,omitempty"`
+	Status   string          `json:"status" binding:"required,oneof=active inactive pending suspended"`
+	Profile  *ProfileRequest `json:"profile,omitempty"` // Nested object with array and deeply nested settings
 }
 
 type UserResponse struct {
-	ID        int        `json:"id,omitempty" validate:"required"`
-	FullName  string     `json:"full_name" validate:"required"`
-	Email     string     `json:"email,omitempty" validate:"required,email"`
-	Phone     string     `json:"phone,omitempty"`
-	Status    string     `json:"status,omitempty"`
-	CreatedAt *time.Time `json:"created_at,omitempty" format:"date-time"`
+	ID        int          `json:"id,omitempty" validate:"required"`
+	FullName  string       `json:"full_name" validate:"required"`
+	Email     string       `json:"email,omitempty" validate:"required,email"`
+	Phone     string       `json:"phone,omitempty"`
+	Status    string       `json:"status,omitempty"`
+	CreatedAt *time.Time   `json:"created_at,omitempty" format:"date-time"`
+	Profile   *UserProfile `json:"profile,omitempty"` // Nested object with array and deeply nested settings
 }
 
 type OrganizationResponse struct {
@@ -154,6 +214,55 @@ func createExistingSpec() *openapi3.T {
 	})
 
 	// Add schemas with descriptions (these will be managed by Epoch)
+	// Include nested types to demonstrate nested transformation support
+
+	// ProfileSettings schema (deeply nested - 3 levels)
+	spec.Components.Schemas["ProfileSettings"] = openapi3.NewSchemaRef("", &openapi3.Schema{
+		Type:        &openapi3.Types{"object"},
+		Description: "Profile settings object (HEAD: theme, v1: color_theme)",
+		Properties: map[string]*openapi3.SchemaRef{
+			"theme": openapi3.NewSchemaRef("", &openapi3.Schema{
+				Type:        &openapi3.Types{"string"},
+				Description: "Color theme setting",
+			}),
+		},
+	})
+
+	// Skill schema (array item inside nested object)
+	spec.Components.Schemas["Skill"] = openapi3.NewSchemaRef("", &openapi3.Schema{
+		Type:        &openapi3.Types{"object"},
+		Description: "Skill object (HEAD: name+level, v1: skill_name only)",
+		Properties: map[string]*openapi3.SchemaRef{
+			"name": openapi3.NewSchemaRef("", &openapi3.Schema{
+				Type:        &openapi3.Types{"string"},
+				Description: "Skill name",
+			}),
+			"level": openapi3.NewSchemaRef("", &openapi3.Schema{
+				Type:        &openapi3.Types{"integer"},
+				Description: "Skill level (1-5)",
+			}),
+		},
+	})
+
+	// UserProfile schema (nested object containing array and nested object)
+	spec.Components.Schemas["UserProfile"] = openapi3.NewSchemaRef("", &openapi3.Schema{
+		Type:        &openapi3.Types{"object"},
+		Description: "User profile object (HEAD: bio, v1: biography)",
+		Properties: map[string]*openapi3.SchemaRef{
+			"bio": openapi3.NewSchemaRef("", &openapi3.Schema{
+				Type:        &openapi3.Types{"string"},
+				Description: "User biography",
+			}),
+			"skills": openapi3.NewSchemaRef("", &openapi3.Schema{
+				Type:        &openapi3.Types{"array"},
+				Description: "List of skills",
+				Items:       &openapi3.SchemaRef{Ref: "#/components/schemas/Skill"},
+			}),
+			"settings": &openapi3.SchemaRef{Ref: "#/components/schemas/ProfileSettings"},
+		},
+	})
+
+	// UserResponse with profile
 	spec.Components.Schemas["UserResponse"] = openapi3.NewSchemaRef("", &openapi3.Schema{
 		Type:        &openapi3.Types{"object"},
 		Description: "User response object",
@@ -183,9 +292,57 @@ func createExistingSpec() *openapi3.T {
 				Format:      "date-time",
 				Description: "User creation timestamp from base spec",
 			}),
+			"profile": &openapi3.SchemaRef{Ref: "#/components/schemas/UserProfile"},
 		},
 	})
 
+	// ProfileSettingsRequest schema
+	spec.Components.Schemas["ProfileSettingsRequest"] = openapi3.NewSchemaRef("", &openapi3.Schema{
+		Type:        &openapi3.Types{"object"},
+		Description: "Profile settings request object",
+		Properties: map[string]*openapi3.SchemaRef{
+			"theme": openapi3.NewSchemaRef("", &openapi3.Schema{
+				Type:        &openapi3.Types{"string"},
+				Description: "Color theme setting",
+			}),
+		},
+	})
+
+	// SkillRequest schema
+	spec.Components.Schemas["SkillRequest"] = openapi3.NewSchemaRef("", &openapi3.Schema{
+		Type:        &openapi3.Types{"object"},
+		Description: "Skill request object",
+		Properties: map[string]*openapi3.SchemaRef{
+			"name": openapi3.NewSchemaRef("", &openapi3.Schema{
+				Type:        &openapi3.Types{"string"},
+				Description: "Skill name",
+			}),
+			"level": openapi3.NewSchemaRef("", &openapi3.Schema{
+				Type:        &openapi3.Types{"integer"},
+				Description: "Skill level",
+			}),
+		},
+	})
+
+	// ProfileRequest schema
+	spec.Components.Schemas["ProfileRequest"] = openapi3.NewSchemaRef("", &openapi3.Schema{
+		Type:        &openapi3.Types{"object"},
+		Description: "Profile request object",
+		Properties: map[string]*openapi3.SchemaRef{
+			"bio": openapi3.NewSchemaRef("", &openapi3.Schema{
+				Type:        &openapi3.Types{"string"},
+				Description: "User biography",
+			}),
+			"skills": openapi3.NewSchemaRef("", &openapi3.Schema{
+				Type:        &openapi3.Types{"array"},
+				Description: "List of skills",
+				Items:       &openapi3.SchemaRef{Ref: "#/components/schemas/SkillRequest"},
+			}),
+			"settings": &openapi3.SchemaRef{Ref: "#/components/schemas/ProfileSettingsRequest"},
+		},
+	})
+
+	// CreateUserRequest with profile
 	spec.Components.Schemas["CreateUserRequest"] = openapi3.NewSchemaRef("", &openapi3.Schema{
 		Type:        &openapi3.Types{"object"},
 		Description: "Create user request object",
@@ -206,6 +363,7 @@ func createExistingSpec() *openapi3.T {
 				Type:        &openapi3.Types{"string"},
 				Description: "User status",
 			}),
+			"profile": &openapi3.SchemaRef{Ref: "#/components/schemas/ProfileRequest"},
 		},
 	})
 
@@ -300,6 +458,10 @@ func main() {
 	v3, _ := epoch.NewDateVersion("2025-01-01")
 
 	// Define version migrations
+	// ============================================================================
+	// TOP-LEVEL MIGRATIONS
+	// ============================================================================
+
 	// v1→v2: Add email and status fields
 	// HEAD has these fields, v1 doesn't, so:
 	// - Response: Remove them when sending to v1 (ResponseToPreviousVersion)
@@ -332,15 +494,65 @@ func main() {
 		RemoveField("phone").
 		Build()
 
-	// Create Epoch instance
+	// ============================================================================
+	// NESTED TYPE MIGRATIONS (separate migrations for each nested type)
+	// ============================================================================
+
+	// Profile migration: bio ↔ biography
+	profileV1ToV2 := epoch.NewVersionChangeBuilder(v1, v2).
+		Description("Transform profile.biography -> profile.bio").
+		ForType(UserProfile{}, ProfileRequest{}).
+		RequestToNextVersion().
+		RenameField("biography", "bio").
+		ResponseToPreviousVersion().
+		RenameField("bio", "biography").
+		Build()
+
+	// Skill migration: name ↔ skill_name, add/remove level
+	skillV1ToV2 := epoch.NewVersionChangeBuilder(v1, v2).
+		Description("Transform skills[].skill_name -> skills[].name, add level").
+		ForType(Skill{}, SkillRequest{}).
+		RequestToNextVersion().
+		RenameField("skill_name", "name").
+		AddField("level", 1).
+		ResponseToPreviousVersion().
+		RenameField("name", "skill_name").
+		RemoveField("level").
+		Build()
+
+	// ProfileSettings migration: theme ↔ color_theme
+	settingsV1ToV2 := epoch.NewVersionChangeBuilder(v1, v2).
+		Description("Transform settings.color_theme -> settings.theme").
+		ForType(ProfileSettings{}, ProfileSettingsRequest{}).
+		RequestToNextVersion().
+		RenameField("color_theme", "theme").
+		ResponseToPreviousVersion().
+		RenameField("theme", "color_theme").
+		Build()
+
+	// Create Epoch instance with all types and migrations
 	epochInstance, err := epoch.NewEpoch().
 		WithHeadVersion().
 		WithVersions(v1, v2, v3). // Versions in ascending order (oldest first)
-		WithChanges(v1ToV2, v2ToV3).
+		WithChanges(
+			// Top-level migrations
+			v1ToV2, v2ToV3,
+			// Nested type migrations (each nested type needs its own migration)
+			profileV1ToV2, skillV1ToV2, settingsV1ToV2,
+		).
 		WithTypes(
+			// Top-level types
 			CreateUserRequest{},
 			UserResponse{},
 			OrganizationResponse{},
+			// Response nested types
+			UserProfile{},
+			Skill{},
+			ProfileSettings{},
+			// Request nested types
+			ProfileRequest{},
+			SkillRequest{},
+			ProfileSettingsRequest{},
 		).
 		Build()
 
@@ -644,6 +856,192 @@ func main() {
 
 	fmt.Println()
 
+	// ============================================================================
+	// NESTED TRANSFORMATION VERIFICATION
+	// ============================================================================
+
+	fmt.Println("  Nested Response Transformations:")
+
+	// Verify UserProfile nested transformations (bio ↔ biography)
+	nestedResponseV1Correct := false
+	nestedResponseV2Correct := false
+
+	if v1Spec != nil {
+		profileSchema := v1Spec.Components.Schemas["UserProfile"]
+		if profileSchema != nil && profileSchema.Value != nil {
+			hasBiography := profileSchema.Value.Properties["biography"] != nil
+			hasBio := profileSchema.Value.Properties["bio"] != nil
+			nestedResponseV1Correct = hasBiography && !hasBio
+			if nestedResponseV1Correct {
+				fmt.Println("    ✓ v1 UserProfile: bio → biography")
+			} else {
+				fmt.Printf("    ✗ v1 UserProfile: should have biography (has bio:%v biography:%v)\n", hasBio, hasBiography)
+			}
+		} else {
+			fmt.Println("    ⚠ v1 UserProfile schema not found")
+		}
+	}
+
+	if v2Spec != nil {
+		profileSchema := v2Spec.Components.Schemas["UserProfile"]
+		if profileSchema != nil && profileSchema.Value != nil {
+			hasBio := profileSchema.Value.Properties["bio"] != nil
+			hasBiography := profileSchema.Value.Properties["biography"] != nil
+			nestedResponseV2Correct = hasBio && !hasBiography
+			if nestedResponseV2Correct {
+				fmt.Println("    ✓ v2+ UserProfile: bio (unchanged)")
+			} else {
+				fmt.Printf("    ✗ v2+ UserProfile: should have bio (has bio:%v biography:%v)\n", hasBio, hasBiography)
+			}
+		}
+	}
+
+	// Verify Skill nested array item transformations (name ↔ skill_name, level)
+	nestedArrayV1Correct := false
+	nestedArrayV2Correct := false
+
+	if v1Spec != nil {
+		skillSchema := v1Spec.Components.Schemas["Skill"]
+		if skillSchema != nil && skillSchema.Value != nil {
+			hasSkillName := skillSchema.Value.Properties["skill_name"] != nil
+			hasName := skillSchema.Value.Properties["name"] != nil
+			hasLevel := skillSchema.Value.Properties["level"] != nil
+			nestedArrayV1Correct = hasSkillName && !hasName && !hasLevel
+			if nestedArrayV1Correct {
+				fmt.Println("    ✓ v1 Skill: name → skill_name, level removed")
+			} else {
+				fmt.Printf("    ✗ v1 Skill: should have skill_name only (has name:%v skill_name:%v level:%v)\n",
+					hasName, hasSkillName, hasLevel)
+			}
+		} else {
+			fmt.Println("    ⚠ v1 Skill schema not found")
+		}
+	}
+
+	if v2Spec != nil {
+		skillSchema := v2Spec.Components.Schemas["Skill"]
+		if skillSchema != nil && skillSchema.Value != nil {
+			hasName := skillSchema.Value.Properties["name"] != nil
+			hasLevel := skillSchema.Value.Properties["level"] != nil
+			hasSkillName := skillSchema.Value.Properties["skill_name"] != nil
+			nestedArrayV2Correct = hasName && hasLevel && !hasSkillName
+			if nestedArrayV2Correct {
+				fmt.Println("    ✓ v2+ Skill: name + level (unchanged)")
+			} else {
+				fmt.Printf("    ✗ v2+ Skill: should have name + level (has name:%v level:%v skill_name:%v)\n",
+					hasName, hasLevel, hasSkillName)
+			}
+		}
+	}
+
+	// Verify ProfileSettings deeply nested transformations (theme ↔ color_theme)
+	nestedDeepV1Correct := false
+	nestedDeepV2Correct := false
+
+	if v1Spec != nil {
+		settingsSchema := v1Spec.Components.Schemas["ProfileSettings"]
+		if settingsSchema != nil && settingsSchema.Value != nil {
+			hasColorTheme := settingsSchema.Value.Properties["color_theme"] != nil
+			hasTheme := settingsSchema.Value.Properties["theme"] != nil
+			nestedDeepV1Correct = hasColorTheme && !hasTheme
+			if nestedDeepV1Correct {
+				fmt.Println("    ✓ v1 ProfileSettings: theme → color_theme")
+			} else {
+				fmt.Printf("    ✗ v1 ProfileSettings: should have color_theme (has theme:%v color_theme:%v)\n",
+					hasTheme, hasColorTheme)
+			}
+		} else {
+			fmt.Println("    ⚠ v1 ProfileSettings schema not found")
+		}
+	}
+
+	if v2Spec != nil {
+		settingsSchema := v2Spec.Components.Schemas["ProfileSettings"]
+		if settingsSchema != nil && settingsSchema.Value != nil {
+			hasTheme := settingsSchema.Value.Properties["theme"] != nil
+			hasColorTheme := settingsSchema.Value.Properties["color_theme"] != nil
+			nestedDeepV2Correct = hasTheme && !hasColorTheme
+			if nestedDeepV2Correct {
+				fmt.Println("    ✓ v2+ ProfileSettings: theme (unchanged)")
+			} else {
+				fmt.Printf("    ✗ v2+ ProfileSettings: should have theme (has theme:%v color_theme:%v)\n",
+					hasTheme, hasColorTheme)
+			}
+		}
+	}
+
+	fmt.Println()
+
+	fmt.Println("  Nested Request Transformations:")
+
+	// Verify ProfileRequest nested transformations
+	nestedReqV1Correct := false
+
+	if v1Spec != nil {
+		profileReqSchema := v1Spec.Components.Schemas["ProfileRequest"]
+		if profileReqSchema != nil && profileReqSchema.Value != nil {
+			hasBiography := profileReqSchema.Value.Properties["biography"] != nil
+			hasBio := profileReqSchema.Value.Properties["bio"] != nil
+			nestedReqV1Correct = hasBiography && !hasBio
+			if nestedReqV1Correct {
+				fmt.Println("    ✓ v1 ProfileRequest: bio → biography")
+			} else {
+				fmt.Printf("    ✗ v1 ProfileRequest: should have biography (has bio:%v biography:%v)\n", hasBio, hasBiography)
+			}
+		} else {
+			fmt.Println("    ⚠ v1 ProfileRequest schema not found")
+		}
+	}
+
+	// Verify SkillRequest nested transformations
+	nestedSkillReqV1Correct := false
+
+	if v1Spec != nil {
+		skillReqSchema := v1Spec.Components.Schemas["SkillRequest"]
+		if skillReqSchema != nil && skillReqSchema.Value != nil {
+			hasSkillName := skillReqSchema.Value.Properties["skill_name"] != nil
+			hasName := skillReqSchema.Value.Properties["name"] != nil
+			hasLevel := skillReqSchema.Value.Properties["level"] != nil
+			nestedSkillReqV1Correct = hasSkillName && !hasName && !hasLevel
+			if nestedSkillReqV1Correct {
+				fmt.Println("    ✓ v1 SkillRequest: name → skill_name, level removed")
+			} else {
+				fmt.Printf("    ✗ v1 SkillRequest: should have skill_name only (has name:%v skill_name:%v level:%v)\n",
+					hasName, hasSkillName, hasLevel)
+			}
+		} else {
+			fmt.Println("    ⚠ v1 SkillRequest schema not found")
+		}
+	}
+
+	// Verify ProfileSettingsRequest nested transformations
+	nestedSettingsReqV1Correct := false
+
+	if v1Spec != nil {
+		settingsReqSchema := v1Spec.Components.Schemas["ProfileSettingsRequest"]
+		if settingsReqSchema != nil && settingsReqSchema.Value != nil {
+			hasColorTheme := settingsReqSchema.Value.Properties["color_theme"] != nil
+			hasTheme := settingsReqSchema.Value.Properties["theme"] != nil
+			nestedSettingsReqV1Correct = hasColorTheme && !hasTheme
+			if nestedSettingsReqV1Correct {
+				fmt.Println("    ✓ v1 ProfileSettingsRequest: theme → color_theme")
+			} else {
+				fmt.Printf("    ✗ v1 ProfileSettingsRequest: should have color_theme (has theme:%v color_theme:%v)\n",
+					hasTheme, hasColorTheme)
+			}
+		} else {
+			fmt.Println("    ⚠ v1 ProfileSettingsRequest schema not found")
+		}
+	}
+
+	// Overall nested transformations check
+	nestedTransformationsCorrect := nestedResponseV1Correct && nestedResponseV2Correct &&
+		nestedArrayV1Correct && nestedArrayV2Correct &&
+		nestedDeepV1Correct && nestedDeepV2Correct &&
+		nestedReqV1Correct && nestedSkillReqV1Correct && nestedSettingsReqV1Correct
+
+	fmt.Println()
+
 	// Verify Smart Merging (description preservation)
 	fmt.Println("  Smart Merging:")
 
@@ -855,15 +1253,24 @@ func main() {
 
 	fmt.Println()
 
+	// Nested transformations summary
+	if nestedTransformationsCorrect {
+		fmt.Println("  Nested Transformations: ✓ All nested schemas transformed correctly")
+	} else {
+		fmt.Println("  Nested Transformations: ✗ Some nested transformations failed")
+	}
+	fmt.Println()
+
 	// Final summary
 	allPassed := results.TransformationsCorrect &&
 		results.SmartMergingCorrect &&
 		results.UnmanagedSchemasCorrect &&
 		results.NamingConventionCorrect &&
-		results.SpecPreservationCorrect
+		results.SpecPreservationCorrect &&
+		nestedTransformationsCorrect
 
 	if allPassed {
-		fmt.Println("🎉 All tests passed! Smart merging working correctly.")
+		fmt.Println("🎉 All tests passed! Smart merging and nested transformations working correctly.")
 	} else {
 		fmt.Println("⚠️  Some tests failed. Check output above for details.")
 	}

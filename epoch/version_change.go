@@ -140,6 +140,30 @@ func (vc *VersionChange) MigrateRequest(ctx context.Context, requestInfo *Reques
 				}
 			}
 		}
+
+		// Transform nested objects if defined
+		if len(requestInfo.nestedObjectTypes) > 0 {
+			for fieldPath, objectType := range requestInfo.nestedObjectTypes {
+				if err := vc.transformNestedObject(
+					ctx, requestInfo, fieldPath, objectType, DirectionRequest,
+				); err != nil {
+					return fmt.Errorf("nested object request migration failed for change '%s' (field: %s): %w",
+						vc.description, fieldPath, err)
+				}
+			}
+		}
+
+		// Transform nested arrays if defined
+		if len(requestInfo.nestedArrayTypes) > 0 {
+			for fieldPath, itemType := range requestInfo.nestedArrayTypes {
+				if err := vc.transformNestedArrayItems(
+					ctx, requestInfo, fieldPath, itemType, DirectionRequest,
+				); err != nil {
+					return fmt.Errorf("nested array request migration failed for change '%s' (field: %s): %w",
+						vc.description, fieldPath, err)
+				}
+			}
+		}
 	}
 
 	return nil
@@ -187,15 +211,26 @@ func (vc *VersionChange) MigrateResponse(ctx context.Context, responseInfo *Resp
 			}
 		}
 
+		if len(responseInfo.nestedObjectTypes) > 0 {
+			for fieldPath, objectType := range responseInfo.nestedObjectTypes {
+				if err := vc.transformNestedObject(
+					ctx, responseInfo, fieldPath, objectType, DirectionResponse,
+				); err != nil {
+					return fmt.Errorf("nested object migration failed for change '%s' (field: %s): %w",
+						vc.description, fieldPath, err)
+				}
+			}
+		}
+
 		// After type-specific transformations, also transform nested arrays if defined
 		if len(responseInfo.nestedArrayTypes) > 0 {
 			// For each registered nested array, transform its items with type info
-			for fieldName, itemType := range responseInfo.nestedArrayTypes {
-				if err := vc.transformNestedArrayItemsForSingleStep(
-					ctx, responseInfo, fieldName, itemType,
+			for fieldPath, itemType := range responseInfo.nestedArrayTypes {
+				if err := vc.transformNestedArrayItems(
+					ctx, responseInfo, fieldPath, itemType, DirectionResponse,
 				); err != nil {
 					return fmt.Errorf("nested array migration failed for change '%s' (field: %s): %w",
-						vc.description, fieldName, err)
+						vc.description, fieldPath, err)
 				}
 			}
 		}
@@ -241,6 +276,58 @@ func (vc *VersionChange) GetRequestOperationsByType(targetType reflect.Type) (Re
 func (vc *VersionChange) GetResponseOperationsByType(targetType reflect.Type) (ResponseToPreviousVersionOperationList, bool) {
 	ops, exists := vc.responseOperationsByType[targetType]
 	return ops, exists
+}
+
+// InstructionApplier is a function that applies an instruction to a transformable body
+type InstructionApplier func(body TransformableBody) error
+
+// getInstructionAppliers returns instruction applier functions for a target type and direction
+// This allows consolidated transformation logic to work with both request and response instructions
+func (vc *VersionChange) getInstructionAppliers(
+	targetType reflect.Type,
+	direction TransformDirection,
+) []InstructionApplier {
+	var appliers []InstructionApplier
+
+	switch direction {
+	case DirectionRequest:
+		if instructions, exists := vc.alterRequestBySchemaInstructions[targetType]; exists {
+			for _, inst := range instructions {
+				// Capture instruction in closure
+				instruction := inst
+				appliers = append(appliers, func(body TransformableBody) error {
+					// For requests, ShouldSkipInstruction always returns false
+					if body.ShouldSkipInstruction(false) {
+						return nil
+					}
+					// Cast to RequestInfo for the transformer
+					if reqInfo, ok := body.(*RequestInfo); ok {
+						return instruction.Transformer(reqInfo)
+					}
+					return nil
+				})
+			}
+		}
+	case DirectionResponse:
+		if instructions, exists := vc.alterResponseBySchemaInstructions[targetType]; exists {
+			for _, inst := range instructions {
+				// Capture instruction in closure
+				instruction := inst
+				appliers = append(appliers, func(body TransformableBody) error {
+					if body.ShouldSkipInstruction(instruction.MigrateHTTPErrors) {
+						return nil
+					}
+					// Cast to ResponseInfo for the transformer
+					if respInfo, ok := body.(*ResponseInfo); ok {
+						return instruction.Transformer(respInfo)
+					}
+					return nil
+				})
+			}
+		}
+	}
+
+	return appliers
 }
 
 // MigrationChain manages a sequence of version changes
@@ -547,9 +634,39 @@ func (mc *MigrationChain) MigrateRequestForType(
 	knownType reflect.Type,
 	from, to *Version,
 ) error {
-	// Set the known type directly - NO runtime matching needed
+	// Delegate to the extended version with nil nested types for backward compatibility
+	return mc.MigrateRequestForTypeWithNestedObjects(ctx, requestInfo, knownType, nil, nil, from, to)
+}
+
+// MigrateRequestForTypeWithNestedObjects applies request migrations for a known type
+// with full support for nested arrays and nested objects
+func (mc *MigrationChain) MigrateRequestForTypeWithNestedObjects(
+	ctx context.Context,
+	requestInfo *RequestInfo,
+	knownType reflect.Type,
+	nestedArrays map[string]reflect.Type,
+	nestedObjects map[string]reflect.Type,
+	from, to *Version,
+) error {
+	// If knownType is nil, skip type-specific processing and just apply migrations
+	if knownType == nil {
+		return mc.MigrateRequest(ctx, requestInfo, from, to)
+	}
+
+	// Check if the request type is a top-level array (e.g., []User)
+	if knownType.Kind() == reflect.Slice || knownType.Kind() == reflect.Array {
+		// Extract the element type from the array
+		elementType := knownType.Elem()
+
+		// Apply migrations to each array item
+		return mc.transformTopLevelArray(ctx, requestInfo, elementType, DirectionRequest, from, to)
+	}
+
+	// Set the known type and nested type information - NO runtime matching needed
 	requestInfo.schemaMatched = true
 	requestInfo.matchedSchemaType = knownType
+	requestInfo.nestedArrayTypes = nestedArrays
+	requestInfo.nestedObjectTypes = nestedObjects
 
 	// Apply all migrations in sequence using the existing logic
 	return mc.MigrateRequest(ctx, requestInfo, from, to)
@@ -557,7 +674,7 @@ func (mc *MigrationChain) MigrateRequestForType(
 
 // MigrateResponseForType applies response migrations for a known type (NO runtime matching)
 // This is used by the endpoint registry system where types are explicitly declared at setup time
-// It also handles nested arrays explicitly when provided
+// It also handles nested arrays and nested objects explicitly when provided
 func (mc *MigrationChain) MigrateResponseForType(
 	ctx context.Context,
 	responseInfo *ResponseInfo,
@@ -565,110 +682,241 @@ func (mc *MigrationChain) MigrateResponseForType(
 	nestedArrays map[string]reflect.Type,
 	from, to *Version,
 ) error {
+	// Delegate to the extended version with nil nestedObjects for backward compatibility
+	return mc.MigrateResponseForTypeWithNestedObjects(ctx, responseInfo, knownType, nestedArrays, nil, from, to)
+}
+
+// MigrateResponseForTypeWithNestedObjects applies response migrations for a known type
+// with full support for nested arrays and nested objects
+func (mc *MigrationChain) MigrateResponseForTypeWithNestedObjects(
+	ctx context.Context,
+	responseInfo *ResponseInfo,
+	knownType reflect.Type,
+	nestedArrays map[string]reflect.Type,
+	nestedObjects map[string]reflect.Type,
+	from, to *Version,
+) error {
+	// If knownType is nil, skip type-specific processing and just apply migrations
+	if knownType == nil {
+		return mc.MigrateResponse(ctx, responseInfo, from, to)
+	}
+
 	// Check if the response type is a top-level array (e.g., []User)
 	if knownType.Kind() == reflect.Slice || knownType.Kind() == reflect.Array {
 		// Extract the element type from the array
 		elementType := knownType.Elem()
 
 		// Apply migrations to each array item
-		return mc.transformTopLevelArrayItems(ctx, responseInfo, elementType, from, to)
+		return mc.transformTopLevelArray(ctx, responseInfo, elementType, DirectionResponse, from, to)
 	}
 
-	// Set the known type and nested array information - NO runtime matching needed
+	// Set the known type and nested type information - NO runtime matching needed
 	responseInfo.schemaMatched = true
 	responseInfo.matchedSchemaType = knownType
 	responseInfo.nestedArrayTypes = nestedArrays
+	responseInfo.nestedObjectTypes = nestedObjects
 
-	// Apply top-level migrations - nested arrays will be transformed at each step
+	// Apply top-level migrations - nested types will be transformed at each step
 	return mc.MigrateResponse(ctx, responseInfo, from, to)
 }
 
-// transformTopLevelArrayItems applies migrations to items in a top-level array response
-// For example, when the handler returns []User directly
-func (mc *MigrationChain) transformTopLevelArrayItems(
+// transformTopLevelArray applies migrations to items in a top-level array
+func (mc *MigrationChain) transformTopLevelArray(
 	ctx context.Context,
-	responseInfo *ResponseInfo,
+	info TransformableBody,
 	itemType reflect.Type,
+	direction TransformDirection,
 	from, to *Version,
 ) error {
-	// Check if responseInfo.Body is an array
-	if responseInfo.Body == nil {
+	body := info.GetBody()
+	if body == nil {
 		return nil
 	}
 
-	if responseInfo.Body.TypeSafe() != ast.V_ARRAY {
-		return fmt.Errorf("expected array response but got %v", responseInfo.Body.TypeSafe())
+	if body.TypeSafe() != ast.V_ARRAY {
+		return fmt.Errorf("expected array but got %v", body.TypeSafe())
 	}
 
 	// Get all array items
-	arrayLen, err := responseInfo.Body.Len()
+	arrayLen, err := body.Len()
 	if err != nil {
 		return fmt.Errorf("failed to get array length: %w", err)
 	}
 
 	// Transform each item
 	for i := 0; i < arrayLen; i++ {
-		item := responseInfo.Body.Index(i)
+		item := body.Index(i)
 		if item == nil {
 			continue
 		}
 
-		// Create temporary ResponseInfo for the array item
-		itemInfo := &ResponseInfo{
-			Body:              item,
-			schemaMatched:     true,
-			matchedSchemaType: itemType,
+		// Create a new TransformableBody for the array item
+		itemInfo := info.NewForNestedArrayItem(item, itemType)
+
+		// Apply migrations for the item type based on direction
+		var migrateErr error
+		switch direction {
+		case DirectionRequest:
+			reqInfo, ok := itemInfo.(*RequestInfo)
+			if !ok {
+				return fmt.Errorf("failed to migrate array item %d: expected *RequestInfo but got %T", i, itemInfo)
+			}
+			migrateErr = mc.MigrateRequest(ctx, reqInfo, from, to)
+		case DirectionResponse:
+			respInfo, ok := itemInfo.(*ResponseInfo)
+			if !ok {
+				return fmt.Errorf("failed to migrate array item %d: expected *ResponseInfo but got %T", i, itemInfo)
+			}
+			migrateErr = mc.MigrateResponse(ctx, respInfo, from, to)
 		}
 
-		// Apply migrations for the item type
-		if err := mc.MigrateResponse(ctx, itemInfo, from, to); err != nil {
-			return fmt.Errorf("failed to migrate array item %d: %w", i, err)
+		if migrateErr != nil {
+			return fmt.Errorf("failed to migrate array item %d: %w", i, migrateErr)
 		}
 	}
 
 	return nil
 }
 
-// transformNestedArrayItemsForSingleStep applies THIS version change's migrations
-// to items in a nested array field (single step, not multi-step)
-func (vc *VersionChange) transformNestedArrayItemsForSingleStep(
+// getNodeAtPath navigates to a nested node using dot-notation path
+// Returns nil if any part of the path doesn't exist
+func getNodeAtPath(root *ast.Node, path string) *ast.Node {
+	if root == nil || path == "" {
+		return root
+	}
+
+	parts := strings.Split(path, ".")
+	current := root
+
+	for _, part := range parts {
+		if current == nil {
+			return nil
+		}
+		current = current.Get(part)
+		if current == nil || !current.Exists() {
+			return nil
+		}
+	}
+
+	return current
+}
+
+// transformNestedArrayItems applies THIS version change's migrations to items in a nested array field
+// Supports dot-notation paths for arrays inside nested objects (e.g., "profile.skills")
+// Also recursively transforms nested types within each array item
+func (vc *VersionChange) transformNestedArrayItems(
 	ctx context.Context,
-	responseInfo *ResponseInfo,
-	fieldName string,
+	info TransformableBody,
+	fieldPath string,
 	itemType reflect.Type,
+	direction TransformDirection,
 ) error {
-	if responseInfo.Body == nil {
+	body := info.GetBody()
+	if body == nil {
 		return nil
 	}
 
-	arrayField := responseInfo.Body.Get(fieldName)
+	// Navigate to the array field using dot-notation path
+	arrayField := getNodeAtPath(body, fieldPath)
 	if arrayField == nil || !arrayField.Exists() || arrayField.TypeSafe() != ast.V_ARRAY {
 		return nil
 	}
 
-	// Get instructions for the item type
-	instructions, exists := vc.alterResponseBySchemaInstructions[itemType]
-	if !exists {
-		return nil // No migrations defined for this item type in this version change
-	}
+	// Get instruction appliers for the item type (may be empty if no direct migrations)
+	appliers := vc.getInstructionAppliers(itemType, direction)
 
 	// Transform each array item with this version change's operations
-	return responseInfo.TransformArrayField(fieldName, func(item *ast.Node) error {
-		itemInfo := &ResponseInfo{
-			Body:              item,
-			schemaMatched:     true,
-			matchedSchemaType: itemType,
+	length, err := arrayField.Len()
+	if err != nil {
+		return err
+	}
+
+	// Pre-compute nested type maps for the item type (for recursive transformation)
+	itemNestedArrays, itemNestedObjects := BuildNestedTypeMaps(itemType)
+
+	for i := 0; i < length; i++ {
+		item := arrayField.Index(i)
+		if item == nil {
+			continue
 		}
 
+		// Create a new TransformableBody for the array item
+		itemInfo := info.NewForNestedArrayItem(item, itemType)
+
 		// Apply only THIS version change's instructions (single step)
-		for _, instruction := range instructions {
-			if responseInfo.StatusCode >= 400 && !instruction.MigrateHTTPErrors {
-				continue
-			}
-			if err := instruction.Transformer(itemInfo); err != nil {
+		for _, applier := range appliers {
+			if err := applier(itemInfo); err != nil {
 				return err
 			}
 		}
+
+		// Recursively transform nested objects within this array item
+		for nestedPath, nestedObjectType := range itemNestedObjects {
+			if err := vc.transformNestedObject(ctx, itemInfo, nestedPath, nestedObjectType, direction); err != nil {
+				return err
+			}
+		}
+
+		// Recursively transform nested arrays within this array item
+		for nestedPath, nestedArrayType := range itemNestedArrays {
+			if err := vc.transformNestedArrayItems(ctx, itemInfo, nestedPath, nestedArrayType, direction); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// transformNestedObject applies THIS version change's migrations to a nested object field
+// Supports dot-notation paths for deeply nested objects (e.g., "user.profile.address")
+// Also recursively transforms nested types within the object
+func (vc *VersionChange) transformNestedObject(
+	ctx context.Context,
+	info TransformableBody,
+	fieldPath string,
+	objectType reflect.Type,
+	direction TransformDirection,
+) error {
+	body := info.GetBody()
+	if body == nil {
 		return nil
-	})
+	}
+
+	// Navigate to the object field using dot-notation path
+	objectField := getNodeAtPath(body, fieldPath)
+	if objectField == nil || !objectField.Exists() || objectField.TypeSafe() != ast.V_OBJECT {
+		return nil
+	}
+
+	// Get instruction appliers for the object type (may be empty if no direct migrations)
+	appliers := vc.getInstructionAppliers(objectType, direction)
+
+	// Create a new TransformableBody for the nested object
+	objectInfo := info.NewForNestedObject(objectField, objectType)
+
+	// Apply only THIS version change's instructions (single step)
+	for _, applier := range appliers {
+		if err := applier(objectInfo); err != nil {
+			return err
+		}
+	}
+
+	// Pre-compute nested type maps for this object type (for recursive transformation)
+	objectNestedArrays, objectNestedObjects := BuildNestedTypeMaps(objectType)
+
+	// Recursively transform nested objects within this object
+	for nestedPath, nestedObjType := range objectNestedObjects {
+		if err := vc.transformNestedObject(ctx, objectInfo, nestedPath, nestedObjType, direction); err != nil {
+			return err
+		}
+	}
+
+	// Recursively transform nested arrays within this object
+	for nestedPath, nestedArrType := range objectNestedArrays {
+		if err := vc.transformNestedArrayItems(ctx, objectInfo, nestedPath, nestedArrType, direction); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

@@ -362,19 +362,43 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 		gin.SetMode(gin.TestMode)
 	})
 
+	// Extended struct definitions for nested transformation tests
+	// SubItem - for testing two-level nested arrays (items[].subitems[])
+	type SubItem struct {
+		ID    int    `json:"id"`
+		Label string `json:"label"` // Renamed to "name" in older versions
+	}
+
+	// Details - nested object inside array items
+	type Details struct {
+		Author      string `json:"author"`
+		LastUpdated string `json:"last_updated"` // Renamed to "updated_at" in older versions
+	}
+
+	// Item - extended with nested object and nested array
+	type Item struct {
+		ID          int       `json:"id"`
+		DisplayName string    `json:"display_name"` // V3 field
+		Tags        []string  `json:"tags"`
+		Category    string    `json:"category"` // Added in V2
+		Priority    int       `json:"priority"` // Added in V3
+		Details     Details   `json:"details"`  // Nested object
+		SubItems    []SubItem `json:"subitems"` // Two-level nested array
+	}
+
+	// Metadata - nested object alongside arrays
+	type Metadata struct {
+		Version   string `json:"version"`
+		CreatedBy string `json:"created_by"` // Renamed to "author" in older versions
+	}
+
+	// Container - extended with nested object
+	type Container struct {
+		Items    []Item   `json:"items"`
+		Metadata Metadata `json:"metadata"` // Nested object alongside array
+	}
+
 	Describe("Multi-step migrations for nested arrays", func() {
-		type Item struct {
-			ID          int      `json:"id"`
-			DisplayName string   `json:"display_name"` // V3 field
-			Tags        []string `json:"tags"`
-			Category    string   `json:"category"` // Added in V2
-			Priority    int      `json:"priority"` // Added in V3
-		}
-
-		type Container struct {
-			Items []Item `json:"items"`
-		}
-
 		It("should apply transformations step-by-step (V3→V2→V1)", func() {
 			// V1→V2 migration: title → name, remove category
 			// (When going backward V2→V1)
@@ -598,6 +622,680 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 
 			// Verify nestedArrayTypes was stored
 			Expect(responseInfo.nestedArrayTypes).To(Equal(nestedArrays))
+		})
+	})
+
+	Describe("BuildNestedTypeMaps auto-discovery", func() {
+		It("should discover nested arrays and objects from struct analysis", func() {
+			arrays, objects := BuildNestedTypeMaps(reflect.TypeOf(Container{}))
+
+			// Should find the items array
+			Expect(arrays).To(HaveKey("items"))
+			Expect(arrays["items"].Name()).To(Equal("Item"))
+
+			// Should find the metadata object
+			Expect(objects).To(HaveKey("metadata"))
+			Expect(objects["metadata"].Name()).To(Equal("Metadata"))
+		})
+
+		It("should discover only first-level nested structures", func() {
+			// BuildNestedTypeMaps only returns first-level nested types
+			// Deeper nesting is handled recursively via NewForNestedObject/NewForNestedArrayItem
+			arrays, objects := BuildNestedTypeMaps(reflect.TypeOf(Container{}))
+
+			// Should find first-level items array
+			Expect(arrays).To(HaveKey("items"))
+
+			// Should NOT find deeply nested paths - these are discovered recursively
+			// when processing the Item type, not from the root Container level
+			Expect(arrays).NotTo(HaveKey("items.subitems"))
+			Expect(objects).NotTo(HaveKey("items.details"))
+
+			// Verify that the Item type's nested types are discoverable separately
+			itemArrays, itemObjects := BuildNestedTypeMaps(arrays["items"])
+			Expect(itemArrays).To(HaveKey("subitems"))
+			Expect(itemObjects).To(HaveKey("details"))
+		})
+
+		It("should handle nil types gracefully", func() {
+			arrays, objects := BuildNestedTypeMaps(nil)
+			Expect(arrays).To(BeEmpty())
+			Expect(objects).To(BeEmpty())
+		})
+
+		It("should handle pointer types", func() {
+			arrays, objects := BuildNestedTypeMaps(reflect.TypeOf(&Container{}))
+
+			// Should still find nested types through pointer
+			Expect(arrays).To(HaveKey("items"))
+			Expect(objects).To(HaveKey("metadata"))
+		})
+
+		It("should handle self-referential types without infinite recursion", func() {
+			// Define a self-referential type (like a linked list node)
+			type Node struct {
+				Value    string `json:"value"`
+				Next     *Node  `json:"next"`
+				Children []Node `json:"children"`
+			}
+
+			// This should not hang or panic
+			arrays, objects := BuildNestedTypeMaps(reflect.TypeOf(Node{}))
+
+			// Should find the children array (self-referential)
+			Expect(arrays).To(HaveKey("children"))
+			Expect(arrays["children"].Name()).To(Equal("Node"))
+
+			// Should find the next field as a nested object
+			Expect(objects).To(HaveKey("next"))
+			Expect(objects["next"].Name()).To(Equal("Node"))
+
+			// Should NOT recurse infinitely - verify by checking we don't have
+			// infinitely nested paths like "next.next.next..."
+			for path := range objects {
+				// Paths should be reasonable length (not infinite)
+				Expect(len(path)).To(BeNumerically("<", 100))
+			}
+		})
+
+		It("should handle mutually recursive types without infinite recursion", func() {
+			// Define mutually recursive types
+			type TypeB struct {
+				Name string `json:"name"`
+				// A will be added via interface to avoid Go compilation issues
+			}
+			type TypeA struct {
+				ID   int    `json:"id"`
+				RefB *TypeB `json:"ref_b"`
+			}
+
+			// This should not hang or panic
+			_, objects := BuildNestedTypeMaps(reflect.TypeOf(TypeA{}))
+
+			// Should find ref_b as a nested object
+			Expect(objects).To(HaveKey("ref_b"))
+		})
+
+		It("should handle diamond-shaped type dependencies", func() {
+			// Diamond pattern: Root -> Left, Right; Left -> Bottom; Right -> Bottom
+			type Bottom struct {
+				Value string `json:"value"`
+			}
+			type Left struct {
+				Bottom Bottom `json:"bottom"`
+			}
+			type Right struct {
+				Bottom Bottom `json:"bottom"`
+			}
+			type Diamond struct {
+				Left  Left  `json:"left"`
+				Right Right `json:"right"`
+			}
+
+			_, objects := BuildNestedTypeMaps(reflect.TypeOf(Diamond{}))
+
+			// Should find only first-level nested objects
+			Expect(objects).To(HaveKey("left"))
+			Expect(objects).To(HaveKey("right"))
+
+			// Should NOT find deeply nested paths - these are discovered recursively
+			Expect(objects).NotTo(HaveKey("left.bottom"))
+			Expect(objects).NotTo(HaveKey("right.bottom"))
+
+			// Verify that nested Bottom is discoverable from Left/Right types
+			_, leftObjects := BuildNestedTypeMaps(objects["left"])
+			Expect(leftObjects).To(HaveKey("bottom"))
+		})
+
+		It("should handle types appearing at multiple paths (sibling branches)", func() {
+			// Same type appearing in sibling fields
+			type Address struct {
+				City string `json:"city"`
+			}
+			type Person struct {
+				HomeAddress Address `json:"home_address"`
+				WorkAddress Address `json:"work_address"`
+			}
+
+			_, objects := BuildNestedTypeMaps(reflect.TypeOf(Person{}))
+
+			// Should find Address at both paths
+			Expect(objects).To(HaveKey("home_address"))
+			Expect(objects).To(HaveKey("work_address"))
+			Expect(objects["home_address"].Name()).To(Equal("Address"))
+			Expect(objects["work_address"].Name()).To(Equal("Address"))
+		})
+
+		It("should handle circular reference through nested arrays", func() {
+			// Type with array that contains self-reference
+			type TreeNode struct {
+				Name     string     `json:"name"`
+				Children []TreeNode `json:"children"`
+				Parent   *TreeNode  `json:"parent"`
+			}
+
+			// This should not hang or panic
+			arrays, objects := BuildNestedTypeMaps(reflect.TypeOf(TreeNode{}))
+
+			// Should find children array
+			Expect(arrays).To(HaveKey("children"))
+			Expect(arrays["children"].Name()).To(Equal("TreeNode"))
+
+			// Should find parent as nested object
+			Expect(objects).To(HaveKey("parent"))
+			Expect(objects["parent"].Name()).To(Equal("TreeNode"))
+		})
+	})
+
+	Describe("Nested object transformations", func() {
+		It("should demonstrate that standard RenameField does NOT work on nested fields", func() {
+			// This test documents the LIMITATION: standard operations only work on top-level
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(Container{}).
+				ResponseToPreviousVersion().
+				RenameField("created_by", "author"). // This targets top-level, not nested metadata!
+				Build()
+
+			chain, err := NewMigrationChain([]*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			jsonStr := `{
+				"items": [],
+				"metadata": {
+					"version": "1.0",
+					"created_by": "test-user"
+				}
+			}`
+
+			responseInfo := createTestResponseInfo(jsonStr, 200)
+			responseInfo.schemaMatched = true
+			responseInfo.matchedSchemaType = reflect.TypeOf(Container{})
+
+			err = chain.MigrateResponse(ctx, responseInfo, v2, v1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Standard RenameField does NOT work on nested fields
+			// metadata.created_by should still exist (unchanged)
+			metadata := responseInfo.Body.Get("metadata")
+			Expect(metadata.Get("created_by").Exists()).To(BeTrue(), "Nested 'created_by' should be UNCHANGED - standard ops don't reach it")
+			Expect(metadata.Get("author").Exists()).To(BeFalse(), "No 'author' - standard ops don't reach nested fields")
+		})
+
+		It("should transform nested objects using MigrateResponseForTypeWithNestedObjects", func() {
+			// Migration for Metadata type
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(Container{}, Metadata{}).
+				ResponseToPreviousVersion().
+				RenameField("created_by", "author").
+				Build()
+
+			chain, err := NewMigrationChain([]*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			jsonStr := `{
+				"items": [],
+				"metadata": {
+					"version": "1.0",
+					"created_by": "test-user"
+				}
+			}`
+
+			responseInfo := createTestResponseInfo(jsonStr, 200)
+
+			// Use auto-discovered nested types
+			arrays, objects := BuildNestedTypeMaps(reflect.TypeOf(Container{}))
+
+			err = chain.MigrateResponseForTypeWithNestedObjects(
+				ctx,
+				responseInfo,
+				reflect.TypeOf(Container{}),
+				arrays,
+				objects,
+				v2,
+				v1,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify metadata was transformed
+			metadata := responseInfo.Body.Get("metadata")
+			Expect(metadata.Get("author").Exists()).To(BeTrue(), "Should have 'author' after transformation")
+			Expect(metadata.Get("created_by").Exists()).To(BeFalse(), "Should NOT have 'created_by' after transformation")
+		})
+
+		It("should recursively transform nested objects inside array items", func() {
+			// Each item has a details object (nested object inside array item)
+			// With recursive transformation, the details object WILL be transformed
+
+			detailsChange := NewVersionChangeBuilder(v1, v2).
+				ForType(Details{}).
+				ResponseToPreviousVersion().
+				RenameField("last_updated", "updated_at").
+				Build()
+
+			itemChange := NewVersionChangeBuilder(v1, v2).
+				ForType(Item{}).
+				ResponseToPreviousVersion().
+				RenameField("display_name", "name").
+				Build()
+
+			chain, err := NewMigrationChain([]*VersionChange{detailsChange, itemChange})
+			Expect(err).NotTo(HaveOccurred())
+
+			jsonStr := `{
+				"items": [
+					{
+						"id": 1,
+						"display_name": "Test Item",
+						"tags": [],
+						"category": "cat1",
+						"priority": 1,
+						"details": {"author": "user1", "last_updated": "2024-01-01"},
+						"subitems": []
+					}
+				],
+				"metadata": {"version": "1.0", "created_by": "admin"}
+			}`
+
+			responseInfo := createTestResponseInfo(jsonStr, 200)
+
+			err = chain.MigrateResponseForType(
+				ctx,
+				responseInfo,
+				reflect.TypeOf(Container{}),
+				map[string]reflect.Type{"items": reflect.TypeOf(Item{})},
+				v2,
+				v1,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			item0 := responseInfo.Body.Get("items").Index(0)
+
+			// Item-level transformation works
+			Expect(item0.Get("name").Exists()).To(BeTrue())
+			Expect(item0.Get("display_name").Exists()).To(BeFalse())
+
+			// Details inside item IS now transformed (recursive transformation)
+			details := item0.Get("details")
+			Expect(details.Get("updated_at").Exists()).To(BeTrue(), "details.last_updated should be renamed to updated_at")
+			Expect(details.Get("last_updated").Exists()).To(BeFalse(), "details.last_updated should be removed")
+		})
+	})
+
+	Describe("Two-level nested arrays", func() {
+		It("should recursively transform both first-level and second-level array items", func() {
+			// Test items[].subitems[] - two-level nesting
+			// With recursive transformation, both levels should be transformed
+			subItemChange := NewVersionChangeBuilder(v1, v2).
+				ForType(SubItem{}).
+				ResponseToPreviousVersion().
+				RenameField("label", "name").
+				Build()
+
+			itemChange := NewVersionChangeBuilder(v1, v2).
+				ForType(Item{}).
+				ResponseToPreviousVersion().
+				RenameField("display_name", "title").
+				Build()
+
+			chain, err := NewMigrationChain([]*VersionChange{subItemChange, itemChange})
+			Expect(err).NotTo(HaveOccurred())
+
+			jsonStr := `{
+				"items": [
+					{
+						"id": 1,
+						"display_name": "Parent Item",
+						"tags": ["a"],
+						"category": "cat1",
+						"priority": 1,
+						"details": {"author": "user1", "last_updated": "2024-01-01"},
+						"subitems": [
+							{"id": 101, "label": "Child 1"},
+							{"id": 102, "label": "Child 2"}
+						]
+					}
+				],
+				"metadata": {"version": "1.0", "created_by": "admin"}
+			}`
+
+			responseInfo := createTestResponseInfo(jsonStr, 200)
+
+			// Register only first-level items array - recursion handles the rest
+			err = chain.MigrateResponseForType(
+				ctx,
+				responseInfo,
+				reflect.TypeOf(Container{}),
+				map[string]reflect.Type{"items": reflect.TypeOf(Item{})},
+				v2,
+				v1,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			item0 := responseInfo.Body.Get("items").Index(0)
+
+			// First level (items) should be transformed
+			Expect(item0.Get("title").Exists()).To(BeTrue(), "Item should have 'title'")
+			Expect(item0.Get("display_name").Exists()).To(BeFalse())
+
+			// Second level (subitems) should NOW be transformed (recursive transformation)
+			subitem0 := item0.Get("subitems").Index(0)
+			Expect(subitem0.Get("name").Exists()).To(BeTrue(), "subitems[].label should be renamed to name")
+			Expect(subitem0.Get("label").Exists()).To(BeFalse(), "subitems[].label should be removed")
+
+			subitem1 := item0.Get("subitems").Index(1)
+			Expect(subitem1.Get("name").Exists()).To(BeTrue(), "Second subitem should also be transformed")
+			Expect(subitem1.Get("label").Exists()).To(BeFalse())
+		})
+	})
+
+	Describe("Multiple arrays at same level", func() {
+		// Define types for this test
+		type UserItem struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"` // Renamed in migration
+		}
+
+		type ProductItem struct {
+			ID    int    `json:"id"`
+			Title string `json:"title"` // Renamed in migration
+		}
+
+		type MultiArrayContainer struct {
+			Users    []UserItem    `json:"users"`
+			Products []ProductItem `json:"products"`
+		}
+
+		It("should handle multiple arrays registered at same level", func() {
+			userChange := NewVersionChangeBuilder(v1, v2).
+				ForType(UserItem{}).
+				ResponseToPreviousVersion().
+				RenameField("name", "user_name").
+				Build()
+
+			productChange := NewVersionChangeBuilder(v1, v2).
+				ForType(ProductItem{}).
+				ResponseToPreviousVersion().
+				RenameField("title", "product_title").
+				Build()
+
+			chain, err := NewMigrationChain([]*VersionChange{userChange, productChange})
+			Expect(err).NotTo(HaveOccurred())
+
+			jsonStr := `{
+				"users": [{"id": 1, "name": "John"}],
+				"products": [{"id": 101, "title": "Phone"}]
+			}`
+
+			responseInfo := createTestResponseInfo(jsonStr, 200)
+
+			// Register both arrays
+			err = chain.MigrateResponseForType(
+				ctx,
+				responseInfo,
+				reflect.TypeOf(MultiArrayContainer{}),
+				map[string]reflect.Type{
+					"users":    reflect.TypeOf(UserItem{}),
+					"products": reflect.TypeOf(ProductItem{}),
+				},
+				v2,
+				v1,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			user0 := responseInfo.Body.Get("users").Index(0)
+			product0 := responseInfo.Body.Get("products").Index(0)
+
+			// Both arrays should be transformed
+			Expect(user0.Get("user_name").Exists()).To(BeTrue())
+			Expect(user0.Get("name").Exists()).To(BeFalse())
+			Expect(product0.Get("product_title").Exists()).To(BeTrue())
+			Expect(product0.Get("title").Exists()).To(BeFalse())
+		})
+	})
+
+	Describe("Edge cases and error handling", func() {
+		It("should handle null field values gracefully", func() {
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(Item{}).
+				ResponseToPreviousVersion().
+				RenameField("display_name", "name").
+				Build()
+
+			chain, err := NewMigrationChain([]*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			// display_name is null
+			jsonStr := `{
+				"items": [{"id": 1, "display_name": null, "tags": [], "category": "cat1", "priority": 1, "details": {}, "subitems": []}],
+				"metadata": {"version": "1.0", "created_by": "admin"}
+			}`
+
+			responseInfo := createTestResponseInfo(jsonStr, 200)
+
+			err = chain.MigrateResponseForType(
+				ctx,
+				responseInfo,
+				reflect.TypeOf(Container{}),
+				map[string]reflect.Type{"items": reflect.TypeOf(Item{})},
+				v2,
+				v1,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			item0 := responseInfo.Body.Get("items").Index(0)
+			// Rename should still work with null value
+			Expect(item0.Get("name").Exists()).To(BeTrue())
+			Expect(item0.Get("display_name").Exists()).To(BeFalse())
+		})
+
+		It("should handle type mismatch gracefully (expected array got object)", func() {
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(Item{}).
+				ResponseToPreviousVersion().
+				RenameField("display_name", "name").
+				Build()
+
+			chain, err := NewMigrationChain([]*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			// items is an object instead of array
+			jsonStr := `{
+				"items": {"unexpected": "object"},
+				"metadata": {"version": "1.0", "created_by": "admin"}
+			}`
+
+			responseInfo := createTestResponseInfo(jsonStr, 200)
+
+			// Should not panic or error
+			err = chain.MigrateResponseForType(
+				ctx,
+				responseInfo,
+				reflect.TypeOf(Container{}),
+				map[string]reflect.Type{"items": reflect.TypeOf(Item{})},
+				v2,
+				v1,
+			)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle missing field to rename gracefully", func() {
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(Item{}).
+				ResponseToPreviousVersion().
+				RenameField("nonexistent_field", "new_name").
+				Build()
+
+			chain, err := NewMigrationChain([]*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			jsonStr := `{
+				"items": [{"id": 1, "display_name": "Test", "tags": [], "category": "cat1", "priority": 1, "details": {}, "subitems": []}],
+				"metadata": {"version": "1.0", "created_by": "admin"}
+			}`
+
+			responseInfo := createTestResponseInfo(jsonStr, 200)
+
+			// Should not error when field doesn't exist
+			err = chain.MigrateResponseForType(
+				ctx,
+				responseInfo,
+				reflect.TypeOf(Container{}),
+				map[string]reflect.Type{"items": reflect.TypeOf(Item{})},
+				v2,
+				v1,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Original data unchanged
+			item0 := responseInfo.Body.Get("items").Index(0)
+			Expect(item0.Get("display_name").Exists()).To(BeTrue())
+			Expect(item0.Get("new_name").Exists()).To(BeFalse())
+		})
+
+		It("should handle large payloads with many nested items", func() {
+			change := NewVersionChangeBuilder(v1, v2).
+				ForType(Item{}).
+				ResponseToPreviousVersion().
+				RenameField("display_name", "name").
+				Build()
+
+			chain, err := NewMigrationChain([]*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Build JSON with 100 items
+			jsonStr := `{"items":[`
+			for i := 0; i < 100; i++ {
+				if i > 0 {
+					jsonStr += ","
+				}
+				jsonStr += fmt.Sprintf(`{"id":%d,"display_name":"Item %d","tags":[],"category":"cat","priority":1,"details":{},"subitems":[]}`, i, i)
+			}
+			jsonStr += `],"metadata":{"version":"1.0","created_by":"admin"}}`
+
+			responseInfo := createTestResponseInfo(jsonStr, 200)
+
+			err = chain.MigrateResponseForType(
+				ctx,
+				responseInfo,
+				reflect.TypeOf(Container{}),
+				map[string]reflect.Type{"items": reflect.TypeOf(Item{})},
+				v2,
+				v1,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			items := responseInfo.Body.Get("items")
+			itemsLen, _ := items.Len()
+			Expect(itemsLen).To(Equal(100))
+
+			// Verify first and last are transformed
+			item0 := items.Index(0)
+			Expect(item0.Get("name").Exists()).To(BeTrue())
+			Expect(item0.Get("display_name").Exists()).To(BeFalse())
+
+			item99 := items.Index(99)
+			Expect(item99.Get("name").Exists()).To(BeTrue())
+			Expect(item99.Get("display_name").Exists()).To(BeFalse())
+		})
+	})
+
+	Describe("Deep nesting transformation scenarios", func() {
+		// Note: Basic nested transformation scenarios (users[].profile, users[].skills[])
+		// are covered by integration_test.go. This section focuses on deeper nesting.
+
+		It("should handle three-level deep nesting", func() {
+			// Testing: Container -> Items[] -> SubItems[] -> SubSubItems[]
+			type SubSubItem struct {
+				ID   int    `json:"id"`
+				Code string `json:"code"` // Renamed in migration
+			}
+
+			type SubItemWithNesting struct {
+				ID          int          `json:"id"`
+				Label       string       `json:"label"`
+				SubSubItems []SubSubItem `json:"subsubitems"`
+			}
+
+			type ItemWithDeepNesting struct {
+				ID       int                  `json:"id"`
+				Name     string               `json:"name"`
+				SubItems []SubItemWithNesting `json:"subitems"`
+			}
+
+			type DeepContainer struct {
+				Items []ItemWithDeepNesting `json:"items"`
+			}
+
+			subSubItemChange := NewVersionChangeBuilder(v1, v2).
+				ForType(SubSubItem{}).
+				ResponseToPreviousVersion().
+				RenameField("code", "item_code").
+				Build()
+
+			subItemChange := NewVersionChangeBuilder(v1, v2).
+				ForType(SubItemWithNesting{}).
+				ResponseToPreviousVersion().
+				RenameField("label", "sub_label").
+				Build()
+
+			itemChange := NewVersionChangeBuilder(v1, v2).
+				ForType(ItemWithDeepNesting{}).
+				ResponseToPreviousVersion().
+				RenameField("name", "item_name").
+				Build()
+
+			chain, err := NewMigrationChain([]*VersionChange{subSubItemChange, subItemChange, itemChange})
+			Expect(err).NotTo(HaveOccurred())
+
+			jsonStr := `{
+				"items": [
+					{
+						"id": 1,
+						"name": "Top Level",
+						"subitems": [
+							{
+								"id": 10,
+								"label": "Mid Level",
+								"subsubitems": [
+									{"id": 100, "code": "ABC"},
+									{"id": 101, "code": "DEF"}
+								]
+							}
+						]
+					}
+				]
+			}`
+
+			responseInfo := createTestResponseInfo(jsonStr, 200)
+
+			err = chain.MigrateResponseForType(
+				ctx,
+				responseInfo,
+				reflect.TypeOf(DeepContainer{}),
+				map[string]reflect.Type{"items": reflect.TypeOf(ItemWithDeepNesting{})},
+				v2,
+				v1,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Level 1: items[]
+			item0 := responseInfo.Body.Get("items").Index(0)
+			Expect(item0.Get("item_name").Exists()).To(BeTrue(), "Level 1: name should be renamed to item_name")
+			Expect(item0.Get("name").Exists()).To(BeFalse())
+
+			// Level 2: items[].subitems[]
+			subitem0 := item0.Get("subitems").Index(0)
+			Expect(subitem0.Get("sub_label").Exists()).To(BeTrue(), "Level 2: label should be renamed to sub_label")
+			Expect(subitem0.Get("label").Exists()).To(BeFalse())
+
+			// Level 3: items[].subitems[].subsubitems[]
+			subsubitem0 := subitem0.Get("subsubitems").Index(0)
+			Expect(subsubitem0.Get("item_code").Exists()).To(BeTrue(), "Level 3: code should be renamed to item_code")
+			Expect(subsubitem0.Get("code").Exists()).To(BeFalse())
+
+			subsubitem1 := subitem0.Get("subsubitems").Index(1)
+			Expect(subsubitem1.Get("item_code").Exists()).To(BeTrue())
+			Expect(subsubitem1.Get("code").Exists()).To(BeFalse())
 		})
 	})
 })
