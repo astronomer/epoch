@@ -31,7 +31,7 @@ type SchemaGeneratorConfig struct {
 	//
 	// Behavior:
 	// - If schema with mapped name exists in base spec → transforms it in place
-	// - If schema doesn't exist → generates from scratch using Go type name + version suffix
+	// - If schema doesn't exist → generates from scratch using Go type name
 	SchemaNameMapper func(typeName string) string
 }
 

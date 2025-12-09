@@ -379,11 +379,6 @@ The generator uses different naming strategies depending on whether schemas are 
 - Preserves the same name across all versions
 - Example: `versionedapi.UpdateExampleRequest` in all version files
 
-**When generating from scratch** (not found in base spec):
-- **HEAD version**: Uses bare type name (e.g., `UserResponse`)
-- **Versioned releases**: Uses type name + version suffix (e.g., `UserResponseV20240101`)
-- Version suffix format: `V` + date without hyphens (e.g., `V20240101`)
-
 **Unmanaged schemas** (in base spec but not in TypeRegistry):
 - Preserved as-is in all versions
 - Examples: `ErrorResponse`, `PaginationMeta`, common utility types
@@ -392,8 +387,6 @@ The generator uses different naming strategies depending on whether schemas are 
 ### Configuration Options
 
 **`SchemaNameMapper`**: Maps Go type names to OpenAPI schema names (useful for Swag integration with package prefixes)
-
-**`ComponentNamePrefix`**: Adds prefix to version suffixes (e.g., `"Astro"` → `UserResponseAstroV20240101`)
 
 **`OutputFormat`**: `"yaml"` or `"json"`
 

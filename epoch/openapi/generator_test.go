@@ -97,23 +97,6 @@ var _ = Describe("SchemaGenerator", func() {
 		})
 	})
 
-	DescribeTable("Version Suffix",
-		func(versionFunc func() *epoch.Version, expectedSuffix string) {
-			versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{})
-			config := SchemaGeneratorConfig{
-				VersionBundle: versionBundle,
-			}
-			generator := NewSchemaGenerator(config)
-
-			version := versionFunc()
-			suffix := generator.getVersionSuffix(version)
-			Expect(suffix).To(Equal(expectedSuffix))
-		},
-		Entry("HEAD version", func() *epoch.Version { return epoch.NewHeadVersion() }, ""),
-		Entry("date version", func() *epoch.Version { v, _ := epoch.NewDateVersion("2024-01-01"); return v }, "V20240101"),
-		Entry("semver version", func() *epoch.Version { v, _ := epoch.NewSemverVersion("1.2.3"); return v }, "V123"),
-	)
-
 	Describe("Spec Cloning", func() {
 		It("should clone spec correctly", func() {
 			original := &openapi3.T{
@@ -192,21 +175,45 @@ var _ = Describe("SchemaGenerator", func() {
 
 			generator := NewSchemaGenerator(config)
 
-			// Generate schema for HEAD
-			headVersion := epoch.NewHeadVersion()
-			schema, err := generator.GetSchemaForType(
-				reflect.TypeOf(TestUserResponse{}),
-				headVersion,
-				SchemaDirectionResponse,
-			)
+			// Create a base spec with the type
+			baseSpec := &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{
+						"TestUserResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type: &openapi3.Types{"object"},
+							Properties: map[string]*openapi3.SchemaRef{
+								"id": openapi3.NewSchemaRef("", &openapi3.Schema{
+									Type: &openapi3.Types{"integer"},
+								}),
+								"name": openapi3.NewSchemaRef("", &openapi3.Schema{
+									Type: &openapi3.Types{"string"},
+								}),
+								"email": openapi3.NewSchemaRef("", &openapi3.Schema{
+									Type: &openapi3.Types{"string"},
+								}),
+							},
+						}),
+					},
+				},
+			}
 
+			// Generate spec for HEAD
+			headVersion := epoch.NewHeadVersion()
+			headSpec, err := generator.GenerateSpecForVersion(baseSpec, headVersion)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(headSpec).NotTo(BeNil())
+
+			// Get the schema from the generated spec
+			schema := headSpec.Components.Schemas["TestUserResponse"]
 			Expect(schema).NotTo(BeNil())
+			Expect(schema.Value).NotTo(BeNil())
 
 			// Check that required fields are present
-			Expect(schema.Properties).NotTo(BeEmpty())
-			Expect(schema.Properties["id"]).NotTo(BeNil())
-			Expect(schema.Properties["name"]).NotTo(BeNil())
+			Expect(schema.Value.Properties).NotTo(BeEmpty())
+			Expect(schema.Value.Properties["id"]).NotTo(BeNil())
+			Expect(schema.Value.Properties["name"]).NotTo(BeNil())
 		})
 	})
 
