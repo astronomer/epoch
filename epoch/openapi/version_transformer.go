@@ -49,36 +49,7 @@ func (vt *VersionTransformer) TransformSchemaForVersion(
 		}
 	}
 
-	// Recursively transform nested schemas (objects and arrays)
-	if err := vt.transformNestedSchemas(schema, targetType, targetVersion, direction); err != nil {
-		return nil, fmt.Errorf("failed to transform nested schemas: %w", err)
-	}
-
 	return schema, nil
-}
-
-// transformNestedSchemas recursively transforms nested object and array schemas
-func (vt *VersionTransformer) transformNestedSchemas(
-	schema *openapi3.Schema,
-	parentType reflect.Type,
-	targetVersion *epoch.Version,
-	direction SchemaDirection,
-) error {
-	if schema == nil || schema.Properties == nil {
-		return nil
-	}
-
-	// Dereference pointer type if needed
-	if parentType.Kind() == reflect.Ptr {
-		parentType = parentType.Elem()
-	}
-
-	// Only process struct types
-	if parentType.Kind() != reflect.Struct {
-		return nil
-	}
-
-	return nil
 }
 
 // versionChange holds information about a single version change operation

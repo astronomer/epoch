@@ -390,8 +390,6 @@ The generator uses different naming strategies depending on whether schemas are 
 
 **`OutputFormat`**: `"yaml"` or `"json"`
 
-**`IncludeMigrationMetadata`**: Adds `x-epoch-migrations` extensions to schemas
-
 ### Two Generation Paths
 
 **Path 1: Transform Existing Schema** (base spec has schema)
@@ -400,8 +398,7 @@ The generator uses different naming strategies depending on whether schemas are 
 - Example: `versionedapi.UserResponse` in all versions, with different fields
 
 **Path 2: Generate From Scratch** (base spec missing schema)
-- HEAD: uses bare name (`UserResponse`)
-- Versioned: uses versioned name (`UserResponseV20240101`)
+- Uses bare type name for all versions (e.g., `UserResponse`)
 - Content generated from Go types + migrations applied
 
 ## Version Transformations
