@@ -35,6 +35,47 @@ type MissingRequest struct {
 	Field2 string `json:"field2"`
 }
 
+// Test types for nested type handling tests
+type NestedMetadata struct {
+	Version   string `json:"version"`
+	CreatedBy string `json:"created_by"`
+}
+
+type NestedSubItem struct {
+	ID    int    `json:"id"`
+	Label string `json:"label"`
+}
+
+type NestedItem struct {
+	ID       int             `json:"id"`
+	Name     string          `json:"name"`
+	SubItems []NestedSubItem `json:"sub_items"`
+	Details  NestedMetadata  `json:"details"`
+}
+
+type NestedContainer struct {
+	Items    []NestedItem   `json:"items"`
+	Metadata NestedMetadata `json:"metadata"`
+}
+
+// Self-referential type for circular dependency testing
+type SelfReferential struct {
+	ID    int              `json:"id"`
+	Name  string           `json:"name"`
+	Child *SelfReferential `json:"child,omitempty"`
+}
+
+// Circular dependency types
+type CircularA struct {
+	ID   int        `json:"id"`
+	RefB *CircularB `json:"ref_b,omitempty"`
+}
+
+type CircularB struct {
+	Name string     `json:"name"`
+	RefA *CircularA `json:"ref_a,omitempty"`
+}
+
 var _ = Describe("SchemaGenerator", func() {
 	Describe("Initialization", func() {
 		It("should create a new SchemaGenerator", func() {
@@ -96,23 +137,6 @@ var _ = Describe("SchemaGenerator", func() {
 			Expect(typeMap[reflect.TypeOf(TestUserResponse{})]).To(BeTrue())
 		})
 	})
-
-	DescribeTable("Version Suffix",
-		func(versionFunc func() *epoch.Version, expectedSuffix string) {
-			versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{})
-			config := SchemaGeneratorConfig{
-				VersionBundle: versionBundle,
-			}
-			generator := NewSchemaGenerator(config)
-
-			version := versionFunc()
-			suffix := generator.getVersionSuffix(version)
-			Expect(suffix).To(Equal(expectedSuffix))
-		},
-		Entry("HEAD version", func() *epoch.Version { return epoch.NewHeadVersion() }, ""),
-		Entry("date version", func() *epoch.Version { v, _ := epoch.NewDateVersion("2024-01-01"); return v }, "V20240101"),
-		Entry("semver version", func() *epoch.Version { v, _ := epoch.NewSemverVersion("1.2.3"); return v }, "V123"),
-	)
 
 	Describe("Spec Cloning", func() {
 		It("should clone spec correctly", func() {
@@ -192,21 +216,45 @@ var _ = Describe("SchemaGenerator", func() {
 
 			generator := NewSchemaGenerator(config)
 
-			// Generate schema for HEAD
-			headVersion := epoch.NewHeadVersion()
-			schema, err := generator.GetSchemaForType(
-				reflect.TypeOf(TestUserResponse{}),
-				headVersion,
-				SchemaDirectionResponse,
-			)
+			// Create a base spec with the type
+			baseSpec := &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{
+						"TestUserResponse": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type: &openapi3.Types{"object"},
+							Properties: map[string]*openapi3.SchemaRef{
+								"id": openapi3.NewSchemaRef("", &openapi3.Schema{
+									Type: &openapi3.Types{"integer"},
+								}),
+								"name": openapi3.NewSchemaRef("", &openapi3.Schema{
+									Type: &openapi3.Types{"string"},
+								}),
+								"email": openapi3.NewSchemaRef("", &openapi3.Schema{
+									Type: &openapi3.Types{"string"},
+								}),
+							},
+						}),
+					},
+				},
+			}
 
+			// Generate spec for HEAD
+			headVersion := epoch.NewHeadVersion()
+			headSpec, err := generator.GenerateSpecForVersion(baseSpec, headVersion)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(headSpec).NotTo(BeNil())
+
+			// Get the schema from the generated spec
+			schema := headSpec.Components.Schemas["TestUserResponse"]
 			Expect(schema).NotTo(BeNil())
+			Expect(schema.Value).NotTo(BeNil())
 
 			// Check that required fields are present
-			Expect(schema.Properties).NotTo(BeEmpty())
-			Expect(schema.Properties["id"]).NotTo(BeNil())
-			Expect(schema.Properties["name"]).NotTo(BeNil())
+			Expect(schema.Value.Properties).NotTo(BeEmpty())
+			Expect(schema.Value.Properties["id"]).NotTo(BeNil())
+			Expect(schema.Value.Properties["name"]).NotTo(BeNil())
 		})
 	})
 
@@ -601,6 +649,677 @@ var _ = Describe("SchemaGenerator", func() {
 					Expect(schema.Value.Properties["name"].Value.Description).To(Equal("User name from Swag"))
 				}
 			})
+		})
+	})
+
+	Describe("Nested Type Handling", func() {
+		var (
+			generator     *SchemaGenerator
+			v1            *epoch.Version
+			versionBundle *epoch.VersionBundle
+		)
+
+		BeforeEach(func() {
+			v1, _ = epoch.NewDateVersion("2024-01-01")
+			versionBundle, _ = epoch.NewVersionBundle([]*epoch.Version{v1})
+			registry := epoch.NewEndpointRegistry()
+
+			config := SchemaGeneratorConfig{
+				VersionBundle: versionBundle,
+				TypeRegistry:  registry,
+			}
+			generator = NewSchemaGenerator(config)
+		})
+
+		Context("Nested type collection", func() {
+			It("should collect nested objects from a struct", func() {
+				generator.collectNestedTypesForGeneration(reflect.TypeOf(NestedContainer{}), v1)
+
+				// Check that metadata object was registered
+				versionKey := v1.String()
+				componentName := generator.getComponentNameForType(versionKey, reflect.TypeOf(NestedMetadata{}))
+				Expect(componentName).To(Equal("NestedMetadata"))
+
+				// Check that it's in typesToGenerate
+				typesToGen := generator.typesToGenerate[versionKey]
+				Expect(typesToGen).To(ContainElement(reflect.TypeOf(NestedMetadata{})))
+			})
+
+			It("should collect nested arrays from a struct", func() {
+				generator.collectNestedTypesForGeneration(reflect.TypeOf(NestedContainer{}), v1)
+
+				versionKey := v1.String()
+				// Check that NestedItem (array element type) was registered
+				componentName := generator.getComponentNameForType(versionKey, reflect.TypeOf(NestedItem{}))
+				Expect(componentName).To(Equal("NestedItem"))
+
+				typesToGen := generator.typesToGenerate[versionKey]
+				Expect(typesToGen).To(ContainElement(reflect.TypeOf(NestedItem{})))
+			})
+
+			It("should recursively collect deeply nested types", func() {
+				generator.collectNestedTypesForGeneration(reflect.TypeOf(NestedContainer{}), v1)
+
+				versionKey := v1.String()
+				typesToGen := generator.typesToGenerate[versionKey]
+
+				// Should collect all levels: NestedItem, NestedMetadata, NestedSubItem
+				Expect(typesToGen).To(ContainElement(reflect.TypeOf(NestedItem{})))
+				Expect(typesToGen).To(ContainElement(reflect.TypeOf(NestedMetadata{})))
+				Expect(typesToGen).To(ContainElement(reflect.TypeOf(NestedSubItem{})))
+			})
+
+			It("should handle circular dependencies without infinite recursion", func() {
+				// Should complete without hanging
+				generator.collectNestedTypesForGeneration(reflect.TypeOf(SelfReferential{}), v1)
+
+				versionKey := v1.String()
+				typesToGen := generator.typesToGenerate[versionKey]
+
+				// SelfReferential should only appear once despite circular reference
+				count := 0
+				for _, typ := range typesToGen {
+					if typ == reflect.TypeOf(SelfReferential{}) {
+						count++
+					}
+				}
+				Expect(count).To(Equal(1))
+			})
+
+			It("should handle mutual circular dependencies", func() {
+				generator.collectNestedTypesForGeneration(reflect.TypeOf(CircularA{}), v1)
+
+				versionKey := v1.String()
+				typesToGen := generator.typesToGenerate[versionKey]
+
+				// Both types should be collected exactly once
+				Expect(typesToGen).To(ContainElement(reflect.TypeOf(CircularB{})))
+
+				countA := 0
+				countB := 0
+				for _, typ := range typesToGen {
+					if typ == reflect.TypeOf(CircularA{}) {
+						countA++
+					}
+					if typ == reflect.TypeOf(CircularB{}) {
+						countB++
+					}
+				}
+				Expect(countA).To(Equal(1))
+				Expect(countB).To(Equal(1))
+			})
+
+			It("should handle pointer types by dereferencing", func() {
+				generator.collectNestedTypesForGeneration(reflect.TypeOf(&NestedContainer{}), v1)
+
+				versionKey := v1.String()
+				typesToGen := generator.typesToGenerate[versionKey]
+
+				// Should still collect nested types through pointer
+				Expect(typesToGen).To(ContainElement(reflect.TypeOf(NestedMetadata{})))
+				Expect(typesToGen).To(ContainElement(reflect.TypeOf(NestedItem{})))
+			})
+		})
+
+		Context("Nested type registration", func() {
+			It("should register types with correct component names", func() {
+				typ := reflect.TypeOf(NestedMetadata{})
+				versionKey := v1.String()
+				componentName := "NestedMetadata"
+
+				generator.registerNestedType(versionKey, typ, componentName)
+
+				// Check registration
+				registeredName := generator.getComponentNameForType(versionKey, typ)
+				Expect(registeredName).To(Equal(componentName))
+			})
+
+			It("should track types for generation", func() {
+				typ := reflect.TypeOf(NestedMetadata{})
+				versionKey := v1.String()
+
+				generator.registerNestedType(versionKey, typ, "NestedMetadata")
+
+				// Check it's in typesToGenerate
+				typesToGen := generator.typesToGenerate[versionKey]
+				Expect(typesToGen).To(ContainElement(typ))
+			})
+
+			It("should not duplicate types in typesToGenerate", func() {
+				typ := reflect.TypeOf(NestedMetadata{})
+				versionKey := v1.String()
+
+				// Register twice
+				generator.registerNestedType(versionKey, typ, "NestedMetadata")
+				generator.registerNestedType(versionKey, typ, "NestedMetadata")
+
+				// Should only appear once
+				typesToGen := generator.typesToGenerate[versionKey]
+				count := 0
+				for _, t := range typesToGen {
+					if t == typ {
+						count++
+					}
+				}
+				Expect(count).To(Equal(1))
+			})
+		})
+	})
+
+	Describe("Component Name Generation", func() {
+		var generator *SchemaGenerator
+
+		BeforeEach(func() {
+			v1, _ := epoch.NewDateVersion("2024-01-01")
+			versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
+			registry := epoch.NewEndpointRegistry()
+
+			config := SchemaGeneratorConfig{
+				VersionBundle: versionBundle,
+				TypeRegistry:  registry,
+			}
+			generator = NewSchemaGenerator(config)
+		})
+
+		DescribeTable("should generate correct component names",
+			func(typ reflect.Type, expectedName string) {
+				componentName := generator.generateComponentNameForType(typ)
+				Expect(componentName).To(Equal(expectedName))
+			},
+			Entry("named struct", reflect.TypeOf(NestedMetadata{}), "NestedMetadata"),
+			Entry("pointer to struct", reflect.TypeOf(&NestedMetadata{}), "NestedMetadata"),
+			Entry("nested struct", reflect.TypeOf(NestedItem{}), "NestedItem"),
+			Entry("slice of struct", reflect.TypeOf([]NestedItem{}), "NestedItemArray"),
+			Entry("slice of pointer", reflect.TypeOf([]*NestedItem{}), "NestedItemArray"),
+		)
+
+		It("should handle anonymous structs", func() {
+			anonymousType := reflect.TypeOf(struct {
+				Field string
+			}{})
+
+			componentName := generator.generateComponentNameForType(anonymousType)
+			// Should generate some name (exact name depends on implementation)
+			Expect(componentName).NotTo(BeEmpty())
+		})
+	})
+
+	Describe("Reference Replacement", func() {
+		var (
+			generator *SchemaGenerator
+			spec      *openapi3.T
+		)
+
+		BeforeEach(func() {
+			v1, _ := epoch.NewDateVersion("2024-01-01")
+			versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
+			registry := epoch.NewEndpointRegistry()
+
+			config := SchemaGeneratorConfig{
+				VersionBundle: versionBundle,
+				TypeRegistry:  registry,
+			}
+			generator = NewSchemaGenerator(config)
+
+			// Create a spec with component schemas
+			spec = &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{
+						"NestedMetadata": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type: &openapi3.Types{"object"},
+							Properties: map[string]*openapi3.SchemaRef{
+								"version": openapi3.NewSchemaRef("", &openapi3.Schema{
+									Type: &openapi3.Types{"string"},
+								}),
+								"created_by": openapi3.NewSchemaRef("", &openapi3.Schema{
+									Type: &openapi3.Types{"string"},
+								}),
+							},
+						}),
+					},
+				},
+			}
+		})
+
+		It("should replace inline object schemas with refs", func() {
+			// Create a schema with an inline object
+			parentSchema := &openapi3.Schema{
+				Type: &openapi3.Types{"object"},
+				Properties: map[string]*openapi3.SchemaRef{
+					"metadata": openapi3.NewSchemaRef("", &openapi3.Schema{
+						Type: &openapi3.Types{"object"},
+						Properties: map[string]*openapi3.SchemaRef{
+							"version": openapi3.NewSchemaRef("", &openapi3.Schema{
+								Type: &openapi3.Types{"string"},
+							}),
+							"created_by": openapi3.NewSchemaRef("", &openapi3.Schema{
+								Type: &openapi3.Types{"string"},
+							}),
+						},
+					}),
+				},
+			}
+
+			err := generator.replaceNestedSchemasWithRefsGeneric(parentSchema, spec)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should replace inline object with $ref
+			metadataRef := parentSchema.Properties["metadata"]
+			Expect(metadataRef).NotTo(BeNil())
+			Expect(metadataRef.Ref).To(Equal("#/components/schemas/NestedMetadata"))
+		})
+
+		It("should replace inline objects in array items with refs", func() {
+			// Create a schema with array of inline objects
+			parentSchema := &openapi3.Schema{
+				Type: &openapi3.Types{"object"},
+				Properties: map[string]*openapi3.SchemaRef{
+					"items": openapi3.NewSchemaRef("", &openapi3.Schema{
+						Type: &openapi3.Types{"array"},
+						Items: &openapi3.SchemaRef{
+							Value: &openapi3.Schema{
+								Type: &openapi3.Types{"object"},
+								Properties: map[string]*openapi3.SchemaRef{
+									"version": openapi3.NewSchemaRef("", &openapi3.Schema{
+										Type: &openapi3.Types{"string"},
+									}),
+									"created_by": openapi3.NewSchemaRef("", &openapi3.Schema{
+										Type: &openapi3.Types{"string"},
+									}),
+								},
+							},
+						},
+					}),
+				},
+			}
+
+			err := generator.replaceNestedSchemasWithRefsGeneric(parentSchema, spec)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should replace array items with $ref
+			itemsRef := parentSchema.Properties["items"]
+			Expect(itemsRef).NotTo(BeNil())
+			Expect(itemsRef.Value.Items).NotTo(BeNil())
+			Expect(itemsRef.Value.Items.Ref).To(Equal("#/components/schemas/NestedMetadata"))
+		})
+
+		It("should leave existing refs unchanged", func() {
+			// Create a schema that already has $ref
+			parentSchema := &openapi3.Schema{
+				Type: &openapi3.Types{"object"},
+				Properties: map[string]*openapi3.SchemaRef{
+					"metadata": openapi3.NewSchemaRef("#/components/schemas/NestedMetadata", nil),
+				},
+			}
+
+			err := generator.replaceNestedSchemasWithRefsGeneric(parentSchema, spec)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should remain unchanged
+			metadataRef := parentSchema.Properties["metadata"]
+			Expect(metadataRef.Ref).To(Equal("#/components/schemas/NestedMetadata"))
+		})
+
+		It("should not replace if no matching component found", func() {
+			// Create a schema with inline object that doesn't match any component
+			parentSchema := &openapi3.Schema{
+				Type: &openapi3.Types{"object"},
+				Properties: map[string]*openapi3.SchemaRef{
+					"unknown": openapi3.NewSchemaRef("", &openapi3.Schema{
+						Type: &openapi3.Types{"object"},
+						Properties: map[string]*openapi3.SchemaRef{
+							"unknown_field": openapi3.NewSchemaRef("", &openapi3.Schema{
+								Type: &openapi3.Types{"string"},
+							}),
+						},
+					}),
+				},
+			}
+
+			err := generator.replaceNestedSchemasWithRefsGeneric(parentSchema, spec)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should remain inline since no match
+			unknownRef := parentSchema.Properties["unknown"]
+			Expect(unknownRef.Ref).To(BeEmpty())
+			Expect(unknownRef.Value).NotTo(BeNil())
+		})
+	})
+
+	Describe("findMatchingComponent", func() {
+		var (
+			generator *SchemaGenerator
+			spec      *openapi3.T
+		)
+
+		BeforeEach(func() {
+			v1, _ := epoch.NewDateVersion("2024-01-01")
+			versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
+			registry := epoch.NewEndpointRegistry()
+
+			config := SchemaGeneratorConfig{
+				VersionBundle: versionBundle,
+				TypeRegistry:  registry,
+			}
+			generator = NewSchemaGenerator(config)
+
+			spec = &openapi3.T{
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{
+						"NestedMetadata": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type: &openapi3.Types{"object"},
+							Properties: map[string]*openapi3.SchemaRef{
+								"version": openapi3.NewSchemaRef("", &openapi3.Schema{
+									Type: &openapi3.Types{"string"},
+								}),
+								"created_by": openapi3.NewSchemaRef("", &openapi3.Schema{
+									Type: &openapi3.Types{"string"},
+								}),
+							},
+						}),
+					},
+				},
+			}
+		})
+
+		It("should find matching component by property names", func() {
+			inlineSchema := &openapi3.Schema{
+				Type: &openapi3.Types{"object"},
+				Properties: map[string]*openapi3.SchemaRef{
+					"version": openapi3.NewSchemaRef("", &openapi3.Schema{
+						Type: &openapi3.Types{"string"},
+					}),
+					"created_by": openapi3.NewSchemaRef("", &openapi3.Schema{
+						Type: &openapi3.Types{"string"},
+					}),
+				},
+			}
+
+			componentName := generator.findMatchingComponent(inlineSchema, spec)
+			Expect(componentName).To(Equal("NestedMetadata"))
+		})
+
+		It("should return empty string if no match found", func() {
+			inlineSchema := &openapi3.Schema{
+				Type: &openapi3.Types{"object"},
+				Properties: map[string]*openapi3.SchemaRef{
+					"different_field": openapi3.NewSchemaRef("", &openapi3.Schema{
+						Type: &openapi3.Types{"string"},
+					}),
+				},
+			}
+
+			componentName := generator.findMatchingComponent(inlineSchema, spec)
+			Expect(componentName).To(BeEmpty())
+		})
+
+		It("should return empty string for nil schema", func() {
+			componentName := generator.findMatchingComponent(nil, spec)
+			Expect(componentName).To(BeEmpty())
+		})
+
+		It("should return empty string for schema without properties", func() {
+			inlineSchema := &openapi3.Schema{
+				Type: &openapi3.Types{"object"},
+			}
+
+			componentName := generator.findMatchingComponent(inlineSchema, spec)
+			Expect(componentName).To(BeEmpty())
+		})
+	})
+
+	Describe("Multi-Pass Generation", func() {
+		var (
+			generator     *SchemaGenerator
+			registry      *epoch.EndpointRegistry
+			v1            *epoch.Version
+			versionBundle *epoch.VersionBundle
+		)
+
+		BeforeEach(func() {
+			v1, _ = epoch.NewDateVersion("2024-01-01")
+			versionBundle, _ = epoch.NewVersionBundle([]*epoch.Version{v1})
+			registry = epoch.NewEndpointRegistry()
+		})
+
+		It("should generate component schemas for nested objects", func() {
+			// Register an endpoint with nested types
+			registry.Register("GET", "/containers", &epoch.EndpointDefinition{
+				Method:       "GET",
+				PathPattern:  "/containers",
+				ResponseType: reflect.TypeOf(NestedContainer{}),
+			})
+
+			config := SchemaGeneratorConfig{
+				VersionBundle: versionBundle,
+				TypeRegistry:  registry,
+			}
+			generator = NewSchemaGenerator(config)
+
+			baseSpec := &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{},
+				},
+			}
+
+			spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should generate component schemas for all nested types
+			Expect(spec.Components.Schemas["NestedMetadata"]).NotTo(BeNil())
+			Expect(spec.Components.Schemas["NestedItem"]).NotTo(BeNil())
+			Expect(spec.Components.Schemas["NestedSubItem"]).NotTo(BeNil())
+		})
+
+		It("should use refs for nested objects in parent schema", func() {
+			registry.Register("GET", "/containers", &epoch.EndpointDefinition{
+				Method:       "GET",
+				PathPattern:  "/containers",
+				ResponseType: reflect.TypeOf(NestedContainer{}),
+			})
+
+			config := SchemaGeneratorConfig{
+				VersionBundle: versionBundle,
+				TypeRegistry:  registry,
+			}
+			generator = NewSchemaGenerator(config)
+
+			baseSpec := &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{},
+				},
+			}
+
+			spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Parent container should have refs to nested types
+			containerSchema := spec.Components.Schemas["NestedContainer"]
+			Expect(containerSchema).NotTo(BeNil())
+
+			// Metadata should be a $ref
+			metadataRef := containerSchema.Value.Properties["metadata"]
+			Expect(metadataRef).NotTo(BeNil())
+			Expect(metadataRef.Ref).To(Equal("#/components/schemas/NestedMetadata"))
+		})
+
+		It("should use refs for array items", func() {
+			registry.Register("GET", "/containers", &epoch.EndpointDefinition{
+				Method:       "GET",
+				PathPattern:  "/containers",
+				ResponseType: reflect.TypeOf(NestedContainer{}),
+			})
+
+			config := SchemaGeneratorConfig{
+				VersionBundle: versionBundle,
+				TypeRegistry:  registry,
+			}
+			generator = NewSchemaGenerator(config)
+
+			baseSpec := &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{},
+				},
+			}
+
+			spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+			Expect(err).NotTo(HaveOccurred())
+
+			containerSchema := spec.Components.Schemas["NestedContainer"]
+			Expect(containerSchema).NotTo(BeNil())
+
+			// Items array should use $ref for array items
+			itemsRef := containerSchema.Value.Properties["items"]
+			Expect(itemsRef).NotTo(BeNil())
+			Expect(itemsRef.Value.Items).NotTo(BeNil())
+			Expect(itemsRef.Value.Items.Ref).To(Equal("#/components/schemas/NestedItem"))
+		})
+
+		It("should handle deeply nested types (3+ levels)", func() {
+			registry.Register("GET", "/containers", &epoch.EndpointDefinition{
+				Method:       "GET",
+				PathPattern:  "/containers",
+				ResponseType: reflect.TypeOf(NestedContainer{}),
+			})
+
+			config := SchemaGeneratorConfig{
+				VersionBundle: versionBundle,
+				TypeRegistry:  registry,
+			}
+			generator = NewSchemaGenerator(config)
+
+			baseSpec := &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{},
+				},
+			}
+
+			spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// All three levels should exist: Container -> Item -> SubItem
+			Expect(spec.Components.Schemas["NestedContainer"]).NotTo(BeNil())
+			Expect(spec.Components.Schemas["NestedItem"]).NotTo(BeNil())
+			Expect(spec.Components.Schemas["NestedSubItem"]).NotTo(BeNil())
+
+			// Verify refs at each level
+			itemSchema := spec.Components.Schemas["NestedItem"]
+			subItemsRef := itemSchema.Value.Properties["sub_items"]
+			Expect(subItemsRef.Value.Items.Ref).To(Equal("#/components/schemas/NestedSubItem"))
+		})
+
+		It("should preserve existing schemas when generating new nested ones", func() {
+			// Register endpoint
+			registry.Register("GET", "/containers", &epoch.EndpointDefinition{
+				Method:       "GET",
+				PathPattern:  "/containers",
+				ResponseType: reflect.TypeOf(NestedContainer{}),
+			})
+
+			config := SchemaGeneratorConfig{
+				VersionBundle: versionBundle,
+				TypeRegistry:  registry,
+			}
+			generator = NewSchemaGenerator(config)
+
+			// Base spec has only NestedMetadata
+			baseSpec := &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{
+						"ExistingSchema": openapi3.NewSchemaRef("", &openapi3.Schema{
+							Type: &openapi3.Types{"object"},
+							Properties: map[string]*openapi3.SchemaRef{
+								"field": openapi3.NewSchemaRef("", &openapi3.Schema{
+									Type: &openapi3.Types{"string"},
+								}),
+							},
+						}),
+					},
+				},
+			}
+
+			spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should preserve existing schema
+			Expect(spec.Components.Schemas["ExistingSchema"]).NotTo(BeNil())
+
+			// Should also generate new nested schemas
+			Expect(spec.Components.Schemas["NestedMetadata"]).NotTo(BeNil())
+			Expect(spec.Components.Schemas["NestedItem"]).NotTo(BeNil())
+		})
+	})
+
+	Describe("Direction Detection", func() {
+		var (
+			generator *SchemaGenerator
+			registry  *epoch.EndpointRegistry
+		)
+
+		BeforeEach(func() {
+			v1, _ := epoch.NewDateVersion("2024-01-01")
+			versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
+			registry = epoch.NewEndpointRegistry()
+
+			config := SchemaGeneratorConfig{
+				VersionBundle: versionBundle,
+				TypeRegistry:  registry,
+			}
+			generator = NewSchemaGenerator(config)
+		})
+
+		It("should detect request types", func() {
+			registry.Register("POST", "/users", &epoch.EndpointDefinition{
+				Method:      "POST",
+				PathPattern: "/users",
+				RequestType: reflect.TypeOf(TestUserRequest{}),
+			})
+
+			direction := generator.getDirectionForType(reflect.TypeOf(TestUserRequest{}))
+			Expect(direction).To(Equal(SchemaDirectionRequest))
+		})
+
+		It("should detect response types", func() {
+			registry.Register("GET", "/users", &epoch.EndpointDefinition{
+				Method:       "GET",
+				PathPattern:  "/users",
+				ResponseType: reflect.TypeOf(TestUserResponse{}),
+			})
+
+			direction := generator.getDirectionForType(reflect.TypeOf(TestUserResponse{}))
+			Expect(direction).To(Equal(SchemaDirectionResponse))
+		})
+
+		It("should default to response for unknown types", func() {
+			// Type not registered in any endpoint
+			direction := generator.getDirectionForType(reflect.TypeOf(NestedMetadata{}))
+			Expect(direction).To(Equal(SchemaDirectionResponse))
+		})
+
+		It("should handle types used in both request and response", func() {
+			// Register same type as both request and response
+			registry.Register("POST", "/users", &epoch.EndpointDefinition{
+				Method:       "POST",
+				PathPattern:  "/users",
+				RequestType:  reflect.TypeOf(TestUserRequest{}),
+				ResponseType: reflect.TypeOf(TestUserRequest{}),
+			})
+
+			// Should return request since it checks request first
+			direction := generator.getDirectionForType(reflect.TypeOf(TestUserRequest{}))
+			Expect(direction).To(Equal(SchemaDirectionRequest))
 		})
 	})
 })

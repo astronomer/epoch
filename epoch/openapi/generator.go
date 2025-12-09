@@ -16,8 +16,12 @@ type SchemaGenerator struct {
 	transformer *VersionTransformer
 	writer      *Writer
 
-	// Cache of generated schemas per version per type
-	schemaCache map[string]map[reflect.Type]*openapi3.SchemaRef
+	// Nested type registry for two-pass generation
+	// Maps version -> type -> component name
+	nestedTypeRegistry map[string]map[reflect.Type]string
+
+	// Track which types need component schemas generated
+	typesToGenerate map[string][]reflect.Type
 }
 
 // NewSchemaGenerator creates a new schema generator
@@ -32,11 +36,12 @@ func NewSchemaGenerator(config SchemaGeneratorConfig) *SchemaGenerator {
 	}
 
 	return &SchemaGenerator{
-		config:      &config,
-		typeParser:  NewTypeParser(),
-		transformer: NewVersionTransformer(config.VersionBundle),
-		writer:      NewWriter(config.OutputFormat),
-		schemaCache: make(map[string]map[reflect.Type]*openapi3.SchemaRef),
+		config:             &config,
+		typeParser:         NewTypeParser(),
+		transformer:        NewVersionTransformer(config.VersionBundle),
+		writer:             NewWriter(config.OutputFormat),
+		nestedTypeRegistry: make(map[string]map[reflect.Type]string),
+		typesToGenerate:    make(map[string][]reflect.Type),
 	}
 }
 
@@ -67,6 +72,7 @@ func (sg *SchemaGenerator) GenerateVersionedSpecs(baseSpec *openapi3.T) (map[str
 
 // GenerateSpecForVersion generates an OpenAPI spec for a specific version
 // Uses smart transform: transforms existing schemas, generates missing ones
+// Implements two-pass approach: collect all types first, then generate with refs
 func (sg *SchemaGenerator) GenerateSpecForVersion(baseSpec *openapi3.T, version *epoch.Version) (*openapi3.T, error) {
 	// Clone the base spec
 	spec := sg.cloneSpec(baseSpec)
@@ -82,10 +88,96 @@ func (sg *SchemaGenerator) GenerateSpecForVersion(baseSpec *openapi3.T, version 
 	// Get all registered types
 	types := sg.getRegisteredTypes()
 
-	// Process each registered type
+	// PASS 1: Collect all types that need component schemas (including nested types)
+	for _, typ := range types {
+		sg.collectNestedTypesForGeneration(typ, version)
+	}
+
+	// PASS 2: Generate component schemas for all nested types in three sub-passes
+	// Sub-pass 2a: Parse and store base schemas (no refs, no transformations)
+	versionKey := version.String()
+	baseSchemas := make(map[reflect.Type]*openapi3.Schema)
+
+	for _, nestedType := range sg.typesToGenerate[versionKey] {
+		// Parse the base schema
+		sg.typeParser.Reset()
+		schemaRef, err := sg.typeParser.ParseType(nestedType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse nested type %s: %w", nestedType.Name(), err)
+		}
+
+		// Get the base schema
+		var baseSchema *openapi3.Schema
+		if schemaRef.Ref != "" {
+			components := sg.typeParser.GetComponents()
+			componentName := strings.TrimPrefix(schemaRef.Ref, "#/components/schemas/")
+			if comp, ok := components[componentName]; ok && comp.Value != nil {
+				baseSchema = comp.Value
+			}
+		} else {
+			baseSchema = schemaRef.Value
+		}
+
+		if baseSchema != nil {
+			baseSchemas[nestedType] = CloneSchema(baseSchema)
+		}
+	}
+
+	// Sub-pass 2b: Add all base schemas to components (so refs can resolve in PASS 4)
+	for nestedType, schema := range baseSchemas {
+		componentName := sg.getComponentNameForType(versionKey, nestedType)
+		if componentName == "" {
+			continue
+		}
+
+		// Add the base schema to components
+		spec.Components.Schemas[componentName] = openapi3.NewSchemaRef("", schema)
+	}
+
+	// Sub-pass 2c: Apply transformations to all schemas (refs will be replaced in PASS 4)
+	for nestedType, schema := range baseSchemas {
+		componentName := sg.getComponentNameForType(versionKey, nestedType)
+		if componentName == "" {
+			continue
+		}
+
+		// For nested types, apply BOTH request and response transformations to create
+		// a superset schema that works in both contexts. This handles cases where the
+		// same nested type appears in both request and response types.
+		transformedSchema := CloneSchema(schema)
+
+		// Apply request transformations
+		transformedSchema, err := sg.transformer.TransformSchemaForVersion(transformedSchema, nestedType, version, SchemaDirectionRequest)
+		if err != nil {
+			return nil, fmt.Errorf("failed to transform nested schema %s (request): %w", nestedType.Name(), err)
+		}
+
+		// Apply response transformations on top
+		transformedSchema, err = sg.transformer.TransformSchemaForVersion(transformedSchema, nestedType, version, SchemaDirectionResponse)
+		if err != nil {
+			return nil, fmt.Errorf("failed to transform nested schema %s (response): %w", nestedType.Name(), err)
+		}
+
+		// Update the component with the transformed schema
+		spec.Components.Schemas[componentName] = openapi3.NewSchemaRef("", transformedSchema)
+	}
+
+	// PASS 3: Process top-level registered types (without ref replacement yet)
 	for _, typ := range types {
 		if err := sg.processTypeForVersion(baseSpec, spec, typ, version); err != nil {
 			return nil, err
+		}
+	}
+
+	// PASS 4: Now that all components exist, replace nested schemas with refs in ALL schemas
+	for componentName, schemaRef := range spec.Components.Schemas {
+		if schemaRef == nil || schemaRef.Value == nil {
+			continue
+		}
+
+		// Replace any remaining inline schemas with refs
+		if err := sg.replaceNestedSchemasWithRefsGeneric(schemaRef.Value, spec); err != nil {
+			return nil, fmt.Errorf("failed to replace refs in %s: %w", componentName, err)
 		}
 	}
 
@@ -110,14 +202,17 @@ func (sg *SchemaGenerator) processTypeForVersion(
 	if existingSchema != nil {
 		// TRANSFORM PATH: Schema exists, transform it in place
 
-		// Resolve any $refs in the existing schema using other schemas from base spec
-		resolvedSchema := sg.resolveRefsFromBaseSpec(existingSchema, baseSpec)
+		// Clone the schema
+		clonedSchema := CloneSchema(existingSchema)
+
+		// DON'T replace refs here - will be done in PASS 4 after all components exist
 
 		// Determine correct direction based on type's role (request vs response)
 		direction := sg.getDirectionForType(typ)
 
+		// Apply transformations
 		transformedSchema, err := sg.transformer.TransformSchemaForVersion(
-			resolvedSchema, typ, version, direction)
+			clonedSchema, typ, version, direction)
 		if err != nil {
 			return fmt.Errorf("failed to transform schema %s: %w", mappedSchemaName, err)
 		}
@@ -125,66 +220,28 @@ func (sg *SchemaGenerator) processTypeForVersion(
 		// Replace with same name (preserves endpoint references)
 		spec.Components.Schemas[mappedSchemaName] = openapi3.NewSchemaRef("", transformedSchema)
 	} else {
-		// FALLBACK PATH: Schema doesn't exist, generate from scratch
+		// FALLBACK PATH: Schema doesn't exist in base spec
+
+		schemaKey := goTypeName
+
+		if _, exists := spec.Components.Schemas[schemaKey]; exists {
+			// Already generated as a nested type in PASS 2, skip to avoid duplication
+			return nil
+		}
 
 		// Determine correct direction based on type's role (request vs response)
 		direction := sg.getDirectionForType(typ)
 
-		generatedSchema, err := sg.GetSchemaForType(typ, version, direction)
+		// Generate schema (without refs - will be done in PASS 4)
+		generatedSchema, err := sg.generateSchemaWithoutRefs(typ, version, direction)
 		if err != nil {
 			return fmt.Errorf("failed to generate schema for %s: %w", goTypeName, err)
 		}
 
-		schemaKey := goTypeName
 		spec.Components.Schemas[schemaKey] = openapi3.NewSchemaRef("", generatedSchema)
 	}
 
 	return nil
-}
-
-// resolveRefsFromBaseSpec resolves $refs using schemas from the base spec
-func (sg *SchemaGenerator) resolveRefsFromBaseSpec(schema *openapi3.Schema, baseSpec *openapi3.T) *openapi3.Schema {
-	if schema == nil || baseSpec == nil || baseSpec.Components == nil || baseSpec.Components.Schemas == nil {
-		return schema
-	}
-
-	// Clone the schema first
-	result := CloneSchema(schema)
-
-	// Resolve $refs in properties
-	if result.Properties != nil {
-		for propName, propRef := range result.Properties {
-			if propRef.Ref != "" {
-				// It's a $ref - resolve it from base spec
-				componentName := strings.TrimPrefix(propRef.Ref, "#/components/schemas/")
-				if comp, ok := baseSpec.Components.Schemas[componentName]; ok && comp.Value != nil {
-					// Recursively resolve nested $refs
-					resolvedProp := sg.resolveRefsFromBaseSpec(comp.Value, baseSpec)
-					result.Properties[propName] = openapi3.NewSchemaRef("", resolvedProp)
-				}
-			} else if propRef.Value != nil {
-				// Recursively resolve nested objects
-				resolvedProp := sg.resolveRefsFromBaseSpec(propRef.Value, baseSpec)
-				result.Properties[propName] = openapi3.NewSchemaRef("", resolvedProp)
-			}
-		}
-	}
-
-	// Resolve $refs in array items
-	if result.Items != nil {
-		if result.Items.Ref != "" {
-			componentName := strings.TrimPrefix(result.Items.Ref, "#/components/schemas/")
-			if comp, ok := baseSpec.Components.Schemas[componentName]; ok && comp.Value != nil {
-				resolvedItems := sg.resolveRefsFromBaseSpec(comp.Value, baseSpec)
-				result.Items = openapi3.NewSchemaRef("", resolvedItems)
-			}
-		} else if result.Items.Value != nil {
-			resolvedItems := sg.resolveRefsFromBaseSpec(result.Items.Value, baseSpec)
-			result.Items = openapi3.NewSchemaRef("", resolvedItems)
-		}
-	}
-
-	return result
 }
 
 // findSchemaInSpec looks for a schema by name in the base spec
@@ -201,112 +258,6 @@ func (sg *SchemaGenerator) findSchemaInSpec(spec *openapi3.T, schemaName string)
 
 	// Return a clone to avoid modifying the original
 	return CloneSchema(schemaRef.Value)
-}
-
-// GetSchemaForType generates a schema for a specific type at a specific version and direction
-func (sg *SchemaGenerator) GetSchemaForType(
-	typ reflect.Type,
-	version *epoch.Version,
-	direction SchemaDirection,
-) (*openapi3.Schema, error) {
-	// Check cache
-	versionKey := version.String()
-	if schemas, ok := sg.schemaCache[versionKey]; ok {
-		if cached, ok := schemas[typ]; ok && cached.Value != nil {
-			return cached.Value, nil
-		}
-	}
-
-	// Parse the HEAD version schema first
-	sg.typeParser.Reset() // Reset to get fresh schema
-	schemaRef, err := sg.typeParser.ParseType(typ)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse type: %w", err)
-	}
-
-	// Get all components for resolving $refs
-	components := sg.typeParser.GetComponents()
-
-	// If it's a $ref, we need to get the actual schema from components
-	var baseSchema *openapi3.Schema
-	if schemaRef.Ref != "" {
-		// Extract component name from $ref
-		componentName := strings.TrimPrefix(schemaRef.Ref, "#/components/schemas/")
-		if comp, ok := components[componentName]; ok && comp.Value != nil {
-			baseSchema = comp.Value
-		} else {
-			return nil, fmt.Errorf("component %s not found", componentName)
-		}
-	} else {
-		baseSchema = schemaRef.Value
-	}
-
-	if baseSchema == nil {
-		return nil, fmt.Errorf("no schema found for type %s", typ.Name())
-	}
-
-	// Resolve all $refs inline to avoid unresolved reference issues
-	// when generating versioned schemas from scratch
-	resolvedSchema := sg.resolveRefsInSchema(baseSchema, components)
-
-	// Apply version transformations
-	transformedSchema, err := sg.transformer.TransformSchemaForVersion(resolvedSchema, typ, version, direction)
-	if err != nil {
-		return nil, fmt.Errorf("failed to transform schema: %w", err)
-	}
-
-	// Cache the result
-	if sg.schemaCache[versionKey] == nil {
-		sg.schemaCache[versionKey] = make(map[reflect.Type]*openapi3.SchemaRef)
-	}
-	sg.schemaCache[versionKey][typ] = openapi3.NewSchemaRef("", transformedSchema)
-
-	return transformedSchema, nil
-}
-
-// resolveRefsInSchema recursively resolves all $ref references to inline schemas
-func (sg *SchemaGenerator) resolveRefsInSchema(schema *openapi3.Schema, components map[string]*openapi3.SchemaRef) *openapi3.Schema {
-	if schema == nil {
-		return nil
-	}
-
-	// Clone the schema to avoid modifying original
-	result := CloneSchema(schema)
-
-	// Resolve $refs in properties
-	if result.Properties != nil {
-		for propName, propRef := range result.Properties {
-			if propRef.Ref != "" {
-				// It's a $ref - resolve it
-				componentName := strings.TrimPrefix(propRef.Ref, "#/components/schemas/")
-				if comp, ok := components[componentName]; ok && comp.Value != nil {
-					// Recursively resolve nested $refs
-					resolvedProp := sg.resolveRefsInSchema(comp.Value, components)
-					result.Properties[propName] = openapi3.NewSchemaRef("", resolvedProp)
-				}
-			} else if propRef.Value != nil {
-				// Recursively resolve nested objects
-				resolvedProp := sg.resolveRefsInSchema(propRef.Value, components)
-				result.Properties[propName] = openapi3.NewSchemaRef("", resolvedProp)
-			}
-		}
-	}
-
-	// Resolve $refs in array items
-	if result.Items != nil {
-		if result.Items.Ref != "" {
-			componentName := strings.TrimPrefix(result.Items.Ref, "#/components/schemas/")
-			if comp, ok := components[componentName]; ok && comp.Value != nil {
-				resolvedItems := sg.resolveRefsInSchema(comp.Value, components)
-				result.Items = openapi3.NewSchemaRef("", resolvedItems)
-			}
-		} else if result.Items.Value != nil {
-			resolvedItems := sg.resolveRefsInSchema(result.Items.Value, components)
-			result.Items = openapi3.NewSchemaRef("", resolvedItems)
-		}
-	}
-
-	return result
 }
 
 // getRegisteredTypes extracts all types from the endpoint registry
@@ -394,27 +345,6 @@ func (sg *SchemaGenerator) collectNestedTypes(rootType reflect.Type, typeMap map
 	}
 }
 
-// getVersionSuffix returns a suffix for versioned schema names
-// e.g., "V20240101" for date "2024-01-01"
-func (sg *SchemaGenerator) getVersionSuffix(version *epoch.Version) string {
-	if version.IsHead {
-		return ""
-	}
-
-	// Remove hyphens and special characters from version string
-	versionStr := version.String()
-	versionStr = strings.ReplaceAll(versionStr, "-", "")
-	versionStr = strings.ReplaceAll(versionStr, ".", "")
-	versionStr = strings.ReplaceAll(versionStr, "v", "")
-
-	// Add prefix
-	if sg.config.ComponentNamePrefix != "" {
-		return fmt.Sprintf("%sV%s", sg.config.ComponentNamePrefix, versionStr)
-	}
-
-	return fmt.Sprintf("V%s", versionStr)
-}
-
 // cloneSpec creates a shallow clone of an OpenAPI spec
 // We clone to avoid modifying the original base spec
 func (sg *SchemaGenerator) cloneSpec(original *openapi3.T) *openapi3.T {
@@ -476,4 +406,298 @@ func (sg *SchemaGenerator) getDirectionForType(typ reflect.Type) SchemaDirection
 
 	// Default to response if unknown (safer default)
 	return SchemaDirectionResponse
+}
+
+// registerNestedType registers a nested type for component generation
+func (sg *SchemaGenerator) registerNestedType(version string, typ reflect.Type, componentName string) {
+	if sg.nestedTypeRegistry[version] == nil {
+		sg.nestedTypeRegistry[version] = make(map[reflect.Type]string)
+	}
+	sg.nestedTypeRegistry[version][typ] = componentName
+
+	// Track for generation if not already tracked
+	found := false
+	for _, t := range sg.typesToGenerate[version] {
+		if t == typ {
+			found = true
+			break
+		}
+	}
+	if !found {
+		sg.typesToGenerate[version] = append(sg.typesToGenerate[version], typ)
+	}
+}
+
+// getComponentNameForType returns the component name for a type, or empty if not registered
+func (sg *SchemaGenerator) getComponentNameForType(version string, typ reflect.Type) string {
+	if sg.nestedTypeRegistry[version] == nil {
+		return ""
+	}
+	return sg.nestedTypeRegistry[version][typ]
+}
+
+// generateComponentNameForType generates a component name for a nested type
+func (sg *SchemaGenerator) generateComponentNameForType(typ reflect.Type) string {
+	// Dereference pointer
+	if typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
+
+	// Get base type name
+	typeName := typ.Name()
+
+	// Handle anonymous types
+	if typeName == "" {
+		switch typ.Kind() {
+		case reflect.Slice, reflect.Array:
+			elemType := typ.Elem()
+			elemName := sg.generateComponentNameForType(elemType)
+			return elemName + "Array"
+		case reflect.Struct:
+			// Generate synthetic name based on package path
+			if typ.PkgPath() != "" {
+				parts := strings.Split(typ.PkgPath(), "/")
+				pkgName := parts[len(parts)-1]
+				return pkgName + "AnonymousStruct"
+			}
+			return "AnonymousStruct"
+		default:
+			return "AnonymousType"
+		}
+	}
+
+	return typeName
+}
+
+// collectNestedTypesForGeneration collects all nested types that need component generation
+// Uses visited map to prevent infinite recursion on circular dependencies
+func (sg *SchemaGenerator) collectNestedTypesForGeneration(typ reflect.Type, version *epoch.Version) {
+	// Use a visited map to prevent infinite recursion
+	visited := make(map[reflect.Type]bool)
+	sg.collectNestedTypesRecursive(typ, version, visited)
+}
+
+// collectNestedTypesRecursive is the internal recursive implementation with cycle detection
+func (sg *SchemaGenerator) collectNestedTypesRecursive(typ reflect.Type, version *epoch.Version, visited map[reflect.Type]bool) {
+	if typ == nil {
+		return
+	}
+
+	// Dereference pointer
+	if typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
+
+	// Check if we've already visited this type (cycle detection)
+	if visited[typ] {
+		return
+	}
+	visited[typ] = true
+
+	// Only process struct types for nested discovery
+	if typ.Kind() != reflect.Struct {
+		return
+	}
+
+	versionKey := version.String()
+
+	// Get nested arrays and objects from the type
+	nestedArrays, nestedObjects := epoch.BuildNestedTypeMaps(typ)
+
+	// Register nested arrays
+	for _, arrayItemType := range nestedArrays {
+		// Dereference if pointer
+		itemType := arrayItemType
+		if itemType.Kind() == reflect.Ptr {
+			itemType = itemType.Elem()
+		}
+
+		// Generate component name
+		componentName := sg.generateComponentNameForType(itemType)
+		sg.registerNestedType(versionKey, itemType, componentName)
+
+		// Recursively collect nested types (with cycle detection)
+		sg.collectNestedTypesRecursive(itemType, version, visited)
+	}
+
+	// Register nested objects
+	for _, objectType := range nestedObjects {
+		// Dereference if pointer
+		objType := objectType
+		if objType.Kind() == reflect.Ptr {
+			objType = objType.Elem()
+		}
+
+		// Generate component name
+		componentName := sg.generateComponentNameForType(objType)
+		sg.registerNestedType(versionKey, objType, componentName)
+
+		// Recursively collect nested types (with cycle detection)
+		sg.collectNestedTypesRecursive(objType, version, visited)
+	}
+}
+
+// generateSchemaWithoutRefs generates a schema WITHOUT replacing nested schemas with refs
+// This is used for initial generation before refs are available
+func (sg *SchemaGenerator) generateSchemaWithoutRefs(
+	typ reflect.Type,
+	version *epoch.Version,
+	direction SchemaDirection,
+) (*openapi3.Schema, error) {
+	// Parse the HEAD version schema first
+	sg.typeParser.Reset()
+	schemaRef, err := sg.typeParser.ParseType(typ)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse type: %w", err)
+	}
+
+	// Get the base schema
+	var baseSchema *openapi3.Schema
+	if schemaRef.Ref != "" {
+		// Extract component name from $ref
+		components := sg.typeParser.GetComponents()
+		componentName := strings.TrimPrefix(schemaRef.Ref, "#/components/schemas/")
+		if comp, ok := components[componentName]; ok && comp.Value != nil {
+			baseSchema = comp.Value
+		} else {
+			return nil, fmt.Errorf("component %s not found", componentName)
+		}
+	} else {
+		baseSchema = schemaRef.Value
+	}
+
+	if baseSchema == nil {
+		return nil, fmt.Errorf("no schema found for type %s", typ.Name())
+	}
+
+	// Clone the schema
+	schema := CloneSchema(baseSchema)
+
+	// Apply version transformations (without ref replacement)
+	transformedSchema, err := sg.transformer.TransformSchemaForVersion(schema, typ, version, direction)
+	if err != nil {
+		return nil, fmt.Errorf("failed to transform schema: %w", err)
+	}
+
+	return transformedSchema, nil
+}
+
+// replaceNestedSchemasWithRefsGeneric replaces inline nested schemas with $ref pointers
+// This version doesn't require the parent Go type - it infers refs from inline object/array schemas
+func (sg *SchemaGenerator) replaceNestedSchemasWithRefsGeneric(
+	schema *openapi3.Schema,
+	spec *openapi3.T,
+) error {
+	if schema == nil {
+		return nil
+	}
+
+	if schema.Properties == nil {
+		return nil
+	}
+
+	// Scan properties for inline object schemas that should be refs
+	for propName, propRef := range schema.Properties {
+		if propRef == nil {
+			continue
+		}
+
+		// Skip if it's already a $ref
+		if propRef.Ref != "" {
+			continue
+		}
+
+		propSchema := propRef.Value
+		if propSchema == nil {
+			continue
+		}
+
+		// Check if it's an inline object schema
+		if propSchema.Type != nil && len(*propSchema.Type) > 0 {
+			typeStr := (*propSchema.Type)[0]
+
+			if typeStr == "object" && propSchema.Properties != nil {
+				// This is an inline object - try to find a matching component
+				// Look for components that match this schema structure
+				matchingComponentName := sg.findMatchingComponent(propSchema, spec)
+				if matchingComponentName != "" {
+					// Replace with $ref
+					schema.Properties[propName] = &openapi3.SchemaRef{
+						Ref: fmt.Sprintf("#/components/schemas/%s", matchingComponentName),
+					}
+				}
+			} else if typeStr == "array" && propSchema.Items != nil && propSchema.Items.Value != nil {
+				// Check if array items are inline objects
+				itemSchema := propSchema.Items.Value
+				if itemSchema.Type != nil && len(*itemSchema.Type) > 0 && (*itemSchema.Type)[0] == "object" {
+					// Inline object in array - try to find matching component
+					matchingComponentName := sg.findMatchingComponent(itemSchema, spec)
+					if matchingComponentName != "" {
+						// Replace items with $ref
+						propSchema.Items = &openapi3.SchemaRef{
+							Ref: fmt.Sprintf("#/components/schemas/%s", matchingComponentName),
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// findMatchingComponent finds a component schema that matches the given inline schema structure
+// This is used to deduplicate inline schemas by finding their component equivalents
+//
+// LIMITATION: This uses a property-name-only heuristic which could produce false positives.
+// If two different types have identical property names but different types (e.g., User.id: int
+// vs Product.id: string), they could incorrectly match. In practice, this is rare because:
+// - The TypeParser generates component schemas for named Go types, preserving type identity
+// - Inline schemas only occur for anonymous structs or when parsing fails
+// - Property name collisions across different business domains are uncommon
+//
+// If false positives occur, the workaround is to ensure all nested types are named Go structs
+// rather than anonymous inline definitions.
+func (sg *SchemaGenerator) findMatchingComponent(
+	inlineSchema *openapi3.Schema,
+	spec *openapi3.T,
+) string {
+	if inlineSchema == nil || inlineSchema.Properties == nil {
+		return ""
+	}
+
+	// Get the property names from the inline schema
+	inlineProps := make(map[string]bool)
+	for propName := range inlineSchema.Properties {
+		inlineProps[propName] = true
+	}
+
+	// Search components for a matching schema
+	for componentName, componentRef := range spec.Components.Schemas {
+		if componentRef == nil || componentRef.Value == nil || componentRef.Value.Properties == nil {
+			continue
+		}
+
+		// Check if properties match
+		componentProps := make(map[string]bool)
+		for propName := range componentRef.Value.Properties {
+			componentProps[propName] = true
+		}
+
+		// Simple heuristic: if property names match, it's likely the same type
+		if len(inlineProps) == len(componentProps) {
+			allMatch := true
+			for propName := range inlineProps {
+				if !componentProps[propName] {
+					allMatch = false
+					break
+				}
+			}
+			if allMatch {
+				return componentName
+			}
+		}
+	}
+
+	return ""
 }

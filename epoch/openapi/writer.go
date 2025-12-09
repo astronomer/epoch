@@ -26,11 +26,6 @@ func NewWriter(format string) *Writer {
 
 // WriteSpec writes an OpenAPI spec to a file
 func (w *Writer) WriteSpec(spec *openapi3.T, filepath string) error {
-	// Validate the spec first
-	if err := w.ValidateSpec(spec); err != nil {
-		return fmt.Errorf("spec validation failed: %w", err)
-	}
-
 	var data []byte
 	var err error
 
@@ -43,6 +38,21 @@ func (w *Writer) WriteSpec(spec *openapi3.T, filepath string) error {
 
 	if err != nil {
 		return fmt.Errorf("failed to marshal spec: %w", err)
+	}
+
+	// Validate by loading the marshalled data
+	// This ensures we validate the actual output, not in-memory state
+	loader := openapi3.NewLoader()
+	loader.IsExternalRefsAllowed = true
+
+	validationSpec, err := loader.LoadFromData(data)
+
+	if err != nil {
+		return fmt.Errorf("failed to load spec for validation: %w", err)
+	}
+
+	if err := validationSpec.Validate(context.Background(), openapi3.DisableExamplesValidation()); err != nil {
+		return fmt.Errorf("spec validation failed: %w", err)
 	}
 
 	// Write to file

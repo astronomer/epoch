@@ -15,13 +15,6 @@ type SchemaGeneratorConfig struct {
 	// OutputFormat specifies the output format ("yaml" or "json")
 	OutputFormat string
 
-	// IncludeMigrationMetadata adds x-epoch-migrations extensions to schemas (optional)
-	IncludeMigrationMetadata bool
-
-	// ComponentNamePrefix is added to all generated component names (e.g., "Astro")
-	// Results in component names like "AstroUser" instead of "User"
-	ComponentNamePrefix string
-
 	// SchemaNameMapper maps Go type names to OpenAPI schema names.
 	// Use this when your base spec uses different naming conventions.
 	// Common use case: Swag adds package prefixes to schema names.
@@ -31,7 +24,7 @@ type SchemaGeneratorConfig struct {
 	//
 	// Behavior:
 	// - If schema with mapped name exists in base spec → transforms it in place
-	// - If schema doesn't exist → generates from scratch using Go type name + version suffix
+	// - If schema doesn't exist → generates from scratch using Go type name
 	SchemaNameMapper func(typeName string) string
 }
 
