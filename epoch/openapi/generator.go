@@ -135,11 +135,7 @@ func (sg *SchemaGenerator) processTypeForVersion(
 			return fmt.Errorf("failed to generate schema for %s: %w", goTypeName, err)
 		}
 
-		// Use versioned name for generated schemas
 		schemaKey := goTypeName
-		if !version.IsHead {
-			schemaKey += sg.getVersionSuffix(version)
-		}
 		spec.Components.Schemas[schemaKey] = openapi3.NewSchemaRef("", generatedSchema)
 	}
 
