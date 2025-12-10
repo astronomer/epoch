@@ -488,8 +488,8 @@ var _ = Describe("SchemaGenerator", func() {
 				v1Spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
 				Expect(err).NotTo(HaveOccurred())
 
-				// Should generate schema from scratch with versioned name
-				generatedSchema := v1Spec.Components.Schemas["UpdateExampleRequestV10"]
+				// Should generate schema from scratch using Go type name
+				generatedSchema := v1Spec.Components.Schemas["UpdateExampleRequest"]
 				Expect(generatedSchema).NotTo(BeNil())
 				Expect(generatedSchema.Value).NotTo(BeNil())
 			})
@@ -546,8 +546,8 @@ var _ = Describe("SchemaGenerator", func() {
 				// ExistingRequest: should be transformed in place
 				Expect(v1Spec.Components.Schemas["versionedapi.ExistingRequest"]).NotTo(BeNil())
 
-				// MissingRequest: should be generated with versioned name
-				Expect(v1Spec.Components.Schemas["MissingRequestV10"]).NotTo(BeNil())
+				// MissingRequest: should be generated using Go type name
+				Expect(v1Spec.Components.Schemas["MissingRequest"]).NotTo(BeNil())
 			})
 		})
 
@@ -1259,6 +1259,162 @@ var _ = Describe("SchemaGenerator", func() {
 			// Should also generate new nested schemas
 			Expect(spec.Components.Schemas["NestedMetadata"]).NotTo(BeNil())
 			Expect(spec.Components.Schemas["NestedItem"]).NotTo(BeNil())
+		})
+	})
+
+	Describe("Array Return Types", func() {
+		var (
+			generator *SchemaGenerator
+			registry  *epoch.EndpointRegistry
+			v1        *epoch.Version
+		)
+
+		BeforeEach(func() {
+			v1, _ = epoch.NewDateVersion("2024-01-01")
+			versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
+			registry = epoch.NewEndpointRegistry()
+
+			config := SchemaGeneratorConfig{
+				VersionBundle: versionBundle,
+				TypeRegistry:  registry,
+			}
+			generator = NewSchemaGenerator(config)
+		})
+
+		It("should not create empty-named schemas for array response types", func() {
+			// Register endpoint that returns an array
+			arrayType := reflect.TypeOf([]TestUserResponse{})
+			registry.Register("GET", "/users", &epoch.EndpointDefinition{
+				Method:       "GET",
+				PathPattern:  "/users",
+				ResponseType: arrayType,
+			})
+
+			baseSpec := &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{},
+				},
+			}
+
+			spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should NOT have a schema with empty name
+			_, hasEmptySchema := spec.Components.Schemas[""]
+			Expect(hasEmptySchema).To(BeFalse())
+		})
+
+		It("should register element type as component for array responses", func() {
+			// Register endpoint that returns an array
+			arrayType := reflect.TypeOf([]TestUserResponse{})
+			registry.Register("GET", "/users", &epoch.EndpointDefinition{
+				Method:       "GET",
+				PathPattern:  "/users",
+				ResponseType: arrayType,
+			})
+
+			baseSpec := &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{},
+				},
+			}
+
+			spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should have TestUserResponse as a component
+			userResponseSchema := spec.Components.Schemas["TestUserResponse"]
+			Expect(userResponseSchema).NotTo(BeNil())
+			Expect(userResponseSchema.Value).NotTo(BeNil())
+			Expect(userResponseSchema.Value.Type).NotTo(BeNil())
+			Expect((*userResponseSchema.Value.Type)[0]).To(Equal("object"))
+		})
+
+		It("should handle array request types", func() {
+			// Register endpoint that accepts an array
+			arrayType := reflect.TypeOf([]TestUserRequest{})
+			registry.Register("POST", "/users/bulk", &epoch.EndpointDefinition{
+				Method:      "POST",
+				PathPattern: "/users/bulk",
+				RequestType: arrayType,
+			})
+
+			baseSpec := &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{},
+				},
+			}
+
+			spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should NOT have a schema with empty name
+			_, hasEmptySchema := spec.Components.Schemas[""]
+			Expect(hasEmptySchema).To(BeFalse())
+
+			// Should have TestUserRequest as a component
+			userRequestSchema := spec.Components.Schemas["TestUserRequest"]
+			Expect(userRequestSchema).NotTo(BeNil())
+		})
+
+		It("should handle nested arrays with custom types", func() {
+			// Register endpoint that returns an array of nested items
+			arrayType := reflect.TypeOf([]NestedItem{})
+			registry.Register("GET", "/items", &epoch.EndpointDefinition{
+				Method:       "GET",
+				PathPattern:  "/items",
+				ResponseType: arrayType,
+			})
+
+			baseSpec := &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{},
+				},
+			}
+
+			spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should NOT have a schema with empty name
+			_, hasEmptySchema := spec.Components.Schemas[""]
+			Expect(hasEmptySchema).To(BeFalse())
+
+			// Should have NestedItem and all its nested types
+			Expect(spec.Components.Schemas["NestedItem"]).NotTo(BeNil())
+			Expect(spec.Components.Schemas["NestedSubItem"]).NotTo(BeNil())
+			Expect(spec.Components.Schemas["NestedMetadata"]).NotTo(BeNil())
+		})
+
+		It("should not register primitive array elements as schemas", func() {
+			// Register endpoint that returns an array of strings
+			arrayType := reflect.TypeOf([]string{})
+			registry.Register("GET", "/tags", &epoch.EndpointDefinition{
+				Method:       "GET",
+				PathPattern:  "/tags",
+				ResponseType: arrayType,
+			})
+
+			baseSpec := &openapi3.T{
+				OpenAPI: "3.0.3",
+				Info:    &openapi3.Info{Title: "Test", Version: "1.0"},
+				Components: &openapi3.Components{
+					Schemas: openapi3.Schemas{},
+				},
+			}
+
+			spec, err := generator.GenerateSpecForVersion(baseSpec, v1)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should NOT have any schemas since string is primitive
+			Expect(len(spec.Components.Schemas)).To(Equal(0))
 		})
 	})
 
