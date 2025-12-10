@@ -191,6 +191,12 @@ func (sg *SchemaGenerator) processTypeForVersion(
 	typ reflect.Type,
 	version *epoch.Version,
 ) error {
+	// Skip slice/array types - they don't become named schemas
+	// Their element types are handled separately in getRegisteredTypes()
+	if typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array {
+		return nil
+	}
+
 	goTypeName := typ.Name()
 
 	// Map to schema name in spec (e.g., "versionedapi.UpdateExampleRequest")
@@ -271,19 +277,51 @@ func (sg *SchemaGenerator) getRegisteredTypes() []reflect.Type {
 
 	for _, endpoint := range endpoints {
 		if endpoint.RequestType != nil {
-			if !typeMap[endpoint.RequestType] {
-				typeMap[endpoint.RequestType] = true
-				types = append(types, endpoint.RequestType)
+			reqType := endpoint.RequestType
+			// For slice/array types, register the element type instead
+			if reqType.Kind() == reflect.Slice || reqType.Kind() == reflect.Array {
+				elemType := reqType.Elem()
+				if elemType.Kind() == reflect.Ptr {
+					elemType = elemType.Elem()
+				}
+				// Only add element type if it's a struct (not primitives)
+				if elemType.Kind() == reflect.Struct && !typeMap[elemType] {
+					typeMap[elemType] = true
+					types = append(types, elemType)
+				}
+				sg.collectNestedTypes(elemType, typeMap, &types)
+			} else {
+				// Existing logic for non-array types
+				if !typeMap[reqType] {
+					typeMap[reqType] = true
+					types = append(types, reqType)
+				}
+				sg.collectNestedTypes(reqType, typeMap, &types)
 			}
-			sg.collectNestedTypes(endpoint.RequestType, typeMap, &types)
 		}
 
 		if endpoint.ResponseType != nil {
-			if !typeMap[endpoint.ResponseType] {
-				typeMap[endpoint.ResponseType] = true
-				types = append(types, endpoint.ResponseType)
+			respType := endpoint.ResponseType
+			// For slice/array types, register the element type instead
+			if respType.Kind() == reflect.Slice || respType.Kind() == reflect.Array {
+				elemType := respType.Elem()
+				if elemType.Kind() == reflect.Ptr {
+					elemType = elemType.Elem()
+				}
+				// Only add element type if it's a struct (not primitives)
+				if elemType.Kind() == reflect.Struct && !typeMap[elemType] {
+					typeMap[elemType] = true
+					types = append(types, elemType)
+				}
+				sg.collectNestedTypes(elemType, typeMap, &types)
+			} else {
+				// Existing logic for non-array types
+				if !typeMap[respType] {
+					typeMap[respType] = true
+					types = append(types, respType)
+				}
+				sg.collectNestedTypes(respType, typeMap, &types)
 			}
-			sg.collectNestedTypes(endpoint.ResponseType, typeMap, &types)
 		}
 
 		for _, itemType := range endpoint.ResponseNestedArrays {
