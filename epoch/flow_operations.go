@@ -124,8 +124,8 @@ func (op *RequestRemoveField) Inverse() RequestToNextVersionOperation {
 // RequestRenameField renames a field when request migrates from client to HEAD
 // Use case: HEAD version renamed "name" to "full_name"
 type RequestRenameField struct {
-	From string // Old field name (client uses this)
-	To   string // New field name (HEAD uses this)
+	OlderVersionName string // Field name in older/client version
+	NewerVersionName string // Field name in newer/HEAD version
 }
 
 func (op *RequestRenameField) ApplyToRequest(node *ast.Node) error {
@@ -134,37 +134,37 @@ func (op *RequestRenameField) ApplyToRequest(node *ast.Node) error {
 	}
 
 	// Check if old field exists
-	if !node.Get(op.From).Exists() {
+	if !node.Get(op.OlderVersionName).Exists() {
 		return nil
 	}
 
 	// Get the value of the old field
-	value := node.Get(op.From)
+	value := node.Get(op.OlderVersionName)
 	if value == nil {
 		return nil
 	}
 
 	// Set new field with the value
-	if err := SetNodeField(node, op.To, value); err != nil {
-		return fmt.Errorf("failed to set field %s: %w", op.To, err)
+	if err := SetNodeField(node, op.NewerVersionName, value); err != nil {
+		return fmt.Errorf("failed to set field %s: %w", op.NewerVersionName, err)
 	}
 
 	// Delete old field
-	return DeleteNodeField(node, op.From)
+	return DeleteNodeField(node, op.OlderVersionName)
 }
 
 func (op *RequestRenameField) GetFieldMapping() map[string]string {
 	// When transforming error messages, map new field name back to old
-	return map[string]string{op.To: op.From}
+	return map[string]string{op.NewerVersionName: op.OlderVersionName}
 }
 
 // Inverse returns the opposite operation for schema generation
-// RenameField (Client→HEAD: from→to) becomes RenameField (HEAD→Client: to→from)
+// RenameField (Client→HEAD: older→newer) becomes RenameField (HEAD→Client: newer→older)
 // This is a perfect inversion - completely reversible
 func (op *RequestRenameField) Inverse() RequestToNextVersionOperation {
 	return &RequestRenameField{
-		From: op.To, // Swap directions
-		To:   op.From,
+		OlderVersionName: op.NewerVersionName, // Swap directions
+		NewerVersionName: op.OlderVersionName,
 	}
 }
 
@@ -275,8 +275,8 @@ func (op *ResponseRemoveFieldIfDefault) GetFieldMapping() map[string]string {
 // ResponseRenameField renames a field when response migrates from HEAD to client
 // Use case: HEAD renamed "name" to "full_name", rename back for old clients
 type ResponseRenameField struct {
-	From string // New field name (HEAD uses this)
-	To   string // Old field name (client expects this)
+	NewerVersionName string // Field name in newer/HEAD version
+	OlderVersionName string // Field name in older/client version
 }
 
 func (op *ResponseRenameField) ApplyToResponse(node *ast.Node) error {
@@ -285,28 +285,28 @@ func (op *ResponseRenameField) ApplyToResponse(node *ast.Node) error {
 	}
 
 	// Check if new field exists
-	if !node.Get(op.From).Exists() {
+	if !node.Get(op.NewerVersionName).Exists() {
 		return nil
 	}
 
 	// Get the value of the new field
-	value := node.Get(op.From)
+	value := node.Get(op.NewerVersionName)
 	if value == nil {
 		return nil
 	}
 
 	// Set old field with the value
-	if err := SetNodeField(node, op.To, value); err != nil {
-		return fmt.Errorf("failed to set field %s: %w", op.To, err)
+	if err := SetNodeField(node, op.OlderVersionName, value); err != nil {
+		return fmt.Errorf("failed to set field %s: %w", op.OlderVersionName, err)
 	}
 
 	// Delete new field
-	return DeleteNodeField(node, op.From)
+	return DeleteNodeField(node, op.NewerVersionName)
 }
 
 func (op *ResponseRenameField) GetFieldMapping() map[string]string {
 	// When transforming error messages, map new field name to old
-	return map[string]string{op.From: op.To}
+	return map[string]string{op.NewerVersionName: op.OlderVersionName}
 }
 
 // ResponseCustom applies a custom transformation function
