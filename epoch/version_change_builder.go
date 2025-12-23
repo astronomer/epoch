@@ -279,11 +279,11 @@ func (b *requestToNextVersionBuilder) RemoveField(name string) *requestToNextVer
 }
 
 // RenameField renames a field when request migrates from client to HEAD
-func (b *requestToNextVersionBuilder) RenameField(from, to string) *requestToNextVersionBuilder {
+func (b *requestToNextVersionBuilder) RenameField(olderVersionName, newerVersionName string) *requestToNextVersionBuilder {
 	b.parent.requestToNextVersionOps = append(b.parent.requestToNextVersionOps,
 		&RequestRenameField{
-			From: from,
-			To:   to,
+			OlderVersionName: olderVersionName,
+			NewerVersionName: newerVersionName,
 		})
 	return b
 }
@@ -351,11 +351,11 @@ func (b *responseToPreviousVersionBuilder) RemoveFieldIfDefault(name string, def
 }
 
 // RenameField renames a field when response migrates from HEAD to client
-func (b *responseToPreviousVersionBuilder) RenameField(from, to string) *responseToPreviousVersionBuilder {
+func (b *responseToPreviousVersionBuilder) RenameField(newerVersionName, olderVersionName string) *responseToPreviousVersionBuilder {
 	b.parent.responseToPreviousVersionOps = append(b.parent.responseToPreviousVersionOps,
 		&ResponseRenameField{
-			From: from,
-			To:   to,
+			NewerVersionName: newerVersionName,
+			OlderVersionName: olderVersionName,
 		})
 	return b
 }

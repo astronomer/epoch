@@ -275,7 +275,7 @@ func (vt *VersionTransformer) applyOperationToSchema(
 
 	case *epoch.ResponseRenameField:
 		// Rename a field in the response schema
-		vt.RenameFieldInSchema(schema, operation.From, operation.To)
+		vt.RenameFieldInSchema(schema, operation.NewerVersionName, operation.OlderVersionName)
 
 	case *epoch.RequestAddField:
 		// Add a field to the request schema
@@ -293,7 +293,7 @@ func (vt *VersionTransformer) applyOperationToSchema(
 
 	case *epoch.RequestRenameField:
 		// Rename a field in the request schema
-		vt.RenameFieldInSchema(schema, operation.From, operation.To)
+		vt.RenameFieldInSchema(schema, operation.OlderVersionName, operation.NewerVersionName)
 
 	case *epoch.ResponseRemoveFieldIfDefault:
 		// For schema generation, treat this as a regular remove
