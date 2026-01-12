@@ -65,11 +65,43 @@ func (vm *VersionManager) GetVersion(c *gin.Context) (string, error) {
 	// Second, check URL path
 	matches := vm.versionRegex.FindStringSubmatch(c.Request.URL.Path)
 	if len(matches) > 1 {
-		return matches[1], nil
+		potentialVersion := matches[1]
+		// Only return as version if it matches a known version (exact or partial match)
+		if vm.isKnownVersion(potentialVersion) {
+			return potentialVersion, nil
+		}
 	}
 
 	// No version found in any location
 	return "", nil
+}
+
+// isKnownVersion checks if the potential version matches any known version
+// (either exactly or as a partial match like "v1" matching "v1.0.0")
+func (vm *VersionManager) isKnownVersion(potentialVersion string) bool {
+	// Fast path: exact match
+	if vm.possibleVersions[potentialVersion] {
+		return true
+	}
+
+	// Normalize: lowercase and remove 'v' prefix
+	normalized := strings.TrimPrefix(strings.ToLower(potentialVersion), "v")
+
+	for version := range vm.possibleVersions {
+		normalizedKnown := strings.TrimPrefix(strings.ToLower(version), "v")
+
+		// Exact match after normalization (handles "V1.0.0" == "v1.0.0")
+		if normalizedKnown == normalized {
+			return true
+		}
+
+		// Partial match: "1" matches "1.0.0", "1.2" matches "1.2.3"
+		if strings.HasPrefix(normalizedKnown, normalized+".") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // VersionMiddleware handles version detection and context setting
