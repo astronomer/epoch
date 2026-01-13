@@ -758,6 +758,38 @@ var _ = Describe("Middleware", func() {
 	})
 
 	Describe("Version Manager Edge Cases", func() {
+		It("should not treat numeric-prefixed path segments as versions", func() {
+			manager := NewVersionManager("X-API-Version", []string{"1.0.0", "2.0.0"})
+
+			cases := []string{
+				"/accounts/123-test-org/repositories",
+				"/users/12345/profile",
+				"/orgs/99-team/repos",
+			}
+
+			for _, path := range cases {
+				req := httptest.NewRequest("GET", path, nil)
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = req
+
+				version, err := manager.GetVersion(c)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(version).To(Equal(""), "path %s should not extract a version", path)
+			}
+		})
+
+		It("should recognize registered versions in path", func() {
+			manager := NewVersionManager("X-API-Version", []string{"1.0.0", "2.0.0"})
+			req := httptest.NewRequest("GET", "/api/1.0.0/users", nil)
+
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = req
+
+			version, err := manager.GetVersion(c)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(version).To(Equal("1.0.0"))
+		})
+
 		It("should handle case-insensitive headers", func() {
 			manager := NewVersionManager("x-api-version", []string{"1.0.0", "2.0.0"})
 			req := httptest.NewRequest("GET", "/test", nil)
