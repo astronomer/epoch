@@ -3,8 +3,10 @@ package epoch
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	. "github.com/onsi/ginkgo/v2"
@@ -1932,6 +1934,390 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(profile1["biography"]).To(Equal("Junior Dev"))
 			Expect(profile1).NotTo(HaveKey("bio"))
 			Expect(profile1).NotTo(HaveKey("avatar"))
+		})
+	})
+
+	Describe("Auto-Capture Field Preservation", func() {
+		// AutoCaptureRequest is the request type for auto-capture tests
+		type AutoCaptureRequest struct {
+			Name        string `json:"name"`
+			Description string `json:"description"` // This field is removed in v2 but we want to preserve the value
+			Metadata    string `json:"metadata"`    // Another field to test multiple captures
+		}
+
+		// AutoCaptureResponse is the response type for auto-capture tests
+		type AutoCaptureResponse struct {
+			ID          int    `json:"id"`
+			Name        string `json:"name"`
+			Description string `json:"description"` // Added back in response with captured value
+			Metadata    string `json:"metadata"`    // Added back in response with captured value
+			CreatedAt   string `json:"created_at"`
+		}
+
+		It("should preserve field values from request in response when using RemoveField/AddField", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			// V1→V2: Remove deprecated fields from request, add them back in response
+			// The auto-capture feature should preserve the original values
+			change := NewVersionChangeBuilder(v1, v2).
+				Description("Remove description and metadata fields").
+				ForType(AutoCaptureRequest{}).
+				RequestToNextVersion().
+				RemoveField("description"). // Captured automatically
+				RemoveField("metadata").    // Captured automatically
+				ForType(AutoCaptureResponse{}).
+				ResponseToPreviousVersion().
+				AddField("description", "default description"). // Uses captured value instead
+				AddField("metadata", "default metadata").       // Uses captured value instead
+				Build()
+
+			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			router := setupRouterWithMiddleware(epochInstance)
+
+			// Handler receives HEAD version (without description/metadata)
+			// and returns HEAD version (without description/metadata)
+			router.POST("/items", epochInstance.WrapHandler(func(c *gin.Context) {
+				var req map[string]interface{}
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Verify handler does NOT receive the deprecated fields
+				Expect(req).NotTo(HaveKey("description"), "Handler should not receive removed field")
+				Expect(req).NotTo(HaveKey("metadata"), "Handler should not receive removed field")
+				Expect(req).To(HaveKey("name"))
+
+				// Return response without deprecated fields (HEAD version)
+				c.JSON(200, gin.H{
+					"id":         1,
+					"name":       req["name"],
+					"created_at": "2024-01-15T10:00:00Z",
+				})
+			}).Accepts(AutoCaptureRequest{}).Returns(AutoCaptureResponse{}).ToHandlerFunc("POST", "/items"))
+
+			// V1 client sends request WITH deprecated fields
+			reqBody := `{
+				"name": "Test Item",
+				"description": "My custom description",
+				"metadata": "Important metadata value"
+			}`
+			req := httptest.NewRequest("POST", "/items", strings.NewReader(reqBody))
+			req.Header.Set("X-API-Version", "2024-01-01")
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response map[string]interface{}
+			err = json.Unmarshal(recorder.Body.Bytes(), &response)
+			Expect(err).NotTo(HaveOccurred())
+
+			// V1 response should have the ORIGINAL values from the request, NOT defaults
+			Expect(response).To(HaveKey("id"))
+			Expect(response).To(HaveKey("name"))
+			Expect(response).To(HaveKey("description"))
+			Expect(response).To(HaveKey("metadata"))
+			Expect(response).To(HaveKey("created_at"))
+
+			// These should be the captured values, not the defaults
+			Expect(response["description"]).To(Equal("My custom description"),
+				"Should use captured value from request, not default")
+			Expect(response["metadata"]).To(Equal("Important metadata value"),
+				"Should use captured value from request, not default")
+		})
+
+		It("should use defaults when request doesn't have the field", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			change := NewVersionChangeBuilder(v1, v2).
+				Description("Handle optional field").
+				ForType(AutoCaptureRequest{}).
+				RequestToNextVersion().
+				RemoveField("description").
+				ForType(AutoCaptureResponse{}).
+				ResponseToPreviousVersion().
+				AddField("description", "default description").
+				Build()
+
+			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			router := setupRouterWithMiddleware(epochInstance)
+
+			router.POST("/items", epochInstance.WrapHandler(func(c *gin.Context) {
+				var req map[string]interface{}
+				c.ShouldBindJSON(&req)
+
+				c.JSON(200, gin.H{
+					"id":         1,
+					"name":       req["name"],
+					"created_at": "2024-01-15T10:00:00Z",
+				})
+			}).Accepts(AutoCaptureRequest{}).Returns(AutoCaptureResponse{}).ToHandlerFunc("POST", "/items"))
+
+			// V1 client sends request WITHOUT the optional field
+			reqBody := `{"name": "Test Item"}`
+			req := httptest.NewRequest("POST", "/items", strings.NewReader(reqBody))
+			req.Header.Set("X-API-Version", "2024-01-01")
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response map[string]interface{}
+			json.Unmarshal(recorder.Body.Bytes(), &response)
+
+			// Should use default since field wasn't in request
+			Expect(response["description"]).To(Equal("default description"),
+				"Should use default when field wasn't in request")
+		})
+
+		It("should not override handler-set values with captured values", func() {
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			change := NewVersionChangeBuilder(v1, v2).
+				Description("Handler override test").
+				ForType(AutoCaptureRequest{}).
+				RequestToNextVersion().
+				RemoveField("description").
+				ForType(AutoCaptureResponse{}).
+				ResponseToPreviousVersion().
+				AddField("description", "default description").
+				Build()
+
+			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			router := setupRouterWithMiddleware(epochInstance)
+
+			router.POST("/items", epochInstance.WrapHandler(func(c *gin.Context) {
+				var req map[string]interface{}
+				c.ShouldBindJSON(&req)
+
+				// Handler explicitly sets description in response
+				c.JSON(200, gin.H{
+					"id":          1,
+					"name":        req["name"],
+					"description": "Handler-set description", // Explicit value
+					"created_at":  "2024-01-15T10:00:00Z",
+				})
+			}).Accepts(AutoCaptureRequest{}).Returns(AutoCaptureResponse{}).ToHandlerFunc("POST", "/items"))
+
+			reqBody := `{
+				"name": "Test Item",
+				"description": "Request description"
+			}`
+			req := httptest.NewRequest("POST", "/items", strings.NewReader(reqBody))
+			req.Header.Set("X-API-Version", "2024-01-01")
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response map[string]interface{}
+			json.Unmarshal(recorder.Body.Bytes(), &response)
+
+			// Handler's value should be preserved, not overwritten by captured value
+			Expect(response["description"]).To(Equal("Handler-set description"),
+				"Handler-set value should take precedence")
+		})
+
+		It("should preserve captured values for complex types", func() {
+			// Test type with complex field
+			type ComplexRequest struct {
+				Name     string                 `json:"name"`
+				Settings map[string]interface{} `json:"settings"`
+			}
+
+			type ComplexResponse struct {
+				ID       int                    `json:"id"`
+				Name     string                 `json:"name"`
+				Settings map[string]interface{} `json:"settings"`
+			}
+
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			change := NewVersionChangeBuilder(v1, v2).
+				Description("Complex field preservation").
+				ForType(ComplexRequest{}).
+				RequestToNextVersion().
+				RemoveField("settings").
+				ForType(ComplexResponse{}).
+				ResponseToPreviousVersion().
+				AddField("settings", map[string]interface{}{"default": true}).
+				Build()
+
+			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			router := setupRouterWithMiddleware(epochInstance)
+
+			router.POST("/complex", epochInstance.WrapHandler(func(c *gin.Context) {
+				var req map[string]interface{}
+				c.ShouldBindJSON(&req)
+
+				Expect(req).NotTo(HaveKey("settings"))
+
+				c.JSON(200, gin.H{
+					"id":   1,
+					"name": req["name"],
+				})
+			}).Accepts(ComplexRequest{}).Returns(ComplexResponse{}).ToHandlerFunc("POST", "/complex"))
+
+			reqBody := `{
+				"name": "Test",
+				"settings": {
+					"theme": "dark",
+					"notifications": true,
+					"nested": {"key": "value"}
+				}
+			}`
+			req := httptest.NewRequest("POST", "/complex", strings.NewReader(reqBody))
+			req.Header.Set("X-API-Version", "2024-01-01")
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			Expect(recorder.Code).To(Equal(200))
+
+			var response map[string]interface{}
+			json.Unmarshal(recorder.Body.Bytes(), &response)
+
+			// Complex object should be preserved
+			settings, ok := response["settings"].(map[string]interface{})
+			Expect(ok).To(BeTrue(), "settings should be a map")
+			Expect(settings["theme"]).To(Equal("dark"))
+			Expect(settings["notifications"]).To(Equal(true))
+
+			nested, ok := settings["nested"].(map[string]interface{})
+			Expect(ok).To(BeTrue(), "nested should be a map")
+			Expect(nested["key"]).To(Equal("value"))
+		})
+
+		It("should be thread-safe with concurrent requests", func() {
+			// This test verifies that captured field values don't leak between concurrent requests
+			type ConcurrentRequest struct {
+				ID          int    `json:"id"`
+				Description string `json:"description"`
+			}
+
+			type ConcurrentResponse struct {
+				ID          int    `json:"id"`
+				Description string `json:"description"`
+				ProcessedAt string `json:"processed_at"`
+			}
+
+			v1, _ := NewDateVersion("2024-01-01")
+			v2, _ := NewDateVersion("2024-06-01")
+
+			change := NewVersionChangeBuilder(v1, v2).
+				Description("Concurrent test").
+				ForType(ConcurrentRequest{}).
+				RequestToNextVersion().
+				RemoveField("description").
+				ForType(ConcurrentResponse{}).
+				ResponseToPreviousVersion().
+				AddField("description", "default").
+				Build()
+
+			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
+			Expect(err).NotTo(HaveOccurred())
+
+			router := setupRouterWithMiddleware(epochInstance)
+
+			router.POST("/concurrent", epochInstance.WrapHandler(func(c *gin.Context) {
+				var req map[string]interface{}
+				c.ShouldBindJSON(&req)
+
+				// Handler returns the ID it received (without description)
+				c.JSON(200, gin.H{
+					"id":           req["id"],
+					"processed_at": "2024-01-15T10:00:00Z",
+				})
+			}).Accepts(ConcurrentRequest{}).Returns(ConcurrentResponse{}).ToHandlerFunc("POST", "/concurrent"))
+
+			// Run concurrent requests
+			const numRequests = 50
+			var wg sync.WaitGroup
+			results := make(chan struct {
+				requestID   int
+				description string
+				err         error
+			}, numRequests)
+
+			for i := 0; i < numRequests; i++ {
+				wg.Add(1)
+				go func(id int) {
+					defer wg.Done()
+
+					// Each request has a unique description
+					description := fmt.Sprintf("Description for request %d", id)
+					reqBody := fmt.Sprintf(`{"id": %d, "description": "%s"}`, id, description)
+
+					req := httptest.NewRequest("POST", "/concurrent", strings.NewReader(reqBody))
+					req.Header.Set("X-API-Version", "2024-01-01")
+					req.Header.Set("Content-Type", "application/json")
+					recorder := httptest.NewRecorder()
+
+					router.ServeHTTP(recorder, req)
+
+					if recorder.Code != 200 {
+						results <- struct {
+							requestID   int
+							description string
+							err         error
+						}{id, "", fmt.Errorf("unexpected status code: %d", recorder.Code)}
+						return
+					}
+
+					var response map[string]interface{}
+					if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+						results <- struct {
+							requestID   int
+							description string
+							err         error
+						}{id, "", err}
+						return
+					}
+
+					results <- struct {
+						requestID   int
+						description string
+						err         error
+					}{
+						requestID:   int(response["id"].(float64)),
+						description: response["description"].(string),
+						err:         nil,
+					}
+				}(i)
+			}
+
+			wg.Wait()
+			close(results)
+
+			// Verify all requests got their own captured values back
+			for result := range results {
+				Expect(result.err).NotTo(HaveOccurred(), fmt.Sprintf("Request %d failed", result.requestID))
+
+				expectedDescription := fmt.Sprintf("Description for request %d", result.requestID)
+				Expect(result.description).To(Equal(expectedDescription),
+					fmt.Sprintf("Request %d got wrong description: expected '%s', got '%s'",
+						result.requestID, expectedDescription, result.description))
+			}
 		})
 	})
 })

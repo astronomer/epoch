@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/astronomer/epoch/epoch"
@@ -38,24 +39,26 @@ type ProfileRequest struct {
 }
 
 // CreateUserRequest - What clients send to create a user (HEAD version)
-// v1 (2024-01-01): name, profile.biography, profile.skills[].skill_name
-// v2 (2024-06-01): name, email, status, profile.bio, profile.skills[].name + level
+// v1 (2024-01-01): name, legacy_notes, profile.biography, profile.skills[].skill_name
+// v2 (2024-06-01): name, email, status, profile.bio, profile.skills[].name + level (legacy_notes removed but auto-captured)
 // v3 (2025-01-01): full_name, email, phone, status, profile (all fields)
 type CreateUserRequest struct {
-	FullName string          `json:"full_name" binding:"required,max=100"`
-	Email    string          `json:"email" binding:"required,email"`
-	Phone    string          `json:"phone,omitempty"`
-	Status   string          `json:"status" binding:"required,oneof=active inactive pending suspended"`
-	Profile  *ProfileRequest `json:"profile,omitempty"` // Nested object with array and deeply nested settings
+	FullName    string          `json:"full_name" binding:"required,max=100"`
+	Email       string          `json:"email" binding:"required,email"`
+	Phone       string          `json:"phone,omitempty"`
+	Status      string          `json:"status" binding:"required,oneof=active inactive pending suspended"`
+	Profile     *ProfileRequest `json:"profile,omitempty"`      // Nested object with array and deeply nested settings
+	LegacyNotes string          `json:"legacy_notes,omitempty"` // Deprecated in v2+, auto-captured for round-trip preservation
 }
 
 // UpdateUserRequest - What clients send to update a user (HEAD version)
 type UpdateUserRequest struct {
-	FullName string          `json:"full_name" binding:"required,max=100"`
-	Email    string          `json:"email" binding:"required,email"`
-	Phone    string          `json:"phone,omitempty"`
-	Status   string          `json:"status" binding:"required,oneof=active inactive pending suspended"`
-	Profile  *ProfileRequest `json:"profile,omitempty"` // Nested object with array and deeply nested settings
+	FullName    string          `json:"full_name" binding:"required,max=100"`
+	Email       string          `json:"email" binding:"required,email"`
+	Phone       string          `json:"phone,omitempty"`
+	Status      string          `json:"status" binding:"required,oneof=active inactive pending suspended"`
+	Profile     *ProfileRequest `json:"profile,omitempty"`      // Nested object with array and deeply nested settings
+	LegacyNotes string          `json:"legacy_notes,omitempty"` // Deprecated in v2+, auto-captured
 }
 
 // ============================================================================
@@ -91,12 +94,13 @@ type UserProfile struct {
 // Migrations handle transforming this to v1/v2/v3 formats
 // Now includes Profile for nested transformation demonstrations
 type UserResponse struct {
-	ID       int          `json:"id,omitempty"`
-	FullName string       `json:"full_name"`
-	Email    string       `json:"email,omitempty"`
-	Phone    string       `json:"phone,omitempty"`
-	Status   string       `json:"status,omitempty"`
-	Profile  *UserProfile `json:"profile,omitempty"` // Nested object with array and deeply nested settings
+	ID          int          `json:"id,omitempty"`
+	FullName    string       `json:"full_name"`
+	Email       string       `json:"email,omitempty"`
+	Phone       string       `json:"phone,omitempty"`
+	Status      string       `json:"status,omitempty"`
+	Profile     *UserProfile `json:"profile,omitempty"`      // Nested object with array and deeply nested settings
+	LegacyNotes string       `json:"legacy_notes,omitempty"` // Auto-captured from request for v1 clients
 }
 
 type UsersListResponse struct {
@@ -123,12 +127,13 @@ type UserProfileInternal struct {
 }
 
 type UserInternal struct {
-	ID       int
-	FullName string
-	Email    string
-	Phone    string
-	Status   string
-	Profile  *UserProfileInternal
+	ID          int
+	FullName    string
+	Email       string
+	Phone       string
+	Status      string
+	Profile     *UserProfileInternal
+	LegacyNotes string // For auto-capture demo - stored but not used by v2+ handlers
 }
 
 // ============================================================================
@@ -281,11 +286,12 @@ type ExampleMetaInternal struct {
 // User conversions
 func NewUserResponse(u UserInternal) UserResponse {
 	resp := UserResponse{
-		ID:       u.ID,
-		FullName: u.FullName,
-		Email:    u.Email,
-		Phone:    u.Phone,
-		Status:   u.Status,
+		ID:          u.ID,
+		FullName:    u.FullName,
+		Email:       u.Email,
+		Phone:       u.Phone,
+		Status:      u.Status,
+		LegacyNotes: u.LegacyNotes, // Include for auto-capture demo
 	}
 	if u.Profile != nil {
 		skills := make([]Skill, len(u.Profile.Skills))
@@ -389,6 +395,7 @@ var (
 	users = map[int]UserInternal{
 		1: {
 			ID: 1, FullName: "Alice Johnson", Email: "alice@example.com", Phone: "+1-555-0100", Status: "active",
+			LegacyNotes: "Original v1 user - migrated from legacy system", // Demo: stored legacy notes
 			Profile: &UserProfileInternal{
 				Bio: "Senior software engineer with 10 years of experience",
 				Skills: []SkillInternal{
@@ -449,6 +456,11 @@ var (
 	nextUserID    = 3
 	nextProductID = 3
 	nextOrderID   = 2
+
+	// Mutexes for thread-safe access to in-memory storage
+	usersMu    sync.RWMutex
+	productsMu sync.RWMutex
+	ordersMu   sync.RWMutex
 )
 
 func main() {
@@ -604,22 +616,22 @@ func main() {
 	fmt.Println("💡 Comprehensive Test Commands:")
 	fmt.Println("")
 	fmt.Println("🔍 1. VERSION DETECTION & METADATA")
-	fmt.Println("  curl http://localhost:8090/versions")
+	fmt.Println("  curl http://localhost:8087/versions")
 	fmt.Println("  # Expected: {\"head_version\":\"head\",\"versions\":[\"2024-01-01\",\"2024-06-01\",\"2025-01-01\",\"head\"]}")
 	fmt.Println("")
 	fmt.Println("👤 2. USER RESPONSE MIGRATIONS (Field Transformations)")
 	fmt.Println("  # V1 (2024-01-01): id + name + nested profile with v1 field names")
-	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8090/users/1")
+	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8087/users/1")
 	fmt.Println("  # Expected: {\"id\":1,\"name\":\"Alice Johnson\",\"profile\":{\"biography\":\"...\",")
 	fmt.Println("  #           \"skills\":[{\"skill_name\":\"Go\"},...],\"settings\":{\"color_theme\":\"dark\"}}}")
 	fmt.Println("")
 	fmt.Println("  # V2 (2024-06-01): id + name + email + status + nested profile with v2 field names")
-	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8090/users/1")
+	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8087/users/1")
 	fmt.Println("  # Expected: {\"id\":1,\"name\":\"Alice Johnson\",\"email\":\"...\",\"status\":\"active\",")
 	fmt.Println("  #           \"profile\":{\"bio\":\"...\",\"skills\":[{\"name\":\"Go\",\"level\":5},...],\"settings\":{\"theme\":\"dark\"}}}")
 	fmt.Println("")
 	fmt.Println("  # V3 (2025-01-01): All fields with full_name + nested profile")
-	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8090/users/1")
+	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8087/users/1")
 	fmt.Println("  # Expected: {\"id\":1,\"full_name\":\"Alice Johnson\",\"email\":\"...\",\"phone\":\"...\",\"status\":\"active\",")
 	fmt.Println("  #           \"profile\":{\"bio\":\"...\",\"skills\":[{\"name\":\"Go\",\"level\":5},...],\"settings\":{\"theme\":\"dark\"}}}")
 	fmt.Println("")
@@ -627,16 +639,16 @@ func main() {
 	fmt.Println("  # V2 POST: Use 'name' field (migrated to 'full_name' internally)")
 	fmt.Println("  curl -X POST -H 'X-API-Version: 2024-06-01' -H 'Content-Type: application/json' \\")
 	fmt.Println("    -d '{\"name\":\"Test User\",\"email\":\"test@example.com\",\"status\":\"active\"}' \\")
-	fmt.Println("    http://localhost:8090/users")
+	fmt.Println("    http://localhost:8087/users")
 	fmt.Println("  # Expected: {\"id\":N,\"name\":\"Test User\",\"email\":\"test@example.com\",\"status\":\"active\"}")
 	fmt.Println("")
 	fmt.Println("📦 4. PRODUCT MIGRATIONS (AddField Operations)")
 	fmt.Println("  # V1: Only basic fields")
-	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8090/products/1")
+	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8087/products/1")
 	fmt.Println("  # Expected: {\"id\":1,\"name\":\"Laptop\",\"price\":999.99}")
 	fmt.Println("")
 	fmt.Println("  # V3: With added description + currency fields")
-	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8090/products/1")
+	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8087/products/1")
 	fmt.Println("  # Expected: {\"id\":1,\"name\":\"Laptop\",\"price\":999.99,\"description\":\"High-performance laptop\",\"currency\":\"USD\"}")
 	fmt.Println("")
 	fmt.Println("⚠️  5. ERROR MESSAGE FIELD NAME TRANSFORMATION")
@@ -644,83 +656,83 @@ func main() {
 	fmt.Println("")
 	fmt.Println("  # V1 API - Missing required 'name' field")
 	fmt.Println("  curl -X POST -H 'X-API-Version: 2024-01-01' -H 'Content-Type: application/json' \\")
-	fmt.Println("    -d '{}' http://localhost:8090/users")
+	fmt.Println("    -d '{}' http://localhost:8087/users")
 	fmt.Println("  # Expected: Error mentions 'Name' field (v1 field name)")
 	fmt.Println("")
 	fmt.Println("  # V2 API - Missing required 'name' field")
 	fmt.Println("  curl -X POST -H 'X-API-Version: 2024-06-01' -H 'Content-Type: application/json' \\")
-	fmt.Println("    -d '{}' http://localhost:8090/users")
+	fmt.Println("    -d '{}' http://localhost:8087/users")
 	fmt.Println("  # Expected: Error mentions 'Name' field (v2 still uses 'name', not 'full_name')")
 	fmt.Println("")
 	fmt.Println("  # V3 API - Missing required 'full_name' field")
 	fmt.Println("  curl -X POST -H 'X-API-Version: 2025-01-01' -H 'Content-Type: application/json' \\")
-	fmt.Println("    -d '{}' http://localhost:8090/users")
+	fmt.Println("    -d '{}' http://localhost:8087/users")
 	fmt.Println("  # Expected: Error mentions 'FullName' field (v3 HEAD version)")
 	fmt.Println("")
 	fmt.Println("📊 6. LIST ENDPOINTS (Array Transformations)")
 	fmt.Println("  # V1 user list: Each user has id + name + nested profile (v1 field names)")
-	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8090/users")
+	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8087/users")
 	fmt.Println("  # Expected: {\"users\":[{\"id\":1,\"name\":\"Alice Johnson\",\"profile\":{...}},...]}")
 	fmt.Println("")
 	fmt.Println("  # V3 user list: Each user has all fields including full_name + nested profile")
-	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8090/users")
+	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8087/users")
 	fmt.Println("  # Expected: {\"users\":[{\"id\":1,\"full_name\":\"Alice Johnson\",...,\"profile\":{...}},...]}]")
 	fmt.Println("")
 	fmt.Println("🎯 7. ADVANCED SCENARIOS")
 	fmt.Println("  # Default version (no header): Uses HEAD version")
-	fmt.Println("  curl http://localhost:8090/users/1")
+	fmt.Println("  curl http://localhost:8087/users/1")
 	fmt.Println("")
 	fmt.Println("  # Health check (unversioned endpoint)")
-	fmt.Println("  curl http://localhost:8090/health")
+	fmt.Println("  curl http://localhost:8087/health")
 	fmt.Println("")
 	fmt.Println("🔧 8. NESTED ARRAY TRANSFORMATIONS (examples[])")
 	fmt.Println("  # V1: Examples with 'name' field, sub_items with 'name'")
-	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8090/examples")
+	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8087/examples")
 	fmt.Println("  # Expected: {\"examples\":[{\"id\":1,\"name\":\"First Example\",\"tags\":[...],")
 	fmt.Println("  #           \"sub_items\":[{\"id\":101,\"name\":\"Step 1: Setup\"},...]},...]}")
 	fmt.Println("")
 	fmt.Println("  # V2: Examples with 'title' + category, sub_items with 'label'")
-	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8090/examples")
+	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8087/examples")
 	fmt.Println("  # Expected: {\"examples\":[{\"id\":1,\"title\":\"First Example\",\"category\":\"tutorial\",")
 	fmt.Println("  #           \"sub_items\":[{\"id\":101,\"label\":\"Step 1: Setup\"},...]},...]}")
 	fmt.Println("")
 	fmt.Println("  # V3/HEAD: Examples with 'display_name' + priority, sub_items with 'label'")
-	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8090/examples")
+	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8087/examples")
 	fmt.Println("  # Expected: {\"examples\":[{\"id\":1,\"display_name\":\"First Example\",\"priority\":1,")
 	fmt.Println("  #           \"sub_items\":[{\"id\":101,\"label\":\"Step 1: Setup\"},...]},...]}")
 	fmt.Println("")
 	fmt.Println("🏗️  9. DEEPLY NESTED OBJECTS (user.profile.settings - 3 levels)")
 	fmt.Println("  # V1: profile.biography, profile.skills[].skill_name (no level), profile.settings.color_theme")
-	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8090/users/1 | jq '.profile'")
+	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8087/users/1 | jq '.profile'")
 	fmt.Println("  # Expected: {\"biography\":\"...\",\"skills\":[{\"skill_name\":\"Go\"},...],\"settings\":{\"color_theme\":\"dark\"}}")
 	fmt.Println("")
 	fmt.Println("  # V2+: profile.bio, profile.skills[].name + level, profile.settings.theme")
-	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8090/users/1 | jq '.profile'")
+	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8087/users/1 | jq '.profile'")
 	fmt.Println("  # Expected: {\"bio\":\"...\",\"skills\":[{\"name\":\"Go\",\"level\":5},...],\"settings\":{\"theme\":\"dark\"}}")
 	fmt.Println("")
 	fmt.Println("🔄 10. ARRAYS INSIDE NESTED OBJECTS (user.profile.skills[])")
 	fmt.Println("  # V1: Skills array inside profile with 'skill_name', no 'level'")
-	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8090/users/1 | jq '.profile.skills'")
+	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8087/users/1 | jq '.profile.skills'")
 	fmt.Println("  # Expected: [{\"skill_name\":\"Go\"},{\"skill_name\":\"Python\"},{\"skill_name\":\"Kubernetes\"}]")
 	fmt.Println("")
 	fmt.Println("  # V2+/HEAD: Skills array with 'name' and 'level'")
-	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8090/users/1 | jq '.profile.skills'")
+	fmt.Println("  curl -H 'X-API-Version: 2025-01-01' http://localhost:8087/users/1 | jq '.profile.skills'")
 	fmt.Println("  # Expected: [{\"name\":\"Go\",\"level\":5},{\"name\":\"Python\",\"level\":4},{\"name\":\"Kubernetes\",\"level\":3}]")
 	fmt.Println("")
 	fmt.Println("📚 11. 2-LEVEL NESTED ARRAYS (examples[].sub_items[])")
 	fmt.Println("  # V1: sub_items[].name (transformed from label)")
-	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8090/examples | jq '.examples[0].sub_items'")
+	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8087/examples | jq '.examples[0].sub_items'")
 	fmt.Println("  # Expected: [{\"id\":101,\"name\":\"Step 1: Setup\"},{\"id\":102,\"name\":\"Step 2: Configure\"}]")
 	fmt.Println("")
 	fmt.Println("  # V2+: sub_items[].label (HEAD field name)")
-	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8090/examples | jq '.examples[0].sub_items'")
+	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8087/examples | jq '.examples[0].sub_items'")
 	fmt.Println("  # Expected: [{\"id\":101,\"label\":\"Step 1: Setup\"},{\"id\":102,\"label\":\"Step 2: Configure\"}]")
 	fmt.Println("")
 	fmt.Println("📥 12. REQUEST NESTED OBJECT TRANSFORMATIONS (profile.biography -> profile.bio)")
 	fmt.Println("  # V1: POST with nested profile using 'biography' (old field name)")
 	fmt.Println("  curl -X POST -H 'X-API-Version: 2024-01-01' -H 'Content-Type: application/json' \\")
 	fmt.Println("    -d '{\"name\":\"New User\",\"profile\":{\"biography\":\"A great developer\"}}' \\")
-	fmt.Println("    http://localhost:8090/users")
+	fmt.Println("    http://localhost:8087/users")
 	fmt.Println("  # Request transformation: biography -> bio (stored internally as bio)")
 	fmt.Println("  # Response transformation: bio -> biography (returned to V1 client)")
 	fmt.Println("  # Expected response: {\"id\":N,\"name\":\"New User\",\"profile\":{\"biography\":\"A great developer\",...}}")
@@ -729,7 +741,7 @@ func main() {
 	fmt.Println("  # V1: POST with nested skills array using 'skill_name' (old field name)")
 	fmt.Println("  curl -X POST -H 'X-API-Version: 2024-01-01' -H 'Content-Type: application/json' \\")
 	fmt.Println("    -d '{\"name\":\"Skilled User\",\"profile\":{\"biography\":\"Expert\",\"skills\":[{\"skill_name\":\"Go\"},{\"skill_name\":\"Python\"}]}}' \\")
-	fmt.Println("    http://localhost:8090/users")
+	fmt.Println("    http://localhost:8087/users")
 	fmt.Println("  # Request transformation: skill_name -> name, level added with default 1")
 	fmt.Println("  # Response transformation: name -> skill_name, level removed")
 	fmt.Println("  # Expected response: {...,\"profile\":{\"biography\":\"Expert\",\"skills\":[{\"skill_name\":\"Go\"},{\"skill_name\":\"Python\"}],...}}")
@@ -738,7 +750,7 @@ func main() {
 	fmt.Println("  # V1: POST with deeply nested settings using 'color_theme' (old field name)")
 	fmt.Println("  curl -X POST -H 'X-API-Version: 2024-01-01' -H 'Content-Type: application/json' \\")
 	fmt.Println("    -d '{\"name\":\"Theme User\",\"profile\":{\"biography\":\"Designer\",\"settings\":{\"color_theme\":\"dark\"}}}' \\")
-	fmt.Println("    http://localhost:8090/users")
+	fmt.Println("    http://localhost:8087/users")
 	fmt.Println("  # Request transformation: color_theme -> theme (stored as 'theme')")
 	fmt.Println("  # Response transformation: theme -> color_theme (returned to V1 client)")
 	fmt.Println("  # Expected response: {...,\"profile\":{\"biography\":\"...\",\"settings\":{\"color_theme\":\"dark\"},...}}")
@@ -747,7 +759,7 @@ func main() {
 	fmt.Println("  # V1: POST with ALL nested structures (object, array, deeply nested)")
 	fmt.Println("  curl -X POST -H 'X-API-Version: 2024-01-01' -H 'Content-Type: application/json' \\")
 	fmt.Println("    -d '{\"name\":\"Full User\",\"profile\":{\"biography\":\"Full stack dev\",\"skills\":[{\"skill_name\":\"JavaScript\"},{\"skill_name\":\"React\"}],\"settings\":{\"color_theme\":\"light\"}}}' \\")
-	fmt.Println("    http://localhost:8090/users")
+	fmt.Println("    http://localhost:8087/users")
 	fmt.Println("  # Request transformations applied:")
 	fmt.Println("  #   - name stays as name (V1 field name)")
 	fmt.Println("  #   - biography -> bio")
@@ -761,11 +773,36 @@ func main() {
 	fmt.Println("  #           \"skills\":[{\"skill_name\":\"JavaScript\"},{\"skill_name\":\"React\"}],")
 	fmt.Println("  #           \"settings\":{\"color_theme\":\"light\"}}}")
 	fmt.Println("")
-	fmt.Println("🌐 Server listening on http://localhost:8090")
+	fmt.Println("🔄 16. AUTO-CAPTURE FIELD PRESERVATION (legacy_notes)")
+	fmt.Println("  # NEW FEATURE: Deprecated fields are automatically preserved from request to response!")
+	fmt.Println("  # V1 sends legacy_notes -> captured before removal -> restored in response")
+	fmt.Println("")
+	fmt.Println("  # Test 1: V1 POST with legacy_notes - value PRESERVED in response")
+	fmt.Println("  curl -X POST -H 'X-API-Version: 2024-01-01' -H 'Content-Type: application/json' \\")
+	fmt.Println("    -d '{\"name\":\"Auto Capture Test\",\"legacy_notes\":\"Important notes from v1 client\"}' \\")
+	fmt.Println("    http://localhost:8087/users")
+	fmt.Println("  # Expected: {...,\"legacy_notes\":\"Important notes from v1 client\"}")
+	fmt.Println("  # The value is NOT empty - it's the ORIGINAL value from the request!")
+	fmt.Println("")
+	fmt.Println("  # Test 2: V1 POST without legacy_notes - uses default empty string")
+	fmt.Println("  curl -X POST -H 'X-API-Version: 2024-01-01' -H 'Content-Type: application/json' \\")
+	fmt.Println("    -d '{\"name\":\"No Notes Test\"}' \\")
+	fmt.Println("    http://localhost:8087/users")
+	fmt.Println("  # Expected: {...,\"legacy_notes\":\"\"} (default value since not in request)")
+	fmt.Println("")
+	fmt.Println("  # Test 3: V1 GET existing user with stored legacy_notes")
+	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8087/users/1")
+	fmt.Println("  # Expected: {...,\"legacy_notes\":\"Original v1 user - migrated from legacy system\"}")
+	fmt.Println("")
+	fmt.Println("  # Test 4: V2 sees legacy_notes pass through (Cadwyn-style, schema ignores it)")
+	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8087/users/1")
+	fmt.Println("  # Expected: legacy_notes passes through (V2 schema ignores it, but data is there)")
+	fmt.Println("")
+	fmt.Println("🌐 Server listening on http://localhost:8087")
 	fmt.Println("   Use X-API-Version header to specify version")
 	fmt.Println("")
 
-	r.Run(":8090")
+	r.Run(":8087")
 }
 
 // ============================================================================
@@ -778,20 +815,26 @@ func main() {
 
 // createUserV1ToV2Migration defines migrations for TOP-LEVEL user fields only
 // Nested types (Profile, Skill, Settings) have their own separate migrations
+//
+// IMPORTANT: This migration demonstrates the AUTO-CAPTURE feature:
+// - RemoveField("legacy_notes") on request CAPTURES the value before removing
+// - AddField("legacy_notes", "") on response USES the captured value instead of the default
+// This enables seamless round-trip preservation of deprecated fields!
 func createUserV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
 	return epoch.NewVersionChangeBuilder(from, to).
-		Description("Add email and status fields for v1->v2").
+		Description("Add email and status fields, deprecate legacy_notes (auto-captured)").
 		// Only target top-level user types (NOT nested types - they have separate migrations)
 		ForType(UserResponse{}, CreateUserRequest{}, UpdateUserRequest{}).
-		// Requests: Client→HEAD (add defaults for old clients)
+		// Requests: Client→HEAD (add defaults for old clients, capture legacy_notes)
 		RequestToNextVersion().
 		AddField("email", "unknown@example.com"). // Add email with default for v1 clients
 		AddField("status", "active").             // Add status with default for v1 clients
-		RemoveField("temp_field").                // Remove deprecated field
-		// Responses: HEAD→Client (remove new fields for old clients)
+		RemoveField("legacy_notes").              // AUTO-CAPTURE: Captures value before removing!
+		// Responses: HEAD→Client (remove new fields, restore legacy_notes)
 		ResponseToPreviousVersion().
-		RemoveField("email").  // Remove email from responses for v1 clients
-		RemoveField("status"). // Remove status from responses for v1 clients
+		RemoveField("email").         // Remove email from responses for v1 clients
+		RemoveField("status").        // Remove status from responses for v1 clients
+		AddField("legacy_notes", ""). // AUTO-CAPTURE: Uses captured value from request, not ""!
 		Build()
 }
 
@@ -856,6 +899,7 @@ func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 		ResponseToPreviousVersion().
 		RenameField("full_name", "name"). // Rename back to old field name
 		RemoveField("phone").             // Remove phone from responses for v2 clients
+		// NOTE: legacy_notes passes through (Cadwyn-style) - V2 schema ignores it
 		Build()
 }
 
@@ -912,6 +956,9 @@ func createExampleV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange 
 // ============================================================================
 
 func listUsers(c *gin.Context) {
+	usersMu.RLock()
+	defer usersMu.RUnlock()
+
 	// Convert internal storage to list of internal models
 	userList := make([]UserInternal, 0, len(users))
 	for _, user := range users {
@@ -927,7 +974,10 @@ func getUser(c *gin.Context) {
 	var userID int
 	fmt.Sscanf(id, "%d", &userID)
 
+	usersMu.RLock()
 	user, exists := users[userID]
+	usersMu.RUnlock()
+
 	if !exists {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
@@ -945,13 +995,17 @@ func createUser(c *gin.Context) {
 		return
 	}
 
+	usersMu.Lock()
+	defer usersMu.Unlock()
+
 	// Convert to internal model (including nested profile if provided)
 	internal := UserInternal{
-		ID:       nextUserID,
-		FullName: req.FullName,
-		Email:    req.Email,
-		Phone:    req.Phone,
-		Status:   req.Status,
+		ID:          nextUserID,
+		FullName:    req.FullName,
+		Email:       req.Email,
+		Phone:       req.Phone,
+		Status:      req.Status,
+		LegacyNotes: req.LegacyNotes, // Will be empty for v2+ (auto-capture handles v1)
 	}
 
 	// Handle nested profile from request (demonstrates request nested transformation)
@@ -974,6 +1028,7 @@ func createUser(c *gin.Context) {
 
 	// Always return HEAD version response struct
 	// Epoch middleware will transform it to the client's requested version
+	// For v1 clients: auto-capture will restore legacy_notes from the request!
 	c.JSON(http.StatusCreated, NewUserResponse(internal))
 }
 
@@ -981,6 +1036,9 @@ func updateUser(c *gin.Context) {
 	id := c.Param("id")
 	var userID int
 	fmt.Sscanf(id, "%d", &userID)
+
+	usersMu.Lock()
+	defer usersMu.Unlock()
 
 	_, exists := users[userID]
 	if !exists {
@@ -997,11 +1055,12 @@ func updateUser(c *gin.Context) {
 
 	// Convert to internal model (including nested profile if provided)
 	internal := UserInternal{
-		ID:       userID,
-		FullName: req.FullName,
-		Email:    req.Email,
-		Phone:    req.Phone,
-		Status:   req.Status,
+		ID:          userID,
+		FullName:    req.FullName,
+		Email:       req.Email,
+		Phone:       req.Phone,
+		Status:      req.Status,
+		LegacyNotes: req.LegacyNotes, // Auto-capture handles v1 round-trip
 	}
 
 	// Handle nested profile from request (demonstrates request nested transformation)

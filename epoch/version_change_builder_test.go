@@ -1,8 +1,12 @@
 package epoch
 
 import (
+	"net/http/httptest"
+	"reflect"
+
 	"github.com/bytedance/sonic"
 	"github.com/bytedance/sonic/ast"
+	"github.com/gin-gonic/gin"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -627,6 +631,165 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 				raw, _ := updatedItemsNode.Raw()
 				Expect(raw).To(ContainSubstring("OldName"))
 				Expect(raw).NotTo(ContainSubstring("BetterNewName"))
+			})
+		})
+	})
+
+	Describe("Auto-Capture Field Behavior", func() {
+		Describe("Context Helpers", func() {
+			var ginContext *gin.Context
+
+			BeforeEach(func() {
+				gin.SetMode(gin.TestMode)
+				w := httptest.NewRecorder()
+				ginContext, _ = gin.CreateTestContext(w)
+			})
+
+			It("should store and retrieve captured field values", func() {
+				SetCapturedField(ginContext, "email", "test@example.com")
+
+				value, exists := GetCapturedField(ginContext, "email")
+				Expect(exists).To(BeTrue())
+				Expect(value).To(Equal("test@example.com"))
+			})
+
+			It("should return false for non-existent captured fields", func() {
+				_, exists := GetCapturedField(ginContext, "nonexistent")
+				Expect(exists).To(BeFalse())
+			})
+
+			It("should allow same field name to flow from request to response types", func() {
+				// This is the key use case: RemoveField on RequestType captures value,
+				// AddField on ResponseType restores it - they share the same field name key
+				SetCapturedField(ginContext, "description", "User description")
+
+				// Later, response transformer can retrieve it
+				value, exists := GetCapturedField(ginContext, "description")
+				Expect(exists).To(BeTrue())
+				Expect(value).To(Equal("User description"))
+			})
+
+			It("should handle complex types as values", func() {
+				complexValue := map[string]interface{}{
+					"nested": "value",
+					"count":  float64(42),
+				}
+				SetCapturedField(ginContext, "metadata", complexValue)
+
+				value, exists := GetCapturedField(ginContext, "metadata")
+				Expect(exists).To(BeTrue())
+				Expect(value).To(HaveKeyWithValue("nested", "value"))
+				Expect(value).To(HaveKeyWithValue("count", float64(42)))
+			})
+
+			It("should handle nil context gracefully", func() {
+				// Should not panic
+				SetCapturedField(nil, "field", "value")
+
+				value, exists := GetCapturedField(nil, "field")
+				Expect(exists).To(BeFalse())
+				Expect(value).To(BeNil())
+			})
+
+			It("should check field existence with HasCapturedField", func() {
+				SetCapturedField(ginContext, "email", "test@example.com")
+
+				Expect(HasCapturedField(ginContext, "email")).To(BeTrue())
+				Expect(HasCapturedField(ginContext, "other")).To(BeFalse())
+			})
+		})
+
+		Describe("restoreCapturedFieldsToNode", func() {
+			var ginContext *gin.Context
+
+			BeforeEach(func() {
+				gin.SetMode(gin.TestMode)
+				w := httptest.NewRecorder()
+				ginContext, _ = gin.CreateTestContext(w)
+			})
+
+			It("should restore captured values for AddField operations", func() {
+				targetType := reflect.TypeOf(BuilderTestUser{})
+
+				// Simulate captured value from request
+				SetCapturedField(ginContext, "email", "captured@example.com")
+
+				// Response operations that include AddField for email
+				responseOps := ResponseToPreviousVersionOperationList{
+					&ResponseAddField{Name: "email", Default: "default@example.com"},
+				}
+
+				// Create a response node without the email field
+				node, _ := sonic.Get([]byte(`{"id": 1, "name": "Test"}`))
+				_ = node.Load()
+
+				// Restore captured fields
+				restoreCapturedFieldsToNode(ginContext, targetType, responseOps, &node)
+
+				// Email should now be populated with captured value
+				emailNode := node.Get("email")
+				Expect(emailNode.Exists()).To(BeTrue())
+				email, _ := emailNode.String()
+				Expect(email).To(Equal("captured@example.com"))
+			})
+
+			It("should not override existing fields in response", func() {
+				targetType := reflect.TypeOf(BuilderTestUser{})
+
+				// Simulate captured value
+				SetCapturedField(ginContext, "email", "captured@example.com")
+
+				responseOps := ResponseToPreviousVersionOperationList{
+					&ResponseAddField{Name: "email", Default: "default@example.com"},
+				}
+
+				// Response already has email from handler
+				node, _ := sonic.Get([]byte(`{"id": 1, "email": "handler@example.com"}`))
+				_ = node.Load()
+
+				restoreCapturedFieldsToNode(ginContext, targetType, responseOps, &node)
+
+				// Should keep handler's value, not captured or default
+				email, _ := node.Get("email").String()
+				Expect(email).To(Equal("handler@example.com"))
+			})
+
+			It("should handle nil context gracefully", func() {
+				targetType := reflect.TypeOf(BuilderTestUser{})
+				responseOps := ResponseToPreviousVersionOperationList{
+					&ResponseAddField{Name: "email", Default: "default@example.com"},
+				}
+
+				node, _ := sonic.Get([]byte(`{"id": 1}`))
+				_ = node.Load()
+
+				// Should not panic with nil context
+				restoreCapturedFieldsToNode(nil, targetType, responseOps, &node)
+
+				// Email should not be added (no context to get captured value from)
+				Expect(node.Get("email").Exists()).To(BeFalse())
+			})
+
+			It("should restore multiple captured fields", func() {
+				targetType := reflect.TypeOf(BuilderTestUser{})
+
+				SetCapturedField(ginContext, "email", "test@example.com")
+				SetCapturedField(ginContext, "phone", "+1-555-0100")
+
+				responseOps := ResponseToPreviousVersionOperationList{
+					&ResponseAddField{Name: "email", Default: "default@example.com"},
+					&ResponseAddField{Name: "phone", Default: "000-000-0000"},
+				}
+
+				node, _ := sonic.Get([]byte(`{"id": 1}`))
+				_ = node.Load()
+
+				restoreCapturedFieldsToNode(ginContext, targetType, responseOps, &node)
+
+				email, _ := node.Get("email").String()
+				phone, _ := node.Get("phone").String()
+				Expect(email).To(Equal("test@example.com"))
+				Expect(phone).To(Equal("+1-555-0100"))
 			})
 		})
 	})
