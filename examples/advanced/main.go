@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/astronomer/epoch/epoch"
@@ -38,24 +39,26 @@ type ProfileRequest struct {
 }
 
 // CreateUserRequest - What clients send to create a user (HEAD version)
-// v1 (2024-01-01): name, profile.biography, profile.skills[].skill_name
-// v2 (2024-06-01): name, email, status, profile.bio, profile.skills[].name + level
+// v1 (2024-01-01): name, legacy_notes, profile.biography, profile.skills[].skill_name
+// v2 (2024-06-01): name, email, status, profile.bio, profile.skills[].name + level (legacy_notes removed but auto-captured)
 // v3 (2025-01-01): full_name, email, phone, status, profile (all fields)
 type CreateUserRequest struct {
-	FullName string          `json:"full_name" binding:"required,max=100"`
-	Email    string          `json:"email" binding:"required,email"`
-	Phone    string          `json:"phone,omitempty"`
-	Status   string          `json:"status" binding:"required,oneof=active inactive pending suspended"`
-	Profile  *ProfileRequest `json:"profile,omitempty"` // Nested object with array and deeply nested settings
+	FullName    string          `json:"full_name" binding:"required,max=100"`
+	Email       string          `json:"email" binding:"required,email"`
+	Phone       string          `json:"phone,omitempty"`
+	Status      string          `json:"status" binding:"required,oneof=active inactive pending suspended"`
+	Profile     *ProfileRequest `json:"profile,omitempty"`      // Nested object with array and deeply nested settings
+	LegacyNotes string          `json:"legacy_notes,omitempty"` // Deprecated in v2+, auto-captured for round-trip preservation
 }
 
 // UpdateUserRequest - What clients send to update a user (HEAD version)
 type UpdateUserRequest struct {
-	FullName string          `json:"full_name" binding:"required,max=100"`
-	Email    string          `json:"email" binding:"required,email"`
-	Phone    string          `json:"phone,omitempty"`
-	Status   string          `json:"status" binding:"required,oneof=active inactive pending suspended"`
-	Profile  *ProfileRequest `json:"profile,omitempty"` // Nested object with array and deeply nested settings
+	FullName    string          `json:"full_name" binding:"required,max=100"`
+	Email       string          `json:"email" binding:"required,email"`
+	Phone       string          `json:"phone,omitempty"`
+	Status      string          `json:"status" binding:"required,oneof=active inactive pending suspended"`
+	Profile     *ProfileRequest `json:"profile,omitempty"`      // Nested object with array and deeply nested settings
+	LegacyNotes string          `json:"legacy_notes,omitempty"` // Deprecated in v2+, auto-captured
 }
 
 // ============================================================================
@@ -91,12 +94,13 @@ type UserProfile struct {
 // Migrations handle transforming this to v1/v2/v3 formats
 // Now includes Profile for nested transformation demonstrations
 type UserResponse struct {
-	ID       int          `json:"id,omitempty"`
-	FullName string       `json:"full_name"`
-	Email    string       `json:"email,omitempty"`
-	Phone    string       `json:"phone,omitempty"`
-	Status   string       `json:"status,omitempty"`
-	Profile  *UserProfile `json:"profile,omitempty"` // Nested object with array and deeply nested settings
+	ID          int          `json:"id,omitempty"`
+	FullName    string       `json:"full_name"`
+	Email       string       `json:"email,omitempty"`
+	Phone       string       `json:"phone,omitempty"`
+	Status      string       `json:"status,omitempty"`
+	Profile     *UserProfile `json:"profile,omitempty"`      // Nested object with array and deeply nested settings
+	LegacyNotes string       `json:"legacy_notes,omitempty"` // Auto-captured from request for v1 clients
 }
 
 type UsersListResponse struct {
@@ -123,12 +127,13 @@ type UserProfileInternal struct {
 }
 
 type UserInternal struct {
-	ID       int
-	FullName string
-	Email    string
-	Phone    string
-	Status   string
-	Profile  *UserProfileInternal
+	ID          int
+	FullName    string
+	Email       string
+	Phone       string
+	Status      string
+	Profile     *UserProfileInternal
+	LegacyNotes string // For auto-capture demo - stored but not used by v2+ handlers
 }
 
 // ============================================================================
@@ -281,11 +286,12 @@ type ExampleMetaInternal struct {
 // User conversions
 func NewUserResponse(u UserInternal) UserResponse {
 	resp := UserResponse{
-		ID:       u.ID,
-		FullName: u.FullName,
-		Email:    u.Email,
-		Phone:    u.Phone,
-		Status:   u.Status,
+		ID:          u.ID,
+		FullName:    u.FullName,
+		Email:       u.Email,
+		Phone:       u.Phone,
+		Status:      u.Status,
+		LegacyNotes: u.LegacyNotes, // Include for auto-capture demo
 	}
 	if u.Profile != nil {
 		skills := make([]Skill, len(u.Profile.Skills))
@@ -389,6 +395,7 @@ var (
 	users = map[int]UserInternal{
 		1: {
 			ID: 1, FullName: "Alice Johnson", Email: "alice@example.com", Phone: "+1-555-0100", Status: "active",
+			LegacyNotes: "Original v1 user - migrated from legacy system", // Demo: stored legacy notes
 			Profile: &UserProfileInternal{
 				Bio: "Senior software engineer with 10 years of experience",
 				Skills: []SkillInternal{
@@ -449,6 +456,11 @@ var (
 	nextUserID    = 3
 	nextProductID = 3
 	nextOrderID   = 2
+
+	// Mutexes for thread-safe access to in-memory storage
+	usersMu    sync.RWMutex
+	productsMu sync.RWMutex
+	ordersMu   sync.RWMutex
 )
 
 func main() {
@@ -761,6 +773,31 @@ func main() {
 	fmt.Println("  #           \"skills\":[{\"skill_name\":\"JavaScript\"},{\"skill_name\":\"React\"}],")
 	fmt.Println("  #           \"settings\":{\"color_theme\":\"light\"}}}")
 	fmt.Println("")
+	fmt.Println("🔄 16. AUTO-CAPTURE FIELD PRESERVATION (legacy_notes)")
+	fmt.Println("  # NEW FEATURE: Deprecated fields are automatically preserved from request to response!")
+	fmt.Println("  # V1 sends legacy_notes -> captured before removal -> restored in response")
+	fmt.Println("")
+	fmt.Println("  # Test 1: V1 POST with legacy_notes - value PRESERVED in response")
+	fmt.Println("  curl -X POST -H 'X-API-Version: 2024-01-01' -H 'Content-Type: application/json' \\")
+	fmt.Println("    -d '{\"name\":\"Auto Capture Test\",\"legacy_notes\":\"Important notes from v1 client\"}' \\")
+	fmt.Println("    http://localhost:8090/users")
+	fmt.Println("  # Expected: {...,\"legacy_notes\":\"Important notes from v1 client\"}")
+	fmt.Println("  # The value is NOT empty - it's the ORIGINAL value from the request!")
+	fmt.Println("")
+	fmt.Println("  # Test 2: V1 POST without legacy_notes - uses default empty string")
+	fmt.Println("  curl -X POST -H 'X-API-Version: 2024-01-01' -H 'Content-Type: application/json' \\")
+	fmt.Println("    -d '{\"name\":\"No Notes Test\"}' \\")
+	fmt.Println("    http://localhost:8090/users")
+	fmt.Println("  # Expected: {...,\"legacy_notes\":\"\"} (default value since not in request)")
+	fmt.Println("")
+	fmt.Println("  # Test 3: V1 GET existing user with stored legacy_notes")
+	fmt.Println("  curl -H 'X-API-Version: 2024-01-01' http://localhost:8090/users/1")
+	fmt.Println("  # Expected: {...,\"legacy_notes\":\"Original v1 user - migrated from legacy system\"}")
+	fmt.Println("")
+	fmt.Println("  # Test 4: V2 sees legacy_notes pass through (Cadwyn-style, schema ignores it)")
+	fmt.Println("  curl -H 'X-API-Version: 2024-06-01' http://localhost:8090/users/1")
+	fmt.Println("  # Expected: legacy_notes passes through (V2 schema ignores it, but data is there)")
+	fmt.Println("")
 	fmt.Println("🌐 Server listening on http://localhost:8090")
 	fmt.Println("   Use X-API-Version header to specify version")
 	fmt.Println("")
@@ -778,20 +815,26 @@ func main() {
 
 // createUserV1ToV2Migration defines migrations for TOP-LEVEL user fields only
 // Nested types (Profile, Skill, Settings) have their own separate migrations
+//
+// IMPORTANT: This migration demonstrates the AUTO-CAPTURE feature:
+// - RemoveField("legacy_notes") on request CAPTURES the value before removing
+// - AddField("legacy_notes", "") on response USES the captured value instead of the default
+// This enables seamless round-trip preservation of deprecated fields!
 func createUserV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
 	return epoch.NewVersionChangeBuilder(from, to).
-		Description("Add email and status fields for v1->v2").
+		Description("Add email and status fields, deprecate legacy_notes (auto-captured)").
 		// Only target top-level user types (NOT nested types - they have separate migrations)
 		ForType(UserResponse{}, CreateUserRequest{}, UpdateUserRequest{}).
-		// Requests: Client→HEAD (add defaults for old clients)
+		// Requests: Client→HEAD (add defaults for old clients, capture legacy_notes)
 		RequestToNextVersion().
 		AddField("email", "unknown@example.com"). // Add email with default for v1 clients
 		AddField("status", "active").             // Add status with default for v1 clients
-		RemoveField("temp_field").                // Remove deprecated field
-		// Responses: HEAD→Client (remove new fields for old clients)
+		RemoveField("legacy_notes").              // AUTO-CAPTURE: Captures value before removing!
+		// Responses: HEAD→Client (remove new fields, restore legacy_notes)
 		ResponseToPreviousVersion().
-		RemoveField("email").  // Remove email from responses for v1 clients
-		RemoveField("status"). // Remove status from responses for v1 clients
+		RemoveField("email").         // Remove email from responses for v1 clients
+		RemoveField("status").        // Remove status from responses for v1 clients
+		AddField("legacy_notes", ""). // AUTO-CAPTURE: Uses captured value from request, not ""!
 		Build()
 }
 
@@ -856,6 +899,7 @@ func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 		ResponseToPreviousVersion().
 		RenameField("full_name", "name"). // Rename back to old field name
 		RemoveField("phone").             // Remove phone from responses for v2 clients
+		// NOTE: legacy_notes passes through (Cadwyn-style) - V2 schema ignores it
 		Build()
 }
 
@@ -912,6 +956,9 @@ func createExampleV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange 
 // ============================================================================
 
 func listUsers(c *gin.Context) {
+	usersMu.RLock()
+	defer usersMu.RUnlock()
+
 	// Convert internal storage to list of internal models
 	userList := make([]UserInternal, 0, len(users))
 	for _, user := range users {
@@ -927,7 +974,10 @@ func getUser(c *gin.Context) {
 	var userID int
 	fmt.Sscanf(id, "%d", &userID)
 
+	usersMu.RLock()
 	user, exists := users[userID]
+	usersMu.RUnlock()
+
 	if !exists {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
@@ -945,13 +995,17 @@ func createUser(c *gin.Context) {
 		return
 	}
 
+	usersMu.Lock()
+	defer usersMu.Unlock()
+
 	// Convert to internal model (including nested profile if provided)
 	internal := UserInternal{
-		ID:       nextUserID,
-		FullName: req.FullName,
-		Email:    req.Email,
-		Phone:    req.Phone,
-		Status:   req.Status,
+		ID:          nextUserID,
+		FullName:    req.FullName,
+		Email:       req.Email,
+		Phone:       req.Phone,
+		Status:      req.Status,
+		LegacyNotes: req.LegacyNotes, // Will be empty for v2+ (auto-capture handles v1)
 	}
 
 	// Handle nested profile from request (demonstrates request nested transformation)
@@ -974,6 +1028,7 @@ func createUser(c *gin.Context) {
 
 	// Always return HEAD version response struct
 	// Epoch middleware will transform it to the client's requested version
+	// For v1 clients: auto-capture will restore legacy_notes from the request!
 	c.JSON(http.StatusCreated, NewUserResponse(internal))
 }
 
@@ -981,6 +1036,9 @@ func updateUser(c *gin.Context) {
 	id := c.Param("id")
 	var userID int
 	fmt.Sscanf(id, "%d", &userID)
+
+	usersMu.Lock()
+	defer usersMu.Unlock()
 
 	_, exists := users[userID]
 	if !exists {
@@ -997,11 +1055,12 @@ func updateUser(c *gin.Context) {
 
 	// Convert to internal model (including nested profile if provided)
 	internal := UserInternal{
-		ID:       userID,
-		FullName: req.FullName,
-		Email:    req.Email,
-		Phone:    req.Phone,
-		Status:   req.Status,
+		ID:          userID,
+		FullName:    req.FullName,
+		Email:       req.Email,
+		Phone:       req.Phone,
+		Status:      req.Status,
+		LegacyNotes: req.LegacyNotes, // Auto-capture handles v1 round-trip
 	}
 
 	// Handle nested profile from request (demonstrates request nested transformation)
