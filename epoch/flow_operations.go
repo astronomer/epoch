@@ -2,6 +2,7 @@ package epoch
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/bytedance/sonic/ast"
 )
@@ -261,7 +262,7 @@ func (op *ResponseRemoveFieldIfDefault) ApplyToResponse(node *ast.Node) error {
 	}
 
 	// Compare with default - only remove if they match
-	if fieldValue == op.Default {
+	if reflect.DeepEqual(fieldValue, op.Default) {
 		return DeleteNodeField(node, op.Name)
 	}
 
