@@ -37,6 +37,8 @@ go get github.com/astronomer/epoch
 package main
 
 import (
+    "log"
+
     "github.com/astronomer/epoch/epoch"
     "github.com/gin-gonic/gin"
 )
@@ -52,7 +54,7 @@ func main() {
     v1, _ := epoch.NewSemverVersion("1.0.0")
     v2, _ := epoch.NewSemverVersion("2.0.0")
     
-    migration := epoch.NewVersionChangeBuilder(v1, v2).
+    migration, err := epoch.NewVersionChangeBuilder(v1, v2).
         Description("Add email to User").
         ForType(User{}).
             RequestToNextVersion().
@@ -60,6 +62,9 @@ func main() {
             ResponseToPreviousVersion().
                 RemoveField("email").
         Build()
+    if err != nil {
+        log.Fatal(err)
+    }
 
     // Setup Epoch
     epochInstance, err := epoch.NewEpoch().
@@ -69,7 +74,7 @@ func main() {
         Build()
     
     if err != nil {
-        panic(err) 
+        log.Fatal(err)
     }
 
     // Add to Gin
@@ -122,13 +127,16 @@ The new framework uses **flow-based operations** that match the actual migration
 When a v1 client sends a request, it needs to be migrated TO the HEAD version:
 
 ```go
-migration := epoch.NewVersionChangeBuilder(v1, v2).
+migration, err := epoch.NewVersionChangeBuilder(v1, v2).
     ForType(User{}).
         RequestToNextVersion().
             AddField("email", "default@example.com").      // Add field for old clients
             RemoveField("deprecated_field").               // Remove deprecated field
             RenameField("name", "full_name").              // Rename old field to new
         Build()
+if err != nil {
+    // handle err
+}
 ```
 
 ### Response Operations (HEAD → Client)
@@ -136,13 +144,16 @@ migration := epoch.NewVersionChangeBuilder(v1, v2).
 When returning to a v1 client, response needs to be migrated FROM HEAD to v1:
 
 ```go
-migration := epoch.NewVersionChangeBuilder(v1, v2).
+migration, err := epoch.NewVersionChangeBuilder(v1, v2).
     ForType(User{}).
         ResponseToPreviousVersion().
             RemoveField("email").                          // Remove new fields
             AddField("old_field", "default").              // Restore old fields
             RenameField("full_name", "name").              // Rename back to old name
         Build()
+if err != nil {
+    // handle err
+}
 ```
 
 ### Available Operations
@@ -191,7 +202,7 @@ r.GET("/users",
 You can migrate multiple types together:
 
 ```go
-migration := epoch.NewVersionChangeBuilder(v2, v3).
+migration, err := epoch.NewVersionChangeBuilder(v2, v3).
     Description("Update User and Product").
     ForType(User{}).
         ResponseToPreviousVersion().
@@ -200,6 +211,9 @@ migration := epoch.NewVersionChangeBuilder(v2, v3).
         ResponseToPreviousVersion().
             RemoveField("currency").
     Build()
+if err != nil {
+    // handle err
+}
 ```
 
 ## Custom Transformations
@@ -207,7 +221,7 @@ migration := epoch.NewVersionChangeBuilder(v2, v3).
 Mix declarative operations with custom logic:
 
 ```go
-migration := epoch.NewVersionChangeBuilder(v1, v2).
+migration, err := epoch.NewVersionChangeBuilder(v1, v2).
     ForType(User{}).
         RequestToNextVersion().
             AddField("email", "default@example.com").
@@ -219,6 +233,9 @@ migration := epoch.NewVersionChangeBuilder(v1, v2).
                 return nil
             }).
     Build()
+if err != nil {
+    // handle err
+}
 ```
 
 ## Global Transformers
@@ -226,7 +243,7 @@ migration := epoch.NewVersionChangeBuilder(v1, v2).
 Apply transformations to all types:
 
 ```go
-migration := epoch.NewVersionChangeBuilder(v1, v2).
+migration, err := epoch.NewVersionChangeBuilder(v1, v2).
     CustomRequest(func(req *epoch.RequestInfo) error {
         // Applies to ALL request types
         return nil
@@ -239,6 +256,9 @@ migration := epoch.NewVersionChangeBuilder(v1, v2).
         ResponseToPreviousVersion().
             RemoveField("email").
     Build()
+if err != nil {
+    // handle err
+}
 ```
 
 ## Helper Methods
@@ -385,15 +405,21 @@ Keep migrations focused on single types:
 
 ```go
 // ✅ Good - separate migrations per type
-userChange := epoch.NewVersionChangeBuilder(v1, v2).
+userChange, err := epoch.NewVersionChangeBuilder(v1, v2).
     ForType(User{}).
         ResponseToPreviousVersion().RemoveField("email").
     Build()
+if err != nil {
+    // handle err
+}
 
-productChange := epoch.NewVersionChangeBuilder(v1, v2).
+productChange, err := epoch.NewVersionChangeBuilder(v1, v2).
     ForType(Product{}).
         ResponseToPreviousVersion().RemoveField("sku").
     Build()
+if err != nil {
+    // handle err
+}
 
 // ❌ Avoid - mixing types in operations can be confusing
 ```
@@ -404,13 +430,16 @@ Use operations that match the actual migration direction:
 
 ```go
 // ✅ Good - clear flow direction
-migration := epoch.NewVersionChangeBuilder(v1, v2).
+migration, err := epoch.NewVersionChangeBuilder(v1, v2).
     ForType(User{}).
         RequestToNextVersion().      // Client → HEAD
             AddField("email", "default").
         ResponseToPreviousVersion(). // HEAD → Client
             RemoveField("email").
     Build()
+if err != nil {
+    // handle err
+}
 ```
 
 ## Testing

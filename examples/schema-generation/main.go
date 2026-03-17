@@ -466,7 +466,7 @@ func main() {
 	// HEAD has these fields, v1 doesn't, so:
 	// - Response: Remove them when sending to v1 (ResponseToPreviousVersion)
 	// - Request: Add them when v1 client sends request (RequestToNextVersion)
-	v1ToV2 := epoch.NewVersionChangeBuilder(v1, v2).
+	v1ToV2, err := epoch.NewVersionChangeBuilder(v1, v2).
 		Description("Add email and status fields to User").
 		ForType(CreateUserRequest{}).
 		RequestToNextVersion().
@@ -477,12 +477,15 @@ func main() {
 		RemoveField("email").
 		RemoveField("status").
 		Build()
+	if err != nil {
+		log.Fatalf("Failed to build v1ToV2 migration: %v", err)
+	}
 
 	// v2→v3: Rename name to full_name, add phone
 	// HEAD has full_name and phone, v2 has name (no phone), so:
 	// - Response: Rename full_name→name, remove phone when sending to v2
 	// - Request: Rename name→full_name, add phone when v2 client sends request
-	v2ToV3 := epoch.NewVersionChangeBuilder(v2, v3).
+	v2ToV3, err := epoch.NewVersionChangeBuilder(v2, v3).
 		Description("Rename name to full_name, add phone").
 		ForType(CreateUserRequest{}).
 		RequestToNextVersion().
@@ -493,13 +496,16 @@ func main() {
 		RenameField("full_name", "name").
 		RemoveField("phone").
 		Build()
+	if err != nil {
+		log.Fatalf("Failed to build v2ToV3 migration: %v", err)
+	}
 
 	// ============================================================================
 	// NESTED TYPE MIGRATIONS (separate migrations for each nested type)
 	// ============================================================================
 
 	// Profile migration: bio ↔ biography
-	profileV1ToV2 := epoch.NewVersionChangeBuilder(v1, v2).
+	profileV1ToV2, err := epoch.NewVersionChangeBuilder(v1, v2).
 		Description("Transform profile.biography -> profile.bio").
 		ForType(UserProfile{}, ProfileRequest{}).
 		RequestToNextVersion().
@@ -507,9 +513,12 @@ func main() {
 		ResponseToPreviousVersion().
 		RenameField("bio", "biography").
 		Build()
+	if err != nil {
+		log.Fatalf("Failed to build profileV1ToV2 migration: %v", err)
+	}
 
 	// Skill migration: name ↔ skill_name, add/remove level
-	skillV1ToV2 := epoch.NewVersionChangeBuilder(v1, v2).
+	skillV1ToV2, err := epoch.NewVersionChangeBuilder(v1, v2).
 		Description("Transform skills[].skill_name -> skills[].name, add level").
 		ForType(Skill{}, SkillRequest{}).
 		RequestToNextVersion().
@@ -519,9 +528,12 @@ func main() {
 		RenameField("name", "skill_name").
 		RemoveField("level").
 		Build()
+	if err != nil {
+		log.Fatalf("Failed to build skillV1ToV2 migration: %v", err)
+	}
 
 	// ProfileSettings migration: theme ↔ color_theme
-	settingsV1ToV2 := epoch.NewVersionChangeBuilder(v1, v2).
+	settingsV1ToV2, err := epoch.NewVersionChangeBuilder(v1, v2).
 		Description("Transform settings.color_theme -> settings.theme").
 		ForType(ProfileSettings{}, ProfileSettingsRequest{}).
 		RequestToNextVersion().
@@ -529,6 +541,9 @@ func main() {
 		ResponseToPreviousVersion().
 		RenameField("theme", "color_theme").
 		Build()
+	if err != nil {
+		log.Fatalf("Failed to build settingsV1ToV2 migration: %v", err)
+	}
 
 	// Create Epoch instance with all types and migrations
 	epochInstance, err := epoch.NewEpoch().

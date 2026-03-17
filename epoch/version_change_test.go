@@ -402,21 +402,23 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 		It("should apply transformations step-by-step (V3→V2→V1)", func() {
 			// V1→V2 migration: title → name, remove category
 			// (When going backward V2→V1)
-			change1 := NewVersionChangeBuilder(v1, v2).
+			change1, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("title", "name").
 				RemoveField("category").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			// V2→V3 migration: display_name → title, remove priority
 			// (When going backward V3→V2)
-			change2 := NewVersionChangeBuilder(v2, v3).
+			change2, err := NewVersionChangeBuilder(v2, v3).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("display_name", "title").
 				RemoveField("priority").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			// Build chain
 			chain, err := NewMigrationChain([]*VersionChange{change1, change2})
@@ -469,12 +471,13 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 
 		It("should handle V3→V2 migrations correctly", func() {
 			// V2→V3 migration
-			change := NewVersionChangeBuilder(v2, v3).
+			change, err := NewVersionChangeBuilder(v2, v3).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("display_name", "title").
 				RemoveField("priority").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -511,19 +514,21 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 		})
 
 		It("should handle multiple items in nested arrays", func() {
-			change1 := NewVersionChangeBuilder(v1, v2).
+			change1, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("title", "name").
 				RemoveField("category").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			change2 := NewVersionChangeBuilder(v2, v3).
+			change2, err := NewVersionChangeBuilder(v2, v3).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("display_name", "title").
 				RemoveField("priority").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{change1, change2})
 			Expect(err).NotTo(HaveOccurred())
@@ -566,11 +571,12 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 		})
 
 		It("should handle empty nested arrays gracefully", func() {
-			change := NewVersionChangeBuilder(v2, v3).
+			change, err := NewVersionChangeBuilder(v2, v3).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("display_name", "title").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -595,11 +601,12 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 		})
 
 		It("should preserve nestedArrayTypes through migration chain", func() {
-			change := NewVersionChangeBuilder(v2, v3).
+			change, err := NewVersionChangeBuilder(v2, v3).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("display_name", "title").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -790,11 +797,12 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 	Describe("Nested object transformations", func() {
 		It("should demonstrate that standard RenameField does NOT work on nested fields", func() {
 			// This test documents the LIMITATION: standard operations only work on top-level
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Container{}).
 				ResponseToPreviousVersion().
 				RenameField("created_by", "author"). // This targets top-level, not nested metadata!
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -823,11 +831,12 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 
 		It("should transform nested objects using MigrateResponseForTypeWithNestedObjects", func() {
 			// Migration for Metadata type
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Container{}, Metadata{}).
 				ResponseToPreviousVersion().
 				RenameField("created_by", "author").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -866,17 +875,19 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 			// Each item has a details object (nested object inside array item)
 			// With recursive transformation, the details object WILL be transformed
 
-			detailsChange := NewVersionChangeBuilder(v1, v2).
+			detailsChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Details{}).
 				ResponseToPreviousVersion().
 				RenameField("last_updated", "updated_at").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			itemChange := NewVersionChangeBuilder(v1, v2).
+			itemChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("display_name", "name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{detailsChange, itemChange})
 			Expect(err).NotTo(HaveOccurred())
@@ -925,17 +936,19 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 		It("should recursively transform both first-level and second-level array items", func() {
 			// Test items[].subitems[] - two-level nesting
 			// With recursive transformation, both levels should be transformed
-			subItemChange := NewVersionChangeBuilder(v1, v2).
+			subItemChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(SubItem{}).
 				ResponseToPreviousVersion().
 				RenameField("label", "name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			itemChange := NewVersionChangeBuilder(v1, v2).
+			itemChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("display_name", "title").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{subItemChange, itemChange})
 			Expect(err).NotTo(HaveOccurred())
@@ -1006,17 +1019,19 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 		}
 
 		It("should handle multiple arrays registered at same level", func() {
-			userChange := NewVersionChangeBuilder(v1, v2).
+			userChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(UserItem{}).
 				ResponseToPreviousVersion().
 				RenameField("name", "user_name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			productChange := NewVersionChangeBuilder(v1, v2).
+			productChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(ProductItem{}).
 				ResponseToPreviousVersion().
 				RenameField("title", "product_title").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{userChange, productChange})
 			Expect(err).NotTo(HaveOccurred())
@@ -1055,11 +1070,12 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 
 	Describe("Edge cases and error handling", func() {
 		It("should handle null field values gracefully", func() {
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("display_name", "name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -1089,11 +1105,12 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 		})
 
 		It("should handle type mismatch gracefully (expected array got object)", func() {
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("display_name", "name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -1119,11 +1136,12 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 		})
 
 		It("should handle missing field to rename gracefully", func() {
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("nonexistent_field", "new_name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -1153,11 +1171,12 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 		})
 
 		It("should handle large payloads with many nested items", func() {
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Item{}).
 				ResponseToPreviousVersion().
 				RenameField("display_name", "name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -1226,23 +1245,26 @@ var _ = Describe("Nested Array Multi-Step Migrations", func() {
 				Items []ItemWithDeepNesting `json:"items"`
 			}
 
-			subSubItemChange := NewVersionChangeBuilder(v1, v2).
+			subSubItemChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(SubSubItem{}).
 				ResponseToPreviousVersion().
 				RenameField("code", "item_code").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			subItemChange := NewVersionChangeBuilder(v1, v2).
+			subItemChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(SubItemWithNesting{}).
 				ResponseToPreviousVersion().
 				RenameField("label", "sub_label").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			itemChange := NewVersionChangeBuilder(v1, v2).
+			itemChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(ItemWithDeepNesting{}).
 				ResponseToPreviousVersion().
 				RenameField("name", "item_name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			chain, err := NewMigrationChain([]*VersionChange{subSubItemChange, subItemChange, itemChange})
 			Expect(err).NotTo(HaveOccurred())

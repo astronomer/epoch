@@ -458,22 +458,55 @@ func main() {
 	v3, _ := epoch.NewDateVersion("2025-01-01")
 
 	// Build Epoch instance
+	userV1ToV2, err := createUserV1ToV2Migration(v1, v2)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to build migration: %v", err))
+	}
+	profileV1ToV2, err := createProfileV1ToV2Migration(v1, v2)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to build migration: %v", err))
+	}
+	skillV1ToV2, err := createSkillV1ToV2Migration(v1, v2)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to build migration: %v", err))
+	}
+	profileSettingsV1ToV2, err := createProfileSettingsV1ToV2Migration(v1, v2)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to build migration: %v", err))
+	}
+	userV2ToV3, err := createUserV2ToV3Migration(v2, v3)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to build migration: %v", err))
+	}
+	productV2ToV3, err := createProductV2ToV3Migration(v2, v3)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to build migration: %v", err))
+	}
+	exampleV1ToV2, err := createExampleV1ToV2Migration(v1, v2)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to build migration: %v", err))
+	}
+	exampleV2ToV3, err := createExampleV2ToV3Migration(v2, v3)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to build migration: %v", err))
+	}
+
 	epochInstance, err := epoch.NewEpoch().
 		WithVersions(v1, v2, v3).
 		WithHeadVersion().
 		WithChanges(
 			// User v1->v2: Top-level fields + nested type transformations (separate for each type)
-			createUserV1ToV2Migration(v1, v2),
-			createProfileV1ToV2Migration(v1, v2),
-			createSkillV1ToV2Migration(v1, v2),
-			createProfileSettingsV1ToV2Migration(v1, v2),
+			userV1ToV2,
+			profileV1ToV2,
+			skillV1ToV2,
+			profileSettingsV1ToV2,
 			// User v2->v3
-			createUserV2ToV3Migration(v2, v3),
+			userV2ToV3,
 			// Product v2->v3
-			createProductV2ToV3Migration(v2, v3),
+			productV2ToV3,
 			// Example migrations
-			createExampleV1ToV2Migration(v1, v2),
-			createExampleV2ToV3Migration(v2, v3),
+			exampleV1ToV2,
+			exampleV2ToV3,
 		).
 		WithTypes(
 			// User types (including nested types for profile, skills, settings)
@@ -778,7 +811,7 @@ func main() {
 
 // createUserV1ToV2Migration defines migrations for TOP-LEVEL user fields only
 // Nested types (Profile, Skill, Settings) have their own separate migrations
-func createUserV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
+func createUserV1ToV2Migration(from, to *epoch.Version) (*epoch.VersionChange, error) {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Add email and status fields for v1->v2").
 		// Only target top-level user types (NOT nested types - they have separate migrations)
@@ -796,7 +829,7 @@ func createUserV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
 }
 
 // createProfileV1ToV2Migration handles nested Profile object transformations
-func createProfileV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
+func createProfileV1ToV2Migration(from, to *epoch.Version) (*epoch.VersionChange, error) {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Transform profile.biography -> profile.bio").
 		// Target ONLY Profile types (response and request)
@@ -811,7 +844,7 @@ func createProfileV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange 
 }
 
 // createSkillV1ToV2Migration handles nested Skill array item transformations
-func createSkillV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
+func createSkillV1ToV2Migration(from, to *epoch.Version) (*epoch.VersionChange, error) {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Transform skills[].skill_name -> skills[].name, add level").
 		// Target ONLY Skill types (response and request)
@@ -828,7 +861,7 @@ func createSkillV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
 }
 
 // createProfileSettingsV1ToV2Migration handles deeply nested Settings transformations
-func createProfileSettingsV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
+func createProfileSettingsV1ToV2Migration(from, to *epoch.Version) (*epoch.VersionChange, error) {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Transform settings.color_theme -> settings.theme").
 		// Target ONLY ProfileSettings types (response and request)
@@ -843,7 +876,7 @@ func createProfileSettingsV1ToV2Migration(from, to *epoch.Version) *epoch.Versio
 }
 
 // createUserV2ToV3Migration defines the migration from v2 to v3
-func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
+func createUserV2ToV3Migration(from, to *epoch.Version) (*epoch.VersionChange, error) {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Rename name to full_name, add phone").
 		// Only target top-level user types
@@ -861,7 +894,7 @@ func createUserV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
 
 // createProductV2ToV3Migration defines the migration from v2 to v3 for products
 // This uses the NEW flow-based API with only 2 directions
-func createProductV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
+func createProductV2ToV3Migration(from, to *epoch.Version) (*epoch.VersionChange, error) {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Add description and currency to Product").
 		// TYPE-BASED ROUTING: Target all Product-related request/response types
@@ -880,7 +913,7 @@ func createProductV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange 
 // createExampleV1ToV2Migration
 // This migration affects the ExampleItem structs inside the Examples array
 // Also demonstrates 2-level nested array transformation (examples[].sub_items[])
-func createExampleV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange {
+func createExampleV1ToV2Migration(from, to *epoch.Version) (*epoch.VersionChange, error) {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Rename name to title in nested array items, add category field, transform sub_items").
 		// TYPE-BASED ROUTING: Target the container, nested item types, and sub-item types
@@ -894,7 +927,7 @@ func createExampleV1ToV2Migration(from, to *epoch.Version) *epoch.VersionChange 
 }
 
 // createExampleV2ToV3Migration
-func createExampleV2ToV3Migration(from, to *epoch.Version) *epoch.VersionChange {
+func createExampleV2ToV3Migration(from, to *epoch.Version) (*epoch.VersionChange, error) {
 	return epoch.NewVersionChangeBuilder(from, to).
 		Description("Rename title to display_name in nested array items, add priority field, rename updated_at to last_updated in metadata").
 		// TYPE-BASED ROUTING: Target the container, nested item response, metadata response, and sub-item types

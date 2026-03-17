@@ -186,12 +186,13 @@ var _ = Describe("SchemaGenerator", func() {
 			v2, _ := epoch.NewDateVersion("2024-06-01")
 
 			// Create version change
-			change := epoch.NewVersionChangeBuilder(v1, v2).
+			change, err := epoch.NewVersionChangeBuilder(v1, v2).
 				Description("Add email field").
 				ForType(TestUserResponse{}).
 				ResponseToPreviousVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			// Create version bundle
 			versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
@@ -266,12 +267,13 @@ var _ = Describe("SchemaGenerator", func() {
 			versionBundle, _ := epoch.NewVersionBundle([]*epoch.Version{v1})
 
 			// Create version change: remove 'email' field in v1
-			change := epoch.NewVersionChangeBuilder(v1, headVersion).
+			change, err := epoch.NewVersionChangeBuilder(v1, headVersion).
 				Description("Add email field").
 				ForType(TestUserResponse{}).
 				ResponseToPreviousVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			v1.Changes = []epoch.VersionChangeInterface{change}
 
@@ -394,7 +396,7 @@ var _ = Describe("SchemaGenerator", func() {
 				headVersion := epoch.NewHeadVersion()
 
 				// Migration from v1 to HEAD
-				change := epoch.NewVersionChangeBuilder(v1, headVersion).
+				change, err := epoch.NewVersionChangeBuilder(v1, headVersion).
 					Description("Add betterNewName and timezone fields").
 					ForType(UpdateExampleRequest{}).
 					ResponseToPreviousVersion().
@@ -404,6 +406,7 @@ var _ = Describe("SchemaGenerator", func() {
 					RenameField("name", "betterNewName").
 					AddField("timezone", "").
 					Build()
+				Expect(err).NotTo(HaveOccurred())
 
 				vb, err := epoch.NewVersionBundle([]*epoch.Version{headVersion, v1})
 				Expect(err).NotTo(HaveOccurred())
