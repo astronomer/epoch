@@ -401,7 +401,13 @@ func (vah *VersionAwareHandler) handleWithMigration(c *gin.Context, requestedVer
 		body:           make([]byte, 0),
 		statusCode:     200,
 	}
+	originalWriter := c.Writer
 	c.Writer = responseCapture
+
+	// Ensure the original writer is always restored, even if the handler panics.
+	// Without this, Gin's recovery middleware would operate on the capture writer,
+	// causing broken error responses.
+	defer func() { c.Writer = originalWriter }()
 
 	// 3. Call the handler (which expects head version data)
 	vah.handler(c)
@@ -510,7 +516,9 @@ func (vah *VersionAwareHandler) migrateRequest(
 		return fmt.Errorf("failed to get raw JSON from migrated request: %w", err)
 	}
 
-	c.Request.Body = io.NopCloser(bytes.NewReader([]byte(migratedJSON)))
+	migratedBytes := []byte(migratedJSON)
+	c.Request.Body = io.NopCloser(bytes.NewReader(migratedBytes))
+	c.Request.ContentLength = int64(len(migratedBytes))
 
 	return nil
 }

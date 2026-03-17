@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic/ast"
+	"github.com/gin-gonic/gin"
 )
 
 // ============================================================================
@@ -128,6 +129,20 @@ func (b *versionChangeBuilder) Build() (*VersionChange, error) {
 						return nil
 					}
 
+					// Before applying RemoveField operations, capture the field values
+					for _, op := range requestOpsCopy {
+						if removeOp, ok := op.(*RequestRemoveField); ok {
+							fieldNode := req.Body.Get(removeOp.Name)
+							if fieldNode != nil && fieldNode.Exists() {
+								// Capture the field value before removal
+								value, err := fieldNode.Interface()
+								if err == nil && req.GinContext != nil {
+									SetCapturedField(req.GinContext, removeOp.Name, value)
+								}
+							}
+						}
+					}
+
 					// Request migration is always FROM client version TO HEAD version
 					// Apply "to next version" operations (Client→HEAD)
 					return requestOpsCopy.Apply(req.Body)
@@ -151,6 +166,9 @@ func (b *versionChangeBuilder) Build() (*VersionChange, error) {
 						if resp.Body.TypeSafe() == ast.V_ARRAY {
 							// For arrays, apply operations to each item
 							if err := resp.TransformArrayField("", func(node *ast.Node) error {
+								// Pre-populate captured values before AddField operations
+								restoreCapturedFieldsToNode(resp.GinContext, targetTypeCopy, responseOpsCopy, node)
+
 								// Response migration is always FROM HEAD version TO client version
 								// Apply "to previous version" operations (HEAD→Client)
 								return responseOpsCopy.Apply(node)
@@ -158,6 +176,9 @@ func (b *versionChangeBuilder) Build() (*VersionChange, error) {
 								return err
 							}
 						} else {
+							// Pre-populate captured values before AddField operations
+							restoreCapturedFieldsToNode(resp.GinContext, targetTypeCopy, responseOpsCopy, resp.Body)
+
 							// For objects, apply operations to the object
 							// Response migration is always FROM HEAD version TO client version
 							if err := responseOpsCopy.Apply(resp.Body); err != nil {
@@ -390,9 +411,38 @@ func (b *responseToPreviousVersionBuilder) Build() (*VersionChange, error) {
 	return b.parent.Build()
 }
 
-// ============================================================================
-// ERROR FIELD NAME TRANSFORMATION HELPERS
-// ============================================================================
+// restoreCapturedFieldsToNode pre-populates captured request field values into the response node
+// before AddField operations run. Since AddField skips existing fields, this effectively
+// restores the original request values instead of using hardcoded defaults.
+// This is called for each node (root object or array items) during response transformation.
+func restoreCapturedFieldsToNode(
+	ctx *gin.Context,
+	targetType reflect.Type,
+	responseOps ResponseToPreviousVersionOperationList,
+	node *ast.Node,
+) {
+	if ctx == nil || node == nil {
+		return
+	}
+
+	// For each AddField operation, check if we have a captured value
+	for _, op := range responseOps {
+		if addOp, ok := op.(*ResponseAddField); ok {
+			// Only restore if the field doesn't already exist in the response
+			// (handler may have explicitly set it)
+			if node.Get(addOp.Name).Exists() {
+				continue
+			}
+
+			// Check for a captured value from request migration
+			if capturedValue, exists := GetCapturedField(ctx, addOp.Name); exists {
+				// Pre-populate the field with captured value
+				// AddField will then skip this field since it exists
+				_ = SetNodeField(node, addOp.Name, capturedValue)
+			}
+		}
+	}
+}
 
 // transformErrorFieldNamesInResponse transforms field names in error messages
 // Works with any error response format by recursively processing all string fields
