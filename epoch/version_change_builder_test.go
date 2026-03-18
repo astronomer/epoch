@@ -135,11 +135,11 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 
 		It("should apply RequestToNextVersion operations correctly", func() {
 			migration, err := NewVersionChangeBuilder(v1, v2). // v1→v2 migration
-									ForType(BuilderTestUser{}).
-									RequestToNextVersion().
-									AddField("created_at", "2024-01-01").
-									RenameField("name", "full_name").
-									Build()
+										ForType(BuilderTestUser{}).
+										RequestToNextVersion().
+										AddField("created_at", "2024-01-01").
+										RenameField("name", "full_name").
+										Build()
 			Expect(err).NotTo(HaveOccurred())
 
 			// Create a mock RequestInfo
@@ -167,11 +167,11 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 
 		It("should apply ResponseToPreviousVersion operations correctly", func() {
 			migration, err := NewVersionChangeBuilder(v2, v1). // v2→v1 migration
-									ForType(BuilderTestUser{}).
-									ResponseToPreviousVersion().
-									RemoveField("email").
-									AddField("legacy_field", "legacy_value").
-									Build()
+										ForType(BuilderTestUser{}).
+										ResponseToPreviousVersion().
+										RemoveField("email").
+										AddField("legacy_field", "legacy_value").
+										Build()
 			Expect(err).NotTo(HaveOccurred())
 
 			// Create a mock ResponseInfo

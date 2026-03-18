@@ -1997,7 +1997,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 
 			// V1→V2: Remove deprecated fields from request, add them back in response
 			// The auto-capture feature should preserve the original values
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Remove description and metadata fields").
 				ForType(AutoCaptureRequest{}).
 				RequestToNextVersion().
@@ -2008,6 +2008,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				AddField("description", "default description"). // Uses captured value instead
 				AddField("metadata", "default metadata").       // Uses captured value instead
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -2073,7 +2074,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Handle optional field").
 				ForType(AutoCaptureRequest{}).
 				RequestToNextVersion().
@@ -2082,6 +2083,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				AddField("description", "default description").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -2122,7 +2124,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Handler override test").
 				ForType(AutoCaptureRequest{}).
 				RequestToNextVersion().
@@ -2131,6 +2133,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				AddField("description", "default description").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -2187,7 +2190,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Complex field preservation").
 				ForType(ComplexRequest{}).
 				RequestToNextVersion().
@@ -2196,6 +2199,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				AddField("settings", map[string]interface{}{"default": true}).
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -2261,7 +2265,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Concurrent test").
 				ForType(ConcurrentRequest{}).
 				RequestToNextVersion().
@@ -2270,6 +2274,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				AddField("description", "default").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
