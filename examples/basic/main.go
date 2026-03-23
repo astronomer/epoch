@@ -30,10 +30,15 @@ func main() {
 	fmt.Println("")
 
 	// Build Epoch instance with automatic cycle detection
+	v1ToV2Change, err := createV1ToV2Change()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to build version change: %v", err))
+	}
+
 	epochInstance, err := epoch.NewEpoch().
 		WithSemverVersions("1.0.0", "2.0.0").
 		WithHeadVersion().
-		WithChanges(createV1ToV2Change()).
+		WithChanges(v1ToV2Change).
 		Build()
 
 	if err != nil {
@@ -79,7 +84,7 @@ func main() {
 // This uses the NEW flow-based API with only 2 directions (matching actual flow):
 //  1. RequestToNextVersion: Client→HEAD (ONLY direction requests flow)
 //  2. ResponseToPreviousVersion: HEAD→Client (ONLY direction responses flow)
-func createV1ToV2Change() *epoch.VersionChange {
+func createV1ToV2Change() (*epoch.VersionChange, error) {
 	v1, _ := epoch.NewSemverVersion("1.0.0")
 	v2, _ := epoch.NewSemverVersion("2.0.0")
 

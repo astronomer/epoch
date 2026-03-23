@@ -103,7 +103,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2024-06-01")
 
 			// V1→V2: Add email field
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Add email field to User").
 				ForType(User{}).
 				RequestToNextVersion().
@@ -111,6 +111,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -167,7 +168,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Rename name to full_name").
 				ForType(User{}).
 				RequestToNextVersion().
@@ -175,6 +176,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				RenameField("full_name", "name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -220,13 +222,14 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewSemverVersion("1.0.0")
 			v2, _ := NewSemverVersion("2.0.0")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				RequestToNextVersion().
 				AddField("email", "default@example.com").
 				ResponseToPreviousVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := NewEpoch().
 				WithVersions(v1, v2).
@@ -265,13 +268,14 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				RequestToNextVersion().
 				AddField("email", "unknown@example.com").
 				ResponseToPreviousVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -307,13 +311,14 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				RequestToNextVersion().
 				AddField("email", "unknown@example.com").
 				ResponseToPreviousVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -365,22 +370,24 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v3, _ := NewDateVersion("2025-01-01")
 
 			// V1->V2: Add currency
-			change1 := NewVersionChangeBuilder(v1, v2).
+			change1, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Product{}).
 				RequestToNextVersion().
 				AddField("currency", "USD").
 				ResponseToPreviousVersion().
 				RemoveField("currency").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			// V2->V3: Add description
-			change2 := NewVersionChangeBuilder(v2, v3).
+			change2, err := NewVersionChangeBuilder(v2, v3).
 				ForType(Product{}).
 				RequestToNextVersion().
 				AddField("description", "").
 				ResponseToPreviousVersion().
 				RemoveField("description").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2, v3}, []*VersionChange{change1, change2})
 			Expect(err).NotTo(HaveOccurred())
@@ -428,21 +435,23 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2024-06-01")
 			v3, _ := NewDateVersion("2025-01-01")
 
-			change1 := NewVersionChangeBuilder(v1, v2).
+			change1, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Product{}).
 				RequestToNextVersion().
 				AddField("currency", "USD").
 				ResponseToPreviousVersion().
 				RemoveField("currency").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			change2 := NewVersionChangeBuilder(v2, v3).
+			change2, err := NewVersionChangeBuilder(v2, v3).
 				ForType(Product{}).
 				RequestToNextVersion().
 				AddField("description", "").
 				ResponseToPreviousVersion().
 				RemoveField("description").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2, v3}, []*VersionChange{change1, change2})
 			Expect(err).NotTo(HaveOccurred())
@@ -480,17 +489,19 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			reqChange := NewVersionChangeBuilder(v1, v2).
+			reqChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(CreateUserRequest{}).
 				RequestToNextVersion().
 				AddField("email", "unknown@example.com").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			respChange := NewVersionChangeBuilder(v1, v2).
+			respChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				ResponseToPreviousVersion().
 				RemoveField("phone").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{reqChange, respChange})
 			Expect(err).NotTo(HaveOccurred())
@@ -552,7 +563,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewSemverVersion("2.0.0")
 			v3, _ := NewSemverVersion("3.0.0")
 
-			v1ToV2 := NewVersionChangeBuilder(v1, v2).
+			v1ToV2, err := NewVersionChangeBuilder(v1, v2).
 				Description("Rename name to newName").
 				ForType(ErrorTestRequest{}, ErrorTestResponse{}).
 				RequestToNextVersion().
@@ -560,8 +571,9 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				RenameField("new_name", "name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			v2ToV3 := NewVersionChangeBuilder(v2, v3).
+			v2ToV3, err := NewVersionChangeBuilder(v2, v3).
 				Description("Rename newName to betterNewName").
 				ForType(ErrorTestRequest{}, ErrorTestResponse{}).
 				RequestToNextVersion().
@@ -569,15 +581,16 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				RenameField("better_new_name", "new_name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			var err error
-			e, err = NewEpoch().
+			var epochErr error
+			e, epochErr = NewEpoch().
 				WithVersions(v1, v2, v3).
 				WithHeadVersion().
 				WithChanges(v1ToV2, v2ToV3).
 				WithVersionParameter("X-API-Version").
 				Build()
-			Expect(err).NotTo(HaveOccurred())
+			Expect(epochErr).NotTo(HaveOccurred())
 
 			gin.SetMode(gin.TestMode)
 			router = gin.New()
@@ -884,11 +897,12 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				ResponseToPreviousVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -924,17 +938,19 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			userChange := NewVersionChangeBuilder(v1, v2).
+			userChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				ResponseToPreviousVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			createChange := NewVersionChangeBuilder(v1, v2).
+			createChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(CreateUserRequest{}).
 				RequestToNextVersion().
 				AddField("email", "default@example.com").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{userChange, createChange})
 			Expect(err).NotTo(HaveOccurred())
@@ -1079,19 +1095,21 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change1 := NewVersionChangeBuilder(v1, v2).
+			change1, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				RequestToNextVersion().
 				AddField("email", "test@example.com").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			change2 := NewVersionChangeBuilder(v2, v1).
+			change2, err := NewVersionChangeBuilder(v2, v1).
 				ForType(User{}).
 				RequestToNextVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			_, err := NewEpoch().
+			_, err = NewEpoch().
 				WithVersions(v1, v2).
 				WithChanges(change1, change2).
 				Build()
@@ -1105,17 +1123,19 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2024-06-01")
 			v3, _ := NewDateVersion("2025-01-01")
 
-			change1 := NewVersionChangeBuilder(v1, v2).
+			change1, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				RequestToNextVersion().
 				AddField("email", "test@example.com").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			change2 := NewVersionChangeBuilder(v2, v3).
+			change2, err := NewVersionChangeBuilder(v2, v3).
 				ForType(User{}).
 				RequestToNextVersion().
 				RenameField("name", "full_name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := NewEpoch().
 				WithVersions(v1, v2, v3).
@@ -1133,15 +1153,16 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2024-06-01")
 			v3, _ := NewDateVersion("2025-01-01")
 
-			userChange1 := NewVersionChangeBuilder(v1, v2).
+			userChange1, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				RequestToNextVersion().
 				AddField("email", "unknown@example.com").
 				ResponseToPreviousVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			userChange2 := NewVersionChangeBuilder(v2, v3).
+			userChange2, err := NewVersionChangeBuilder(v2, v3).
 				ForType(User{}).
 				RequestToNextVersion().
 				RenameField("name", "full_name").
@@ -1150,8 +1171,9 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				RenameField("full_name", "name").
 				RemoveField("phone").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
-			productChange := NewVersionChangeBuilder(v2, v3).
+			productChange, err := NewVersionChangeBuilder(v2, v3).
 				ForType(Product{}).
 				RequestToNextVersion().
 				AddField("currency", "USD").
@@ -1160,6 +1182,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				RemoveField("currency").
 				RemoveField("description").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			instance, err := NewEpoch().
 				WithVersions(v1, v2, v3).
@@ -1246,7 +1269,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewSemverVersion("1.0")
 			v2, _ := NewSemverVersion("2.0")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Add phone field to User").
 				ForType(User{}).
 				RequestToNextVersion().
@@ -1254,6 +1277,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				RemoveField("phone").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := NewEpoch().
 				WithVersions(v1, v2).
@@ -1331,7 +1355,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewSemverVersion("1.0")
 			v2, _ := NewSemverVersion("2.0")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Add email field to User").
 				ForType(User{}).
 				RequestToNextVersion().
@@ -1339,6 +1363,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := NewEpoch().
 				WithVersions(v1, v2).
@@ -1400,13 +1425,14 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				Name string `json:"name"` // Renamed from "user_name" in older version
 			}
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				ForType(SimpleUser{}).
 				RequestToNextVersion().
 				RenameField("user_name", "name").
 				ResponseToPreviousVersion().
 				RenameField("name", "user_name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -1453,18 +1479,20 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2024-06-01")
 
 			// Define change for CreateUserRequest (top-level) and Profile (nested object)
-			requestChange := NewVersionChangeBuilder(v1, v2).
+			requestChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(CreateUserRequest{}).
 				RequestToNextVersion().
 				RenameField("full_name", "display_name"). // Top-level rename
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			// Separate change for nested Profile type
-			profileChange := NewVersionChangeBuilder(v1, v2).
+			profileChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Profile{}).
 				RequestToNextVersion().
 				RenameField("biography", "bio"). // Nested object rename
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{requestChange, profileChange})
 			Expect(err).NotTo(HaveOccurred())
@@ -1516,19 +1544,21 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2024-06-01")
 
 			// Define change for User (used as request type) and Role (nested array item)
-			userChange := NewVersionChangeBuilder(v1, v2).
+			userChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				RequestToNextVersion().
 				RenameField("name", "full_name"). // Top-level rename
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			// Separate change for nested Role type in roles[] array
-			roleChange := NewVersionChangeBuilder(v1, v2).
+			roleChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Role{}).
 				RequestToNextVersion().
 				RenameField("role_name", "name"). // Nested array item rename
 				AddField("priority", 0).          // Add default priority
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{userChange, roleChange})
 			Expect(err).NotTo(HaveOccurred())
@@ -1592,11 +1622,12 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				ResponseToPreviousVersion().
 				RenameField("full_name", "name").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -1647,12 +1678,13 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2024-06-01")
 
 			// Migration for Role type in nested array
-			roleChange := NewVersionChangeBuilder(v1, v2).
+			roleChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Role{}).
 				ResponseToPreviousVersion().
 				RenameField("name", "role_name").
 				RemoveField("priority").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{roleChange})
 			Expect(err).NotTo(HaveOccurred())
@@ -1702,18 +1734,20 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2024-06-01")
 
 			// Migration for ListMetadata type
-			metadataChange := NewVersionChangeBuilder(v1, v2).
+			metadataChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(ListMetadata{}).
 				ResponseToPreviousVersion().
 				RenameField("updated_by", "author").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			// Migration for User in array
-			userChange := NewVersionChangeBuilder(v1, v2).
+			userChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				ResponseToPreviousVersion().
 				RemoveField("phone").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{metadataChange, userChange})
 			Expect(err).NotTo(HaveOccurred())
@@ -1762,19 +1796,21 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2024-06-01")
 
 			// Migration for User in array
-			userChange := NewVersionChangeBuilder(v1, v2).
+			userChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(User{}).
 				ResponseToPreviousVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			// Migration for Role type in deeply nested array (users[].roles[])
-			roleChange := NewVersionChangeBuilder(v1, v2).
+			roleChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Role{}).
 				ResponseToPreviousVersion().
 				RenameField("name", "role_name").
 				RemoveField("priority").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{userChange, roleChange})
 			Expect(err).NotTo(HaveOccurred())
@@ -1865,12 +1901,13 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v2, _ := NewDateVersion("2024-06-01")
 
 			// Migration for Profile type nested in users[]
-			profileChange := NewVersionChangeBuilder(v1, v2).
+			profileChange, err := NewVersionChangeBuilder(v1, v2).
 				ForType(Profile{}).
 				ResponseToPreviousVersion().
 				RenameField("bio", "biography").
 				RemoveField("avatar").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{profileChange})
 			Expect(err).NotTo(HaveOccurred())
@@ -1960,7 +1997,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 
 			// V1→V2: Remove deprecated fields from request, add them back in response
 			// The auto-capture feature should preserve the original values
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Remove description and metadata fields").
 				ForType(AutoCaptureRequest{}).
 				RequestToNextVersion().
@@ -1971,6 +2008,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				AddField("description", "default description"). // Uses captured value instead
 				AddField("metadata", "default metadata").       // Uses captured value instead
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -2036,7 +2074,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Handle optional field").
 				ForType(AutoCaptureRequest{}).
 				RequestToNextVersion().
@@ -2045,6 +2083,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				AddField("description", "default description").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -2085,7 +2124,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Handler override test").
 				ForType(AutoCaptureRequest{}).
 				RequestToNextVersion().
@@ -2094,6 +2133,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				AddField("description", "default description").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -2150,7 +2190,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Complex field preservation").
 				ForType(ComplexRequest{}).
 				RequestToNextVersion().
@@ -2159,6 +2199,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				AddField("settings", map[string]interface{}{"default": true}).
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())
@@ -2224,7 +2265,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			v1, _ := NewDateVersion("2024-01-01")
 			v2, _ := NewDateVersion("2024-06-01")
 
-			change := NewVersionChangeBuilder(v1, v2).
+			change, err := NewVersionChangeBuilder(v1, v2).
 				Description("Concurrent test").
 				ForType(ConcurrentRequest{}).
 				RequestToNextVersion().
@@ -2233,6 +2274,7 @@ var _ = Describe("End-to-End Integration Tests", func() {
 				ResponseToPreviousVersion().
 				AddField("description", "default").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := setupBasicEpoch([]*Version{v1, v2}, []*VersionChange{change})
 			Expect(err).NotTo(HaveOccurred())

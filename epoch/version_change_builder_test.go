@@ -45,7 +45,7 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 
 	Describe("Cadwyn-Style API", func() {
 		It("should create migration with clear direction semantics", func() {
-			migration := NewVersionChangeBuilder(v1, v2).
+			migration, err := NewVersionChangeBuilder(v1, v2).
 				Description("Add email field to User").
 				ForType(BuilderTestUser{}).
 				RequestToNextVersion().
@@ -54,6 +54,7 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 				RemoveField("email"). // Remove email from responses for v1 clients
 				Build()
 
+			Expect(err).NotTo(HaveOccurred())
 			Expect(migration).NotTo(BeNil())
 			Expect(migration.Description()).To(Equal("Add email field to User"))
 			Expect(migration.FromVersion()).To(Equal(v1))
@@ -61,7 +62,7 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 		})
 
 		It("should support multiple schemas in one migration", func() {
-			migration := NewVersionChangeBuilder(v1, v2).
+			migration, err := NewVersionChangeBuilder(v1, v2).
 				Description("Update User and Product schemas").
 				ForType(BuilderTestUser{}).
 				ResponseToPreviousVersion().
@@ -71,12 +72,13 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 				RemoveField("currency"). // Remove new field for v1 clients
 				Build()
 
+			Expect(err).NotTo(HaveOccurred())
 			Expect(migration).NotTo(BeNil())
 			Expect(migration.Description()).To(Equal("Update User and Product schemas"))
 		})
 
 		It("should support global custom transformers", func() {
-			migration := NewVersionChangeBuilder(v1, v2).
+			migration, err := NewVersionChangeBuilder(v1, v2).
 				Description("Global custom operations").
 				CustomRequest(func(req *RequestInfo) error {
 					// Custom logic for all requests
@@ -88,24 +90,26 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 				}).
 				Build()
 
+			Expect(err).NotTo(HaveOccurred())
 			Expect(migration).NotTo(BeNil())
 		})
 
 		It("should require at least one schema or custom transformer", func() {
-			Expect(func() {
-				NewVersionChangeBuilder(v1, v2).
-					Description("Empty migration").
-					Build()
-			}).To(Panic())
+			_, err := NewVersionChangeBuilder(v1, v2).
+				Description("Empty migration").
+				Build()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("at least one type"))
 		})
 
 		It("should generate default description if none provided", func() {
-			migration := NewVersionChangeBuilder(v1, v2).
+			migration, err := NewVersionChangeBuilder(v1, v2).
 				ForType(BuilderTestUser{}).
 				RequestToNextVersion().
 				AddField("email", "test@example.com").
 				Build()
 
+			Expect(err).NotTo(HaveOccurred())
 			Expect(migration.Description()).To(Equal("Migration from 2024-01-01 to 2024-06-01"))
 		})
 	})
@@ -130,12 +134,13 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 		})
 
 		It("should apply RequestToNextVersion operations correctly", func() {
-			migration := NewVersionChangeBuilder(v1, v2). // v1→v2 migration
-									ForType(BuilderTestUser{}).
-									RequestToNextVersion().
-									AddField("created_at", "2024-01-01").
-									RenameField("name", "full_name").
-									Build()
+			migration, err := NewVersionChangeBuilder(v1, v2). // v1→v2 migration
+										ForType(BuilderTestUser{}).
+										RequestToNextVersion().
+										AddField("created_at", "2024-01-01").
+										RenameField("name", "full_name").
+										Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			// Create a mock RequestInfo
 			requestInfo := &RequestInfo{Body: testNode}
@@ -161,12 +166,13 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 		})
 
 		It("should apply ResponseToPreviousVersion operations correctly", func() {
-			migration := NewVersionChangeBuilder(v2, v1). // v2→v1 migration
-									ForType(BuilderTestUser{}).
-									ResponseToPreviousVersion().
-									RemoveField("email").
-									AddField("legacy_field", "legacy_value").
-									Build()
+			migration, err := NewVersionChangeBuilder(v2, v1). // v2→v1 migration
+										ForType(BuilderTestUser{}).
+										ResponseToPreviousVersion().
+										RemoveField("email").
+										AddField("legacy_field", "legacy_value").
+										Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			// Create a mock ResponseInfo
 			responseInfo := &ResponseInfo{Body: testNode, StatusCode: 200}
@@ -191,7 +197,7 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 
 	Describe("Builder Fluency", func() {
 		It("should allow chaining between different direction builders", func() {
-			migration := NewVersionChangeBuilder(v1, v2).
+			migration, err := NewVersionChangeBuilder(v1, v2).
 				Description("Complex chaining example").
 				ForType(BuilderTestUser{}).
 				RequestToNextVersion().
@@ -203,17 +209,19 @@ var _ = Describe("SchemaVersionChangeBuilder", func() {
 				RemoveField("currency").
 				Build()
 
+			Expect(err).NotTo(HaveOccurred())
 			Expect(migration).NotTo(BeNil())
 			Expect(migration.Description()).To(Equal("Complex chaining example"))
 		})
 
 		It("should allow returning to schema builder from direction builders", func() {
-			migration := NewVersionChangeBuilder(v1, v2).
+			migration, err := NewVersionChangeBuilder(v1, v2).
 				ForType(BuilderTestProduct{}). // Should return to schema builder
 				ResponseToPreviousVersion().
 				RemoveField("description").
 				Build()
 
+			Expect(err).NotTo(HaveOccurred())
 			Expect(migration).NotTo(BeNil())
 		})
 	})

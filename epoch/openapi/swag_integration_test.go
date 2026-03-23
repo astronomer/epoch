@@ -51,7 +51,7 @@ func createTestVersions() (*epoch.Version, *epoch.Version, *epoch.Version) {
 // createTestMigrations creates the standard v1→v2 and v2→v3 migrations
 func createTestMigrations(v1, v2, v3 *epoch.Version) (*epoch.VersionChange, *epoch.VersionChange) {
 	// v1→v2: Add email and status fields
-	v1ToV2 := epoch.NewVersionChangeBuilder(v1, v2).
+	v1ToV2, err := epoch.NewVersionChangeBuilder(v1, v2).
 		Description("Add email and status fields to User").
 		ForType(swagTestCreateUserRequest{}).
 		RequestToNextVersion().
@@ -62,9 +62,12 @@ func createTestMigrations(v1, v2, v3 *epoch.Version) (*epoch.VersionChange, *epo
 		RemoveField("email").
 		RemoveField("status").
 		Build()
+	if err != nil {
+		panic(err)
+	}
 
 	// v2→v3: Rename name to full_name, add phone
-	v2ToV3 := epoch.NewVersionChangeBuilder(v2, v3).
+	v2ToV3, err := epoch.NewVersionChangeBuilder(v2, v3).
 		Description("Rename name to full_name, add phone").
 		ForType(swagTestCreateUserRequest{}).
 		RequestToNextVersion().
@@ -75,6 +78,9 @@ func createTestMigrations(v1, v2, v3 *epoch.Version) (*epoch.VersionChange, *epo
 		RenameField("full_name", "name").
 		RemoveField("phone").
 		Build()
+	if err != nil {
+		panic(err)
+	}
 
 	return v1ToV2, v2ToV3
 }
@@ -453,12 +459,13 @@ var _ = Describe("Swag Integration", func() {
 			headVersion := epoch.NewHeadVersion()
 
 			// Simple migration that removes one field
-			change := epoch.NewVersionChangeBuilder(v1, headVersion).
+			change, err := epoch.NewVersionChangeBuilder(v1, headVersion).
 				Description("Add email field").
 				ForType(swagTestUserResponse{}).
 				ResponseToPreviousVersion().
 				RemoveField("email").
 				Build()
+			Expect(err).NotTo(HaveOccurred())
 
 			epochInstance, err := epoch.NewEpoch().
 				WithHeadVersion().

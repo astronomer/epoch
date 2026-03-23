@@ -1,6 +1,7 @@
 package epoch
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 
@@ -81,14 +82,14 @@ func (b *versionChangeBuilder) CustomResponse(fn func(*ResponseInfo) error) *ver
 }
 
 // Build compiles all operations into a VersionChange
-func (b *versionChangeBuilder) Build() *VersionChange {
+func (b *versionChangeBuilder) Build() (*VersionChange, error) {
 	if b.description == "" {
 		b.description = "Migration from " + b.fromVersion.String() + " to " + b.toVersion.String()
 	}
 
 	// Validate: require at least one type or custom transformer
 	if len(b.typeOps) == 0 && b.customRequest == nil && b.customResponse == nil {
-		panic("epoch: VersionChange must specify at least one type using ForType() or custom transformers")
+		return nil, fmt.Errorf("epoch: VersionChange must specify at least one type using ForType() or custom transformers")
 	}
 
 	var instructions []interface{}
@@ -233,7 +234,7 @@ func (b *versionChangeBuilder) Build() *VersionChange {
 		}
 	}
 
-	return vc
+	return vc, nil
 }
 
 // typeBuilder builds operations for specific types
@@ -262,7 +263,7 @@ func (tb *typeBuilder) ForType(types ...interface{}) *typeBuilder {
 }
 
 // Build is a convenience method that calls the parent's Build()
-func (tb *typeBuilder) Build() *VersionChange {
+func (tb *typeBuilder) Build() (*VersionChange, error) {
 	return tb.parent.Build()
 }
 
@@ -334,7 +335,7 @@ func (b *requestToNextVersionBuilder) ForType(types ...interface{}) *typeBuilder
 }
 
 // Build completes the builder chain
-func (b *requestToNextVersionBuilder) Build() *VersionChange {
+func (b *requestToNextVersionBuilder) Build() (*VersionChange, error) {
 	return b.parent.Build()
 }
 
@@ -406,7 +407,7 @@ func (b *responseToPreviousVersionBuilder) ForType(types ...interface{}) *typeBu
 }
 
 // Build completes the builder chain
-func (b *responseToPreviousVersionBuilder) Build() *VersionChange {
+func (b *responseToPreviousVersionBuilder) Build() (*VersionChange, error) {
 	return b.parent.Build()
 }
 

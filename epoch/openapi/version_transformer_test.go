@@ -66,12 +66,13 @@ var _ = Describe("VersionTransformer", func() {
 				v2, _ := epoch.NewDateVersion("2024-06-01")
 
 				// Create version change: v1 -> v2 adds email
-				change := epoch.NewVersionChangeBuilder(v1, v2).
+				change, err := epoch.NewVersionChangeBuilder(v1, v2).
 					Description("Add email field").
 					ForType(TestUser{}).
 					ResponseToPreviousVersion().
 					RemoveField("email").
 					Build()
+				Expect(err).NotTo(HaveOccurred())
 
 				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 				v2.Changes = []epoch.VersionChangeInterface{change}
@@ -106,12 +107,13 @@ var _ = Describe("VersionTransformer", func() {
 				v2, _ := epoch.NewDateVersion("2024-06-01")
 
 				// v1 -> v2 renames "full_name" to "name"
-				change := epoch.NewVersionChangeBuilder(v1, v2).
+				change, err := epoch.NewVersionChangeBuilder(v1, v2).
 					Description("Rename name to full_name").
 					ForType(TestUser{}).
 					ResponseToPreviousVersion().
 					RenameField("name", "full_name").
 					Build()
+				Expect(err).NotTo(HaveOccurred())
 
 				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 				v2.Changes = []epoch.VersionChangeInterface{change}
@@ -143,12 +145,13 @@ var _ = Describe("VersionTransformer", func() {
 				v1, _ := epoch.NewDateVersion("2024-01-01")
 				v2, _ := epoch.NewDateVersion("2024-06-01")
 
-				change := epoch.NewVersionChangeBuilder(v1, v2).
+				change, err := epoch.NewVersionChangeBuilder(v1, v2).
 					Description("Add status field").
 					ForType(TestUser{}).
 					ResponseToPreviousVersion().
 					RemoveField("status").
 					Build()
+				Expect(err).NotTo(HaveOccurred())
 
 				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 				v2.Changes = []epoch.VersionChangeInterface{change}
@@ -180,7 +183,7 @@ var _ = Describe("VersionTransformer", func() {
 				v2, _ := epoch.NewDateVersion("2024-06-01")
 
 				// v1 -> v2: adds email, phone, and status
-				change := epoch.NewVersionChangeBuilder(v1, v2).
+				change, buildErr := epoch.NewVersionChangeBuilder(v1, v2).
 					Description("Add multiple fields").
 					ForType(TestUser{}).
 					ResponseToPreviousVersion().
@@ -188,6 +191,7 @@ var _ = Describe("VersionTransformer", func() {
 					RemoveField("phone").
 					RemoveField("status").
 					Build()
+				Expect(buildErr).NotTo(HaveOccurred())
 
 				v2.Changes = []epoch.VersionChangeInterface{change}
 
@@ -229,12 +233,13 @@ var _ = Describe("VersionTransformer", func() {
 
 				// v1 -> v2: add "email" field (v2/HEAD has it, v1 doesn't)
 				// When generating v1 request schema, we start from v2 and remove email
-				change := epoch.NewVersionChangeBuilder(v1, v2).
+				change, err := epoch.NewVersionChangeBuilder(v1, v2).
 					Description("Add email field").
 					ForType(TestUser{}).
 					RequestToNextVersion().
 					AddField("email", "unknown@example.com").
 					Build()
+				Expect(err).NotTo(HaveOccurred())
 
 				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 				v2.Changes = []epoch.VersionChangeInterface{change}
@@ -272,12 +277,13 @@ var _ = Describe("VersionTransformer", func() {
 
 				// v1 -> v2: rename "name" to "full_name"
 				// HEAD has "full_name", v1 has "name"
-				change := epoch.NewVersionChangeBuilder(v1, v2).
+				change, err := epoch.NewVersionChangeBuilder(v1, v2).
 					Description("Rename name to full_name").
 					ForType(TestUser{}).
 					RequestToNextVersion().
 					RenameField("name", "full_name").
 					Build()
+				Expect(err).NotTo(HaveOccurred())
 
 				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 				v2.Changes = []epoch.VersionChangeInterface{change}
@@ -313,12 +319,13 @@ var _ = Describe("VersionTransformer", func() {
 
 				// v1 -> v2: remove deprecated field (v1 has it, v2 doesn't)
 				// This means RequestToNextVersion removes it when going from v1 to v2
-				change := epoch.NewVersionChangeBuilder(v1, v2).
+				change, err := epoch.NewVersionChangeBuilder(v1, v2).
 					Description("Remove deprecated field").
 					ForType(TestUser{}).
 					RequestToNextVersion().
 					RemoveField("deprecated_field").
 					Build()
+				Expect(err).NotTo(HaveOccurred())
 
 				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 				v2.Changes = []epoch.VersionChangeInterface{change}
@@ -357,7 +364,7 @@ var _ = Describe("VersionTransformer", func() {
 				// - v1 has "old_status", v2 has "status" (rename)
 				// - v1 doesn't have "email", v2 has "email" (add)
 				// - v1 doesn't have "phone", v2 has "phone" (add)
-				change := epoch.NewVersionChangeBuilder(v1, v2).
+				change, buildErr := epoch.NewVersionChangeBuilder(v1, v2).
 					Description("Multiple request changes").
 					ForType(TestUser{}).
 					RequestToNextVersion().
@@ -365,6 +372,7 @@ var _ = Describe("VersionTransformer", func() {
 					AddField("phone", "").
 					RenameField("old_status", "status").
 					Build()
+				Expect(buildErr).NotTo(HaveOccurred())
 
 				v2.Changes = []epoch.VersionChangeInterface{change}
 
@@ -411,12 +419,13 @@ var _ = Describe("VersionTransformer", func() {
 					Field string
 				}
 
-				change := epoch.NewVersionChangeBuilder(v1, v2).
+				change, err := epoch.NewVersionChangeBuilder(v1, v2).
 					Description("Change for different type").
 					ForType(DifferentType{}).
 					ResponseToPreviousVersion().
 					RemoveField("field").
 					Build()
+				Expect(err).NotTo(HaveOccurred())
 
 				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 				v2.Changes = []epoch.VersionChangeInterface{change}
@@ -566,12 +575,13 @@ var _ = Describe("VersionTransformer", func() {
 				v1, _ := epoch.NewDateVersion("2024-01-01")
 				v2, _ := epoch.NewDateVersion("2024-06-01")
 
-				change := epoch.NewVersionChangeBuilder(v1, v2).
+				change, err := epoch.NewVersionChangeBuilder(v1, v2).
 					Description("Test change").
 					ForType(TestUser{}).
 					ResponseToPreviousVersion().
 					RemoveField("email").
 					Build()
+				Expect(err).NotTo(HaveOccurred())
 
 				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 				transformer := NewVersionTransformer(vb)
@@ -584,12 +594,13 @@ var _ = Describe("VersionTransformer", func() {
 				v1, _ := epoch.NewDateVersion("2024-01-01")
 				v2, _ := epoch.NewDateVersion("2024-06-01")
 
-				change := epoch.NewVersionChangeBuilder(v1, v2).
+				change, err := epoch.NewVersionChangeBuilder(v1, v2).
 					Description("Test change").
 					ForType(TestUser{}).
 					ResponseToPreviousVersion().
 					RemoveField("email").
 					Build()
+				Expect(err).NotTo(HaveOccurred())
 
 				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 				transformer := NewVersionTransformer(vb)
@@ -605,12 +616,13 @@ var _ = Describe("VersionTransformer", func() {
 				v1, _ := epoch.NewDateVersion("2024-01-01")
 				v2, _ := epoch.NewDateVersion("2024-06-01")
 
-				change := epoch.NewVersionChangeBuilder(v1, v2).
+				change, err := epoch.NewVersionChangeBuilder(v1, v2).
 					Description("Test change").
 					ForType(TestUser{}).
 					ResponseToPreviousVersion().
 					RemoveField("email").
 					Build()
+				Expect(err).NotTo(HaveOccurred())
 
 				vb, _ := epoch.NewVersionBundle([]*epoch.Version{v1, v2})
 				transformer := NewVersionTransformer(vb)
