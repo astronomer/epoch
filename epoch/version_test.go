@@ -83,21 +83,6 @@ var _ = Describe("Version", func() {
 		})
 	})
 
-	Describe("NewStringVersion", func() {
-		It("should create a string-based version", func() {
-			version := NewStringVersion("alpha")
-			Expect(version.Type).To(Equal(VersionTypeString))
-			Expect(version.Raw).To(Equal("alpha"))
-			Expect(version.IsHead).To(BeFalse())
-		})
-
-		It("should handle empty string", func() {
-			version := NewStringVersion("")
-			Expect(version.Type).To(Equal(VersionTypeString))
-			Expect(version.Raw).To(Equal(""))
-		})
-	})
-
 	Describe("NewHeadVersion", func() {
 		It("should create a head version", func() {
 			version := NewHeadVersion()
@@ -120,10 +105,10 @@ var _ = Describe("Version", func() {
 			Expect(version.Type).To(Equal(VersionTypeSemver))
 		})
 
-		It("should fallback to string version", func() {
-			version, err := NewVersion("alpha")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(version.Type).To(Equal(VersionTypeString))
+		It("should return an error for invalid version format", func() {
+			_, err := NewVersion("alpha")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("invalid version format"))
 		})
 	})
 
@@ -134,8 +119,8 @@ var _ = Describe("Version", func() {
 		})
 
 		It("should return raw value for non-head versions", func() {
-			version := NewStringVersion("alpha")
-			Expect(version.String()).To(Equal("alpha"))
+			version, _ := NewSemverVersion("1.0.0")
+			Expect(version.String()).To(Equal("1.0.0"))
 		})
 	})
 
@@ -203,7 +188,6 @@ var _ = Describe("Version", func() {
 		It("should return correct string representations", func() {
 			Expect(VersionTypeDate.String()).To(Equal("date"))
 			Expect(VersionTypeSemver.String()).To(Equal("semver"))
-			Expect(VersionTypeString.String()).To(Equal("string"))
 			Expect(VersionTypeHead.String()).To(Equal("head"))
 		})
 	})

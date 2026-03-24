@@ -20,7 +20,6 @@ type VersionFormat string
 const (
 	VersionFormatDate   VersionFormat = "date"
 	VersionFormatSemver VersionFormat = "semver"
-	VersionFormatString VersionFormat = "string"
 )
 
 // VersionManager checks all locations for version information
@@ -296,13 +295,7 @@ func (vm *VersionMiddleware) isValidVersionFormat(versionStr string) bool {
 		return true
 	}
 
-	// For string versions, we're more permissive but exclude obviously invalid ones
-	// like "invalid" which is clearly not a version
-	if versionStr == "invalid" || versionStr == "unknown" || versionStr == "error" {
-		return false
-	}
-
-	return true
+	return false
 }
 
 // GetVersionFromContext extracts the version from the Gin context

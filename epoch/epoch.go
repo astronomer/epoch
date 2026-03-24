@@ -244,15 +244,6 @@ func (cb *EpochBuilder) WithSemverVersions(semvers ...string) *EpochBuilder {
 	return cb
 }
 
-// WithStringVersions creates and adds string-based versions
-func (cb *EpochBuilder) WithStringVersions(versions ...string) *EpochBuilder {
-	for _, versionStr := range versions {
-		v := NewStringVersion(versionStr)
-		cb.versions = append(cb.versions, v)
-	}
-	return cb
-}
-
 // WithHeadVersion adds a head version
 func (cb *EpochBuilder) WithHeadVersion() *EpochBuilder {
 	cb.versions = append(cb.versions, NewHeadVersion())
@@ -360,21 +351,10 @@ func WithSemver(semvers ...string) (*Epoch, error) {
 	return builder.Build()
 }
 
-// WithStringVersions creates an Epoch instance with string versions and head version
-func WithStrings(versions ...string) (*Epoch, error) {
-	builder := NewEpoch().WithStringVersions(versions...).WithHeadVersion()
-	return builder.Build()
-}
-
 // Simple creates an Epoch instance with just a head version
 func Simple() (*Epoch, error) {
 	builder := NewEpoch().WithHeadVersion()
 	return builder.Build()
-}
-
-// StringVersion creates a string version (convenience wrapper)
-func StringVersion(version string) *Version {
-	return NewStringVersion(version)
 }
 
 // HeadVersion creates a head version
