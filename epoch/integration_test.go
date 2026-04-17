@@ -1033,10 +1033,6 @@ var _ = Describe("End-to-End Integration Tests", func() {
 			Expect(err2).NotTo(HaveOccurred())
 			Expect(instance2).NotTo(BeNil())
 
-			instance3, err3 := WithStrings("alpha", "beta", "stable")
-			Expect(err3).NotTo(HaveOccurred())
-			Expect(instance3).NotTo(BeNil())
-
 			instance4, err4 := Simple()
 			Expect(err4).NotTo(HaveOccurred())
 			Expect(instance4).NotTo(BeNil())

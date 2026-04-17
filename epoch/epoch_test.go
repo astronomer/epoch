@@ -72,13 +72,6 @@ var _ = Describe("Cadwyn", func() {
 			})
 		})
 
-		Describe("WithStringVersions", func() {
-			It("should create and add string versions", func() {
-				result := builder.WithStringVersions("alpha", "beta", "stable")
-				Expect(result).To(Equal(builder))
-			})
-		})
-
 		Describe("WithHeadVersion", func() {
 			It("should add a head version", func() {
 				result := builder.WithHeadVersion()
@@ -235,14 +228,6 @@ var _ = Describe("Cadwyn", func() {
 			})
 		})
 
-		Describe("WithStrings", func() {
-			It("should create a Cadwyn instance with string versions", func() {
-				cadwynInstance, err := WithStrings("alpha", "beta")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(cadwynInstance).NotTo(BeNil())
-			})
-		})
-
 		Describe("Simple", func() {
 			It("should create a Cadwyn instance with just head version", func() {
 				cadwynInstance, err := Simple()
@@ -253,13 +238,6 @@ var _ = Describe("Cadwyn", func() {
 	})
 
 	Describe("Version helpers", func() {
-		Describe("StringVersion", func() {
-			It("should create a string version", func() {
-				version := StringVersion("alpha")
-				Expect(version.Type).To(Equal(VersionTypeString))
-			})
-		})
-
 		Describe("HeadVersion", func() {
 			It("should create a head version", func() {
 				version := HeadVersion()
