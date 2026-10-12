@@ -211,11 +211,39 @@ func (tp *TagParser) parseOneOfValidator(schema *openapi3.Schema, validator stri
 	}
 }
 
+// exampleForSchemaType converts a raw example struct tag to the schema's
+// declared type. Struct tags are always strings, so an example:"30" on an
+// integer field would otherwise be emitted as the string "30", which OpenAPI
+// validators reject. A value that does not parse is left as a string rather
+// than discarded.
+func exampleForSchemaType(schema *openapi3.Schema, example string) any {
+	if schema.Type == nil {
+		return example
+	}
+
+	switch {
+	case schema.Type.Is("integer"):
+		if v, err := strconv.ParseInt(example, 10, 64); err == nil {
+			return v
+		}
+	case schema.Type.Is("number"):
+		if v, err := strconv.ParseFloat(example, 64); err == nil {
+			return v
+		}
+	case schema.Type.Is("boolean"):
+		if v, err := strconv.ParseBool(example); err == nil {
+			return v
+		}
+	}
+
+	return example
+}
+
 // ApplyCommonTags applies common struct tags like example, enums, format, description
 func (tp *TagParser) ApplyCommonTags(schema *openapi3.Schema, field reflect.StructField) {
 	// Example tag
 	if example := field.Tag.Get("example"); example != "" {
-		schema.Example = example
+		schema.Example = exampleForSchemaType(schema, example)
 	}
 
 	// Enums tag (comma-separated values)

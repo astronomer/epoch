@@ -269,6 +269,10 @@ func (tp *TypeParser) parseStruct(t reflect.Type) (*openapi3.SchemaRef, error) {
 
 			// Apply validation tags if this is a new inline schema
 			if fieldSchema.Value != nil {
+				// ParseType memoizes primitive schemas per reflect.Type, so the
+				// tags below must be applied to a copy rather than the shared value.
+				fieldSchema = copySchemaRef(fieldSchema)
+
 				bindingTag := field.Tag.Get("binding")
 				validateTag := field.Tag.Get("validate")
 				tp.tagParser.ApplyValidationTags(fieldSchema.Value, bindingTag, validateTag)
@@ -321,6 +325,8 @@ func (tp *TypeParser) parseStruct(t reflect.Type) (*openapi3.SchemaRef, error) {
 		}
 
 		if fieldSchema.Value != nil {
+			fieldSchema = copySchemaRef(fieldSchema)
+
 			bindingTag := field.Tag.Get("binding")
 			validateTag := field.Tag.Get("validate")
 			tp.tagParser.ApplyValidationTags(fieldSchema.Value, bindingTag, validateTag)
@@ -402,6 +408,16 @@ func (tp *TypeParser) createRef(t reflect.Type) *openapi3.SchemaRef {
 	return &openapi3.SchemaRef{
 		Ref: ref,
 	}
+}
+
+// copySchemaRef returns a shallow copy of ref and its Value, so per-field struct
+// tags can be applied without mutating a schema shared via the TypeParser cache.
+func copySchemaRef(ref *openapi3.SchemaRef) *openapi3.SchemaRef {
+	if ref == nil || ref.Value == nil {
+		return ref
+	}
+	value := *ref.Value
+	return &openapi3.SchemaRef{Ref: ref.Ref, Value: &value}
 }
 
 // GetComponents returns all component schemas collected during parsing
